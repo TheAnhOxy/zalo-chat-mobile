@@ -1,68 +1,66 @@
 import 'package:flutter/material.dart';
 
-/// Azure Connect — Color System
-/// Dark background + Xanh nước biển chủ đạo
 class AppColors {
   AppColors._();
 
   // ── Brand ──────────────────────────────────────────────────────
-  static const Color primary      = Color(0xFF2B7FFF); // Xanh chính
-  static const Color primaryDark  = Color(0xFF1A5FCC);
-  static const Color primaryLight = Color(0xFF5BA3FF);
-  static const Color accent       = Color(0xFF00D4FF); // Accent cyan
+  static const Color primary      = Color(0xFF0068FF);
+  static const Color primaryDark  = Color(0xFF0052CC);
+  static const Color primaryLight = Color(0xFFE8F0FF);
+  static const Color accent       = Color(0xFF00B4FF);
 
-  // ── Background (Dark theme) ───────────────────────────────────
-  static const Color bgDark       = Color(0xFF0F0F1A); // Nền tối nhất
-  static const Color bgCard       = Color(0xFF1A1A2E); // Card background
-  static const Color bgCardLight  = Color(0xFF22223A); // Card hover
-  static const Color bgInput      = Color(0xFF1E1E30); // Input background
-  static const Color bgOverlay    = Color(0xFF16213E); // Bottom sheet
+  // ── Background (Light theme) ──────────────────────────────────
+  static const Color bgDark       = Color(0xFFF0F2F5); // Nền chính — xám nhạt
+  static const Color bgCard       = Color(0xFFFFFFFF); // Card = trắng
+  static const Color bgCardLight  = Color(0xFFF5F7FA); // Card hover
+  static const Color bgInput      = Color(0xFFF0F2F5); // Input background
+  static const Color bgOverlay    = Color(0xFFFFFFFF); // Bottom sheet
 
   // ── Surface / Divider ─────────────────────────────────────────
-  static const Color surface      = Color(0xFF252540);
-  static const Color divider      = Color(0xFF2A2A45);
-  static const Color border       = Color(0xFF333360);
+  static const Color surface      = Color(0xFFFFFFFF);
+  static const Color divider      = Color(0xFFE4E6EB);
+  static const Color border       = Color(0xFFDDE1E7);
 
   // ── Text ──────────────────────────────────────────────────────
-  static const Color textPrimary   = Color(0xFFFFFFFF);
-  static const Color textSecondary = Color(0xFFB0B0CC);
-  static const Color textHint      = Color(0xFF6060A0);
-  static const Color textDisabled  = Color(0xFF404060);
+  static const Color textPrimary   = Color(0xFF111111);
+  static const Color textSecondary = Color(0xFF65676B);
+  static const Color textHint      = Color(0xFF9EA3A8);
+  static const Color textDisabled  = Color(0xFFBCC0C4);
 
   // ── Chat Bubbles ──────────────────────────────────────────────
-  static const Color bubbleMe        = Color(0xFF2B7FFF); // Xanh — tin của mình
+  static const Color bubbleMe        = Color(0xFF0068FF);
   static const Color bubbleMeText    = Color(0xFFFFFFFF);
-  static const Color bubbleOther     = Color(0xFF22223A); // Dark — tin người kia
-  static const Color bubbleOtherText = Color(0xFFEEEEFF);
+  static const Color bubbleOther     = Color(0xFFFFFFFF);
+  static const Color bubbleOtherText = Color(0xFF111111);
 
   // ── Status ────────────────────────────────────────────────────
-  static const Color online    = Color(0xFF00E676); // Xanh lá online
-  static const Color away      = Color(0xFFFFB300); // Vàng away
-  static const Color offline   = Color(0xFF606080);
-  static const Color error     = Color(0xFFFF4C6A);
-  static const Color success   = Color(0xFF00C87A);
+  static const Color online    = Color(0xFF31A24C);
+  static const Color away      = Color(0xFFFFB300);
+  static const Color offline   = Color(0xFF9EA3A8);
+  static const Color error     = Color(0xFFE41E3F);
+  static const Color success   = Color(0xFF31A24C);
   static const Color warning   = Color(0xFFFFB300);
 
   // ── Call Screen ───────────────────────────────────────────────
-  static const Color callBg      = Color(0xFF0A0A18);
-  static const Color callAccept  = Color(0xFF00C87A);
-  static const Color callReject  = Color(0xFFFF4C6A);
-  static const Color callMuted   = Color(0xFF333360);
+  static const Color callBg      = Color(0xFF1C2B4A);
+  static const Color callAccept  = Color(0xFF31A24C);
+  static const Color callReject  = Color(0xFFE41E3F);
+  static const Color callMuted   = Color(0xFF3A4A6B);
 
   // ── AI Bot ────────────────────────────────────────────────────
-  static const Color aiBubble    = Color(0xFF1A2A4A);
+  static const Color aiBubble    = Color(0xFFE8F0FF);
   static const Color aiGradient1 = Color(0xFF4A00E0);
-  static const Color aiGradient2 = Color(0xFF2B7FFF);
+  static const Color aiGradient2 = Color(0xFF0068FF);
 
   // ── Gradients ─────────────────────────────────────────────────
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [primary, Color(0xFF5BA3FF)],
+    colors: [primary, Color(0xFF3D9BFF)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient bgGradient = LinearGradient(
-    colors: [Color(0xFF0F0F1A), Color(0xFF1A1A2E)],
+    colors: [Color(0xFFF0F2F5), Color(0xFFFFFFFF)],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );
@@ -74,5 +72,5 @@ class AppColors {
   );
 
   // ── Unread Badge ──────────────────────────────────────────────
-  static const Color badge = Color(0xFFFF4C6A);
+  static const Color badge = Color(0xFFE41E3F);
 }

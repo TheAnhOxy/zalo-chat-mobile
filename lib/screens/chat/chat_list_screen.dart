@@ -176,10 +176,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Trợ lý AI',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary, fontFamily: 'Inter')),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white, fontFamily: 'Inter')),
                 SizedBox(height: 2),
                 Text('Hôm nay tôi có thể giúp gì cho bạn?',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'Inter')),
+                    style: TextStyle(fontSize: 12, color: Colors.white70, fontFamily: 'Inter')),
               ],
             ),
           ),

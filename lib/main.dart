@@ -6,49 +6,27 @@ import 'services/auth_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,  // icon tối trên nền trắng
+    ),
   );
-  runApp(const AzureConnectApp());
+  runApp(const MyApp());
 }
 
-class AzureConnectApp extends StatefulWidget {
-  const AzureConnectApp({super.key});
-
-  @override
-  State<AzureConnectApp> createState() => _AzureConnectAppState();
-}
-
-class _AzureConnectAppState extends State<AzureConnectApp> {
-  late final void Function() _unsubscribe;
-
-  @override
-  void initState() {
-    super.initState();
-    // Lắng nghe AuthService — tự rebuild khi login/logout
-    _unsubscribe = authService.subscribe(() => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _unsubscribe();
-    super.dispose();
-  }
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Azure Connect',
       debugShowCheckedModeBanner: false,
-
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.light,
-
-      home: authService.isLoggedIn
-        ? AppRouter.getMainScreen()
-        : AppRouter.getLoginScreen(),
+      theme: AppTheme.light,          // ← đổi từ dark → light
+      initialRoute: authService.isLoggedIn
+          ? AppRouter.main
+          : AppRouter.login,
       onGenerateRoute: AppRouter.generateRoute,
     );
   }
