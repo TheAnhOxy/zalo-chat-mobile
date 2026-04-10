@@ -1,5 +1,5 @@
 name: ott_chat_app
-description: "A new Flutter project."
+description: "A new Flutter project - OTT Chat App like Zalo/Messenger"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -33,7 +33,30 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
+
+  # Navigation & State Management
+  go_router: ^14.2.0
+  flutter_riverpod: ^2.5.1
+
+  # UI & Media
   cupertino_icons: ^1.0.8
+  flutter_svg: ^2.0.10
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0
+  image_picker: ^1.1.2
+  emoji_picker_flutter: ^4.4.0
+  file_picker: ^8.1.2
+  audioplayers: ^6.1.0
+  #thiếu webrtc
+
+  # Realtime & Communication
+  socket_io_client: ^2.0.3+1
+  permission_handler: ^11.3.1
+
+  # Utils
+  intl: ^0.19.0
+  uuid: ^4.4.0
+  timeago: ^3.6.1
 
 dev_dependencies:
   flutter_test:
