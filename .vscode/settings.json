@@ -1,0 +1,10 @@
+{
+  "files.exclude": {
+    "**/linux": true,
+    "**/macos": true,
+    "**/windows": true,
+    "**/web": true,
+    "**/.dart_tool": true,
+    "**/build": true
+  }
+}
