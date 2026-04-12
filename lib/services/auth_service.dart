@@ -92,26 +92,17 @@ class AuthService {
   AuthService._internal();
 
   // ── State ─────────────────────────────────────────────────────
-  /// Fake user mặc định — bỏ qua màn Login khi test Chat
-  UserModel? _currentUser = const UserModel(
-    id: 'USR_001',
-    fullName: 'Nguyễn Văn An',
-    phone: '0901234567',
-    email: 'an@azureconnect.vn',
-    avatar: 'https://i.pravatar.cc/150?img=11',
-    bio: 'Flutter Developer 🚀',
-    gender: 'male',
-    status: UserStatus(isOnline: true),
-    isVerified: true,
-  );
+  UserModel? _currentUser;
 
-  String? _accessToken = 'fake-jwt-token-for-dev';
+  String? _accessToken;
+  String? _refreshToken;
   final List<AuthListener> _listeners = [];
 
   // ── Public Getters ────────────────────────────────────────────
   UserModel? get currentUser => _currentUser;
   String?    get userId      => _currentUser?.id;
   String?    get accessToken => _accessToken;
+  String?    get refreshToken => _refreshToken;
   bool       get isLoggedIn  => _currentUser != null;
   bool       get isVerified  => _currentUser?.isVerified ?? false;
 
@@ -141,6 +132,7 @@ class AuthService {
       isVerified: true,
     );
     _accessToken = 'fake-jwt-user1';
+    _refreshToken = 'fake-refresh-user1';
     _notify();
   }
 
@@ -156,14 +148,16 @@ class AuthService {
       isVerified: true,
     );
     _accessToken = 'fake-jwt-user2';
+    _refreshToken = 'fake-refresh-user2';
     _notify();
   }
 
   // ── Stub cho NGƯỜI 1 (AUTH) implement sau ─────────────────────
   /// Gọi sau khi decode JWT thành công
-  void setUser(UserModel user, {String? token}) {
+  void setUser(UserModel user, {String? token, String? refreshToken}) {
     _currentUser = user;
     if (token != null) _accessToken = token;
+    if (refreshToken != null) _refreshToken = refreshToken;
     _notify();
   }
 
@@ -188,6 +182,7 @@ class AuthService {
   void logout() {
     _currentUser = null;
     _accessToken = null;
+    _refreshToken = null;
     _notify();
   }
 }

@@ -3,7 +3,10 @@ import 'package:flutter/gestures.dart';
 import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
 import '../../services/auth_service.dart';
+import '../../services/fake_auth_flow_service.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/top_notice.dart';
+import 'post_login_security_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final VoidCallback? onLoginSuccess;
@@ -28,23 +31,45 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _login() async {
     if (_loading) return;
+    final identifier = _phoneCtrl.text.trim();
+    final password = _passCtrl.text;
+
+    if (identifier.isEmpty) {
+      _showError('Vui lòng nhập số điện thoại hoặc email.');
+      return;
+    }
+    if (password.length < 8) {
+      _showError('Mật khẩu cần từ 8 ký tự trở lên.');
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      await authService.loginWithPhone(_phoneCtrl.text.trim(), _passCtrl.text);
+      final result = await fakeAuthFlowService.login(
+        identifier: identifier,
+        password: password,
+      );
       if (!mounted) return;
-      // Dùng AppRouter để navigate — pushReplacementNamed để xoá Login khỏi stack
-      Navigator.pushReplacementNamed(context, AppRouter.main);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Đăng nhập thất bại: $e'),
-          backgroundColor: AppColors.error,
+      Navigator.pushNamed(
+        context,
+        AppRouter.postLoginSecurity,
+        arguments: PostLoginSecurityArguments(
+          loginResult: result,
+          identifier: identifier,
         ),
       );
+    } on FakeAuthException catch (e) {
+      _showError(e.message);
+    } catch (e) {
+      _showError('Đăng nhập thất bại: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    showTopNotice(context, message: message, isError: true);
   }
 
   @override
@@ -67,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.primary.withOpacity(0.4),
+                      color: AppColors.primary.withValues(alpha: 0.4),
                       blurRadius: 24,
                       offset: const Offset(0, 8),
                     ),
@@ -122,7 +147,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 8),
                     _buildTextField(
                       controller: _phoneCtrl,
-                      hint: 'name@domain.com',
+                      hint: '0901234567 hoặc you@gmail.com',
                       icon: Icons.person_outline,
                       keyboardType: TextInputType.emailAddress,
                     ),
@@ -185,52 +210,38 @@ class _LoginScreenState extends State<LoginScreen> {
                       loading: _loading,
                     ),
                     const SizedBox(height: 20),
-
-                    // Divider
                     Row(
                       children: [
-                        const Expanded(
-                          child: Divider(color: AppColors.divider),
-                        ),
+                        const Expanded(child: Divider(color: AppColors.divider)),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Text(
-                            'HOẶC TIẾP TỤC VỚI',
+                            'DANG NHAP NHANH',
                             style: TextStyle(
                               fontSize: 11,
-                              color: AppColors.textHint.withOpacity(0.7),
+                              color: AppColors.textHint.withValues(alpha: 0.75),
                               fontFamily: 'Inter',
-                              letterSpacing: 0.5,
+                              letterSpacing: 0.7,
                             ),
                           ),
                         ),
-                        const Expanded(
-                          child: Divider(color: AppColors.divider),
-                        ),
+                        const Expanded(child: Divider(color: AppColors.divider)),
                       ],
                     ),
-                    const SizedBox(height: 20),
-
-                    // Social
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _SocialBtn(
-                            label: 'User 2',
-                            icon: Icons.person_outline,
-                            color: Colors.orange,
-                            onTap: () {
-                              authService.loginAsUser2();
-
-                              Navigator.pushNamedAndRemoveUntil(
-                                context,
-                                AppRouter.main,
-                                (route) => false,
-                              );
-                            },
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 14),
+                    _QuickLoginButton(
+                      onTap: () {
+                        authService.loginAsUser2();
+                        showTopNotice(
+                          context,
+                          message: 'Da dang nhap nhanh bang User 2 (fake).',
+                        );
+                        Navigator.pushNamedAndRemoveUntil(
+                          context,
+                          AppRouter.main,
+                          (route) => false,
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -316,44 +327,40 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _SocialBtn extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
+class _QuickLoginButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _SocialBtn({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
+
+  const _QuickLoginButton({required this.onTap});
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      height: 46,
-      decoration: BoxDecoration(
-        color: AppColors.bgInput,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              fontFamily: 'Inter',
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: AppColors.bgInput,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.bolt_rounded, color: Colors.orange, size: 20),
+            SizedBox(width: 8),
+            Text(
+              'Dang nhap nhanh voi User 2',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Inter',
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
+

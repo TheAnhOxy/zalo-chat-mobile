@@ -2,10 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:ott_chat_app/navigation/app_router.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/auth_service.dart';
+import '../../services/fake_auth_flow_service.dart';
 import '../../widgets/common/common_widgets.dart';
 
-class SettingScreen extends StatelessWidget {
+class SettingScreen extends StatefulWidget {
   const SettingScreen({super.key});
+
+  @override
+  State<SettingScreen> createState() => _SettingScreenState();
+}
+
+class _SettingScreenState extends State<SettingScreen> {
+  bool _logoutLoading = false;
+
+  Future<void> _logoutCurrentDevice() async {
+    if (_logoutLoading) return;
+
+    setState(() => _logoutLoading = true);
+    try {
+      final refresh = authService.refreshToken;
+      if (refresh != null && refresh.isNotEmpty) {
+        await fakeAuthFlowService.logout(refresh);
+      }
+    } catch (_) {
+      // Keep UX smooth: still allow local logout when API call fails.
+    }
+
+    if (!mounted) return;
+    authService.logout();
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      AppRouter.login,
+      (route) => false,
+    );
+    setState(() => _logoutLoading = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -121,11 +151,17 @@ class SettingScreen extends StatelessWidget {
                 icon: Icons.lock_outline,
                 title: 'Tài khoản & Bảo mật',
                 subtitle: 'Mật khẩu, xác thực 2 lớp',
+                onTap: () {
+                  Navigator.pushNamed(context, AppRouter.accountSecurity);
+                },
               ),
               _SettingsItemData(
                 icon: Icons.devices_outlined,
                 title: 'Thiết bị & Phiên đăng nhập',
                 subtitle: 'Quản lý các thiết bị đang kết nối',
+                onTap: () {
+                  Navigator.pushNamed(context, AppRouter.deviceSessions);
+                },
               ),
               _SettingsItemData(
                 icon: Icons.notifications_outlined,
@@ -178,10 +214,19 @@ class SettingScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: OutlinedButton.icon(
-              icon: const Icon(Icons.logout, color: AppColors.error),
-              label: const Text(
-                'Đăng xuất',
-                style: TextStyle(
+              icon: _logoutLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.error,
+                      ),
+                    )
+                  : const Icon(Icons.logout, color: AppColors.error),
+              label: Text(
+                _logoutLoading ? 'Dang dang xuat...' : 'Dang xuat',
+                style: const TextStyle(
                   color: AppColors.error,
                   fontFamily: 'Inter',
                   fontWeight: FontWeight.w600,
@@ -195,10 +240,7 @@ class SettingScreen extends StatelessWidget {
                 ),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-              onPressed: () {
-                authService.logout();
-                Navigator.of(context).pushNamedAndRemoveUntil(AppRouter.login, (route) => false);
-              },
+              onPressed: _logoutLoading ? null : _logoutCurrentDevice,
             ),
           ),
         ],

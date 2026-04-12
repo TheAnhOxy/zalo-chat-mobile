@@ -8,6 +8,10 @@ import '../data/models/models.dart';
 import '../navigation/main_navigator.dart';
 import '../screens/auth/register_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
+import '../screens/auth/otp_verify_screen.dart';
+import '../screens/auth/post_login_security_screen.dart';
+import '../screens/setting/account_security_screen.dart';
+import '../screens/setting/device_sessions_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppRouter — Tập trung tất cả route vào 1 chỗ
@@ -34,6 +38,10 @@ class AppRouter {
   static const String groupDetail = '/group/detail';
   static const String register = '/register';
   static const String forgotPassword = '/forgot-password';
+  static const String otpVerify = '/otp-verify';
+  static const String postLoginSecurity = '/post-login-security';
+  static const String accountSecurity = '/settings/account-security';
+  static const String deviceSessions = '/settings/device-sessions';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -47,6 +55,20 @@ class AppRouter {
 
       case forgotPassword:
         return _fade(const ForgotPasswordScreen());
+
+      case otpVerify:
+        final args = settings.arguments as OtpVerifyArguments;
+        return _fade(OtpVerifyScreen(args: args));
+
+      case postLoginSecurity:
+        final args = settings.arguments as PostLoginSecurityArguments;
+        return _fade(PostLoginSecurityScreen(args: args));
+
+      case accountSecurity:
+        return _fade(const AccountSecurityScreen());
+
+      case deviceSessions:
+        return _fade(const DeviceSessionsScreen());
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:
@@ -104,12 +126,12 @@ class AppRouter {
 
   /// Slide từ phải — dùng cho màn hình con (chat detail, call...)
   static PageRoute _slide(Widget page) => PageRouteBuilder(
-    pageBuilder: (_, a, __) => page,
-    transitionsBuilder: (_, a, __, child) => SlideTransition(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) => SlideTransition(
       position: Tween<Offset>(
         begin: const Offset(1, 0),
         end: Offset.zero,
-      ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
       child: child,
     ),
     transitionDuration: const Duration(milliseconds: 280),
@@ -117,20 +139,20 @@ class AppRouter {
 
   /// Fade — dùng cho màn hình chính (login, main)
   static PageRoute _fade(Widget page) => PageRouteBuilder(
-    pageBuilder: (_, a, __) => page,
-    transitionsBuilder: (_, a, __, child) =>
-        FadeTransition(opacity: a, child: child),
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+        FadeTransition(opacity: animation, child: child),
     transitionDuration: const Duration(milliseconds: 220),
   );
 
   /// Full screen (không animation rõ) — dùng cho call
   static PageRoute _fullscreen(Widget page) => PageRouteBuilder(
-    pageBuilder: (_, a, __) => page,
-    transitionsBuilder: (_, a, __, child) => SlideTransition(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) => SlideTransition(
       position: Tween<Offset>(
         begin: const Offset(0, 1),
         end: Offset.zero,
-      ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
       child: child,
     ),
     transitionDuration: const Duration(milliseconds: 350),
