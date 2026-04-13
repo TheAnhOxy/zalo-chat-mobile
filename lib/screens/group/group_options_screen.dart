@@ -123,7 +123,9 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
           ),
           TextButton(
             onPressed: () {
+              // Đóng dialog → đóng Options → đóng Chat
               Navigator.pop(context);
+              Navigator.pop(context, null); // null = thoát khỏi nhóm
               Navigator.pop(context);
             },
             child: const Text('Rời nhóm',
@@ -184,7 +186,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, _group),
         ),
         title: const Text(
           'Tùy chọn',

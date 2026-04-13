@@ -4,7 +4,7 @@ import '../../core/utils/image_utils.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../navigation/app_router.dart';
-import '../group/group_options_screen.dart';
+import '../group/group_chat_screen.dart';
 import 'create_group_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
@@ -524,7 +524,7 @@ class _GroupsTabState extends State<_GroupsTab> {
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => GroupOptionsScreen(group: g),
+                    builder: (_) => GroupChatScreen(group: g),
                   ),
                 ),
               );
