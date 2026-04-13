@@ -78,7 +78,6 @@ class ContactsApiService {
           .map((f) {
             final rid = (f['requesterId'] ?? '').toString();
             final aid = (f['addresseeId'] ?? '').toString();
-            // userId của bạn = field còn lại
             return rid == userId ? aid : rid;
           })
           .where((id) => id.isNotEmpty)
@@ -133,6 +132,32 @@ class ContactsApiService {
 
       groups.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return ContactsResult.success(groups);
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được backend: $e');
+    }
+  }
+
+  // ── Search User By Phone ─────────────────────────────────────────────────────
+
+  /// Tìm kiếm user theo số điện thoại. Trả về null nếu không tìm thấy.
+  Future<ContactsResult<ApiUserModel?>> searchByPhone(String phone) async {
+    try {
+      final normalized = phone.trim().replaceAll(RegExp(r'\s+'), '');
+      final res = await _client
+          .get(Uri.parse('$baseUrl/users/phone/$normalized'))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode == 404 || res.body == 'null' || res.body.trim() == 'null') {
+        return const ContactsResult.success(null);
+      }
+
+      if (res.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+
+      final data = jsonDecode(res.body);
+      if (data == null) return const ContactsResult.success(null);
+      return ContactsResult.success(_parseUser(data as Map<String, dynamic>));
     } catch (e) {
       return ContactsResult.error('Không kết nối được backend: $e');
     }

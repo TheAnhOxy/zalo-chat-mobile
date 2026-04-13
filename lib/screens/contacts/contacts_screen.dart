@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../navigation/app_router.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -39,7 +40,7 @@ class _ContactsScreenState extends State<ContactsScreen> with SingleTickerProvid
           children: [
             _TopBar(
               controller: _searchController,
-              onAdd: () {},
+              onAdd: () => Navigator.pushNamed(context, AppRouter.addFriend),
               onSearchChanged: (_) => setState(() {}),
             ),
             Container(
@@ -254,28 +255,38 @@ class _FriendsTabState extends State<_FriendsTab> {
           ),
           const SizedBox(height: 8),
           if (filtered.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 48),
+            Padding(
+              padding: const EdgeInsets.only(top: 48),
               child: Center(
-                child: Text(
-                  'Chưa có bạn bè nào',
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 14,
-                    color: AppColors.textHint,
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.search_off_rounded, size: 40, color: AppColors.textHint),
+                    const SizedBox(height: 10),
+                    Text(
+                      q.isEmpty
+                          ? 'Chưa có bạn bè nào'
+                          : 'Không tìm thấy "$q"',
+                      style: const TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: 14,
+                        color: AppColors.textHint,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             )
           else
             ...sections.expand((section) {
               return [
-                _SectionHeader(title: section.letter),
+                if (q.isEmpty) _SectionHeader(title: section.letter),
                 ...List.generate(section.items.length, (i) {
                   final item = section.items[i];
                   return _ContactRow(
                     name: item.name,
                     avatarUrl: item.avatarUrl,
+                    highlightQuery: q,
                     onCall: () {},
                     onVideo: () {},
                     showDivider: i != section.items.length - 1,
@@ -737,6 +748,7 @@ class _SmallCircleAvatar extends StatelessWidget {
 class _ContactRow extends StatelessWidget {
   final String name;
   final String? avatarUrl;
+  final String highlightQuery;
   final VoidCallback onCall;
   final VoidCallback onVideo;
   final bool showDivider;
@@ -744,6 +756,7 @@ class _ContactRow extends StatelessWidget {
   const _ContactRow({
     required this.name,
     required this.avatarUrl,
+    this.highlightQuery = '',
     required this.onCall,
     required this.onVideo,
     required this.showDivider,
@@ -762,10 +775,9 @@ class _ContactRow extends StatelessWidget {
                 _Avatar(url: avatarUrl, name: name),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: _HighlightText(
+                    text: name,
+                    query: highlightQuery,
                     style: const TextStyle(
                       fontFamily: 'Inter',
                       fontSize: 14,
@@ -794,6 +806,56 @@ class _ContactRow extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+// ── Highlight matching text ───────────────────────────────────────────────────
+
+class _HighlightText extends StatelessWidget {
+  final String text;
+  final String query;
+  final TextStyle style;
+
+  const _HighlightText({
+    required this.text,
+    required this.query,
+    required this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (query.isEmpty) {
+      return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: style);
+    }
+
+    final lowerText = _normalize(text);
+    final lowerQuery = _normalize(query);
+    final idx = lowerText.indexOf(lowerQuery);
+
+    if (idx < 0) {
+      return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: style);
+    }
+
+    final before = text.substring(0, idx);
+    final match = text.substring(idx, idx + query.length);
+    final after = text.substring(idx + query.length);
+
+    return Text.rich(
+      TextSpan(children: [
+        if (before.isNotEmpty) TextSpan(text: before, style: style),
+        TextSpan(
+          text: match,
+          style: style.copyWith(
+            color: AppColors.primary,
+            fontWeight: FontWeight.w700,
+            backgroundColor: AppColors.primaryLight,
+          ),
+        ),
+        if (after.isNotEmpty) TextSpan(text: after, style: style),
+      ]),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 }
@@ -839,7 +901,7 @@ List<_ContactSection> _buildSections(List<ApiUserModel> users) {
   for (final u in users) {
     final letter = _groupLetter(u.fullName);
     (grouped[letter] ??= [])
-        .add(_ContactItem(name: u.fullName, avatarUrl: u.avatar));
+        .add(_ContactItem(name: u.fullName, avatarUrl: u.avatar, phone: u.phone));
   }
   final letters = grouped.keys.toList()..sort();
   return letters
@@ -889,7 +951,8 @@ class _ContactSection {
 class _ContactItem {
   final String name;
   final String? avatarUrl;
-  const _ContactItem({required this.name, required this.avatarUrl});
+  final String phone;
+  const _ContactItem({required this.name, required this.avatarUrl, required this.phone});
 }
 
 // ── ErrorView ─────────────────────────────────────────────────────────────────

@@ -14,6 +14,9 @@ import '../screens/setting/account_security_screen.dart';
 import '../screens/setting/device_sessions_screen.dart';
 import '../screens/setting/edit_profile_screen.dart';
 import '../screens/setting/privacy_screen.dart';
+import '../screens/contacts/add_friend_screen.dart';
+import '../screens/contacts/found_user_screen.dart';
+import '../services/contacts_api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppRouter — Tập trung tất cả route vào 1 chỗ
@@ -46,6 +49,8 @@ class AppRouter {
   static const String deviceSessions = '/settings/device-sessions';
   static const String editProfile = '/settings/edit-profile';
   static const String privacy = '/settings/privacy';
+  static const String addFriend = '/contacts/add-friend';
+  static const String foundUser = '/contacts/found-user';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -79,6 +84,13 @@ class AppRouter {
 
       case privacy:
         return _fade(const PrivacyScreen());
+
+      case addFriend:
+        return _slide(const AddFriendScreen());
+
+      case foundUser:
+        final user = settings.arguments as ApiUserModel;
+        return _slide(FoundUserScreen(user: user));
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:
