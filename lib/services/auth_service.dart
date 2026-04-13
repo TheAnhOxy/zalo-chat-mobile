@@ -138,7 +138,7 @@ class AuthService {
 
   void loginAsUser2() {
     _currentUser = const UserModel(
-      id: 'USR_002',
+      id: '69da71a2431bb5f06428519b',
       fullName: 'Nguyễn Linh',
       phone: '0912345678',
       email: 'linh@azureconnect.vn',

@@ -52,7 +52,6 @@ dependencies:
   # Realtime & Communication
   socket_io_client: ^2.0.3+1
   permission_handler: ^11.3.1
-  http: ^1.2.2
   another_flushbar: ^1.12.30
 
   # Utils
