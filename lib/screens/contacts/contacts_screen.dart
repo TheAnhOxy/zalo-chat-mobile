@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
-import '../../data/mock/mock_data.dart';
+import '../../services/auth_service.dart';
+import '../../services/contacts_api_service.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -161,7 +162,7 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _FriendsTab extends StatelessWidget {
+class _FriendsTab extends StatefulWidget {
   final String query;
   final int filterIndex;
   final ValueChanged<int> onChangeFilter;
@@ -173,92 +174,221 @@ class _FriendsTab extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final contacts = _ContactsDataSource.buildContacts(query: query);
+  State<_FriendsTab> createState() => _FriendsTabState();
+}
 
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: [
-        const SizedBox(height: 8),
-        _QuickActionTile(
-          icon: Icons.person_add_alt_rounded,
-          iconBg: const Color(0xFFE8F0FF),
-          iconColor: AppColors.primary,
-          title: 'Lời mời kết bạn (7)',
-          onTap: () {},
-        ),
-        _QuickActionTile(
-          icon: Icons.cake_rounded,
-          iconBg: const Color(0xFFFFF3E0),
-          iconColor: const Color(0xFFFF9800),
-          title: 'Sinh nhật',
-          onTap: () {},
-        ),
-        const SizedBox(height: 8),
-        _FilterRow(
-          allCount: contacts.totalCount,
-          current: filterIndex,
-          onChange: onChangeFilter,
-        ),
-        const SizedBox(height: 8),
-        ...contacts.sections.expand((section) {
-          return [
-            _SectionHeader(title: section.letter),
-            ...List.generate(section.items.length, (i) {
-              final item = section.items[i];
-              return _ContactRow(
-                name: item.name,
-                avatarUrl: item.avatarUrl,
-                onCall: () {},
-                onVideo: () {},
-                showDivider: i != section.items.length - 1,
-              );
+class _FriendsTabState extends State<_FriendsTab> {
+  List<ApiUserModel>? _friends;
+  String? _error;
+  int _pendingCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final userId = authService.userId ?? '';
+    final result = await ContactsApiService.instance.fetchFriends(userId);
+    final pending =
+        await ContactsApiService.instance.fetchPendingRequestCount(userId);
+    if (!mounted) return;
+    setState(() {
+      _friends = result.data ?? [];
+      _error = result.error;
+      _pendingCount = pending;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_friends == null && _error == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      );
+    }
+
+    if (_error != null && (_friends == null || _friends!.isEmpty)) {
+      return _ErrorView(message: _error!, onRetry: _load);
+    }
+
+    final friends = _friends ?? [];
+    final q = widget.query.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? friends
+        : friends
+            .where((u) => _normalize(u.fullName).contains(_normalize(q)))
+            .toList();
+
+    final sections = _buildSections(filtered);
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const SizedBox(height: 8),
+          _QuickActionTile(
+            icon: Icons.person_add_alt_rounded,
+            iconBg: const Color(0xFFE8F0FF),
+            iconColor: AppColors.primary,
+            title: _pendingCount > 0
+                ? 'Lời mời kết bạn ($_pendingCount)'
+                : 'Lời mời kết bạn',
+            onTap: () {},
+          ),
+          _QuickActionTile(
+            icon: Icons.cake_rounded,
+            iconBg: const Color(0xFFFFF3E0),
+            iconColor: const Color(0xFFFF9800),
+            title: 'Sinh nhật',
+            onTap: () {},
+          ),
+          const SizedBox(height: 8),
+          _FilterRow(
+            allCount: filtered.length,
+            current: widget.filterIndex,
+            onChange: widget.onChangeFilter,
+          ),
+          const SizedBox(height: 8),
+          if (filtered.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 48),
+              child: Center(
+                child: Text(
+                  'Chưa có bạn bè nào',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 14,
+                    color: AppColors.textHint,
+                  ),
+                ),
+              ),
+            )
+          else
+            ...sections.expand((section) {
+              return [
+                _SectionHeader(title: section.letter),
+                ...List.generate(section.items.length, (i) {
+                  final item = section.items[i];
+                  return _ContactRow(
+                    name: item.name,
+                    avatarUrl: item.avatarUrl,
+                    onCall: () {},
+                    onVideo: () {},
+                    showDivider: i != section.items.length - 1,
+                  );
+                }),
+              ];
             }),
-          ];
-        }),
-        const SizedBox(height: 12),
-      ],
+          const SizedBox(height: 12),
+        ],
+      ),
     );
   }
 }
 
-class _GroupsTab extends StatelessWidget {
+class _GroupsTab extends StatefulWidget {
   final String query;
   const _GroupsTab({required this.query});
 
   @override
-  Widget build(BuildContext context) {
-    final result = _GroupsDataSource.buildGroups(query: query);
+  State<_GroupsTab> createState() => _GroupsTabState();
+}
 
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: [
-        const SizedBox(height: 8),
-        _QuickActionTile(
-          icon: Icons.group_add_rounded,
-          iconBg: const Color(0xFFE8F0FF),
-          iconColor: AppColors.primary,
-          title: 'Tạo nhóm mới',
-          onTap: () {},
-        ),
-        const SizedBox(height: 8),
-        _GroupsHeaderRow(
-          title: 'Nhóm đang tham gia (${result.totalCount})',
-          onSort: () {},
-        ),
-        ...List.generate(result.items.length, (i) {
-          final g = result.items[i];
-          return _GroupRow(
-            name: g.name,
-            subtitle: g.subtitle,
-            trailing: g.trailing,
-            avatarUrls: g.avatarUrls,
-            showDivider: i != result.items.length - 1,
+class _GroupsTabState extends State<_GroupsTab> {
+  List<ApiGroupModel>? _groups;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final userId = authService.userId ?? '';
+    final result = await ContactsApiService.instance.fetchGroups(userId);
+    if (!mounted) return;
+    setState(() {
+      _groups = result.data ?? [];
+      _error = result.error;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_groups == null && _error == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      );
+    }
+
+    if (_error != null && (_groups == null || _groups!.isEmpty)) {
+      return _ErrorView(message: _error!, onRetry: _load);
+    }
+
+    final groups = _groups ?? [];
+    final q = widget.query.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? groups
+        : groups
+            .where((g) => g.name.toLowerCase().contains(q))
+            .toList();
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const SizedBox(height: 8),
+          _QuickActionTile(
+            icon: Icons.group_add_rounded,
+            iconBg: const Color(0xFFE8F0FF),
+            iconColor: AppColors.primary,
+            title: 'Tạo nhóm mới',
             onTap: () {},
-          );
-        }),
-        const SizedBox(height: 12),
-      ],
+          ),
+          const SizedBox(height: 8),
+          _GroupsHeaderRow(
+            title: 'Nhóm đang tham gia (${filtered.length})',
+            onSort: () {},
+          ),
+          if (filtered.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 48),
+              child: Center(
+                child: Text(
+                  'Chưa tham gia nhóm nào',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 14,
+                    color: AppColors.textHint,
+                  ),
+                ),
+              ),
+            )
+          else
+            ...List.generate(filtered.length, (i) {
+              final g = filtered[i];
+              final avatarUrls = g.avatar.isNotEmpty ? [g.avatar] : <String>[];
+              return _GroupRow(
+                name: g.name.isEmpty ? 'Nhóm' : g.name,
+                subtitle: g.lastMessageContent ?? 'Chưa có tin nhắn',
+                trailing: g.lastMessageAt != null
+                    ? _formatRelative(g.lastMessageAt!)
+                    : _formatRelative(g.updatedAt),
+                avatarUrls: avatarUrls,
+                showDivider: i != filtered.length - 1,
+                onTap: () {},
+              );
+            }),
+          const SizedBox(height: 12),
+        ],
+      ),
     );
   }
 }
@@ -702,135 +832,103 @@ String _initialsFromName(String name) {
   return (first + last).toUpperCase();
 }
 
-class _ContactsDataSource {
-  static _ContactsResult buildContacts({required String query}) {
-    // Lấy users mock và loại current user (thường là USR_001 trong mock).
-    final all = mockUsers.values.where((u) => u.id != 'USR_001').toList();
-    all.sort((a, b) => a.fullName.compareTo(b.fullName));
+// ── Helper: build sections A/B/C... từ danh sách ApiUserModel ────────────────
 
-    final q = query.trim().toLowerCase();
-    final filtered = q.isEmpty
-        ? all
-        : all.where((u) => _normalize(u.fullName).contains(_normalize(q))).toList();
-
-    final grouped = <String, List<_ContactItem>>{};
-    for (final u in filtered) {
-      final letter = _groupLetter(u.fullName);
-      (grouped[letter] ??= []).add(_ContactItem(name: u.fullName, avatarUrl: u.avatar));
-    }
-
-    final letters = grouped.keys.toList()..sort();
-    final sections = letters
-        .map((l) => _ContactSection(letter: l, items: grouped[l]!..sort((a, b) => a.name.compareTo(b.name))))
-        .toList();
-
-    return _ContactsResult(totalCount: filtered.length, sections: sections);
+List<_ContactSection> _buildSections(List<ApiUserModel> users) {
+  final grouped = <String, List<_ContactItem>>{};
+  for (final u in users) {
+    final letter = _groupLetter(u.fullName);
+    (grouped[letter] ??= [])
+        .add(_ContactItem(name: u.fullName, avatarUrl: u.avatar));
   }
-
-  static String _groupLetter(String name) {
-    final n = _normalize(name);
-    if (n.isEmpty) return '#';
-    final ch = n.characters.first.toUpperCase();
-    final isLetter = RegExp(r'^[A-Z]$').hasMatch(ch);
-    return isLetter ? ch : '#';
-  }
-
-  static String _normalize(String s) {
-    // Normalize đơn giản để grouping/search (bỏ dấu phổ biến tiếng Việt).
-    final lower = s.toLowerCase();
-    return lower
-        .replaceAll(RegExp(r'[àáạảãâầấậẩẫăằắặẳẵ]'), 'a')
-        .replaceAll(RegExp(r'[èéẹẻẽêềếệểễ]'), 'e')
-        .replaceAll(RegExp(r'[ìíịỉĩ]'), 'i')
-        .replaceAll(RegExp(r'[òóọỏõôồốộổỗơờớợởỡ]'), 'o')
-        .replaceAll(RegExp(r'[ùúụủũưừứựửữ]'), 'u')
-        .replaceAll(RegExp(r'[ỳýỵỷỹ]'), 'y')
-        .replaceAll(RegExp(r'[đ]'), 'd')
-        .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
-        .trim();
-  }
+  final letters = grouped.keys.toList()..sort();
+  return letters
+      .map((l) => _ContactSection(
+            letter: l,
+            items: grouped[l]!..sort((a, b) => a.name.compareTo(b.name)),
+          ))
+      .toList();
 }
 
-class _GroupsDataSource {
-  static _GroupsResult buildGroups({required String query}) {
-    final groups = mockConversations.where((c) => c.type == 'GROUP').toList();
-    final q = query.trim().toLowerCase();
-    final filtered = q.isEmpty
-        ? groups
-        : groups.where((g) => (g.name ?? '').toLowerCase().contains(q)).toList();
+String _groupLetter(String name) {
+  final n = _normalize(name);
+  if (n.isEmpty) return '#';
+  final ch = n.characters.first.toUpperCase();
+  return RegExp(r'^[A-Z]$').hasMatch(ch) ? ch : '#';
+}
 
-    // Render data tối giản giống UI ảnh demo.
-    final items = filtered.map((g) {
-      final name = (g.name == null || g.name!.trim().isEmpty) ? 'Nhóm' : g.name!.trim();
-      final subtitle = g.lastMessage?.content ?? 'Tin nhắn đã được thu hồi';
-      final trailing = _formatRelative(g.lastMessage?.createdAt ?? g.updatedAt);
-      final avatarUrls = <String>[
-        g.avatar ?? '',
-        'https://i.pravatar.cc/150?img=12',
-        'https://i.pravatar.cc/150?img=22',
-      ].where((u) => u.isNotEmpty).toList();
-
-      return _GroupItem(
-        name: name,
-        subtitle: subtitle,
-        trailing: trailing,
-        avatarUrls: avatarUrls,
-      );
-    }).toList();
-
-    return _GroupsResult(totalCount: filtered.length, items: items);
-  }
+String _normalize(String s) {
+  final lower = s.toLowerCase();
+  return lower
+      .replaceAll(RegExp(r'[àáạảãâầấậẩẫăằắặẳẵ]'), 'a')
+      .replaceAll(RegExp(r'[èéẹẻẽêềếệểễ]'), 'e')
+      .replaceAll(RegExp(r'[ìíịỉĩ]'), 'i')
+      .replaceAll(RegExp(r'[òóọỏõôồốộổỗơờớợởỡ]'), 'o')
+      .replaceAll(RegExp(r'[ùúụủũưừứựửữ]'), 'u')
+      .replaceAll(RegExp(r'[ỳýỵỷỹ]'), 'y')
+      .replaceAll(RegExp(r'[đ]'), 'd')
+      .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
+      .trim();
 }
 
 String _formatRelative(DateTime dt) {
-  final now = DateTime.now();
-  final diff = now.difference(dt);
+  final diff = DateTime.now().difference(dt);
   if (diff.inMinutes < 60) return '${diff.inMinutes} phút';
   if (diff.inHours < 24) return '${diff.inHours} giờ';
   return '${diff.inDays} ngày';
 }
 
-class _ContactsResult {
-  final int totalCount;
-  final List<_ContactSection> sections;
-
-  const _ContactsResult({
-    required this.totalCount,
-    required this.sections,
-  });
-}
+// ── Data wrappers ──────────────────────────────────────────────────────────────
 
 class _ContactSection {
   final String letter;
   final List<_ContactItem> items;
-
   const _ContactSection({required this.letter, required this.items});
 }
 
 class _ContactItem {
   final String name;
   final String? avatarUrl;
-
   const _ContactItem({required this.name, required this.avatarUrl});
 }
 
-class _GroupsResult {
-  final int totalCount;
-  final List<_GroupItem> items;
+// ── ErrorView ─────────────────────────────────────────────────────────────────
 
-  const _GroupsResult({required this.totalCount, required this.items});
-}
+class _ErrorView extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _ErrorView({required this.message, required this.onRetry});
 
-class _GroupItem {
-  final String name;
-  final String subtitle;
-  final String trailing;
-  final List<String> avatarUrls;
-
-  const _GroupItem({
-    required this.name,
-    required this.subtitle,
-    required this.trailing,
-    required this.avatarUrls,
-  });
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded,
+                size: 48, color: AppColors.textHint),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Thử lại'),
+              style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

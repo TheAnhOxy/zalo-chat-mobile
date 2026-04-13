@@ -57,6 +57,7 @@ dependencies:
   intl: ^0.19.0
   uuid: ^4.4.0
   timeago: ^3.6.1
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

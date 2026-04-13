@@ -94,12 +94,12 @@ class AuthService {
   // ── State ─────────────────────────────────────────────────────
   /// Fake user mặc định — bỏ qua màn Login khi test Chat
   UserModel? _currentUser = const UserModel(
-    id: 'USR_001',
-    fullName: 'Nguyễn Văn An',
-    phone: '0901234567',
-    email: 'an@azureconnect.vn',
-    avatar: 'https://i.pravatar.cc/150?img=11',
-    bio: 'Flutter Developer 🚀',
+    id: '69da71a2431bb5f06428519b',
+    fullName: 'Nguyễn Văn A',
+    phone: '0901000001',
+    email: 'user1@zalo-chat.test',
+    avatar: 'https://i.pravatar.cc/150?u=1',
+    bio: 'Xin chào, mình là A.',
     gender: 'male',
     status: UserStatus(isOnline: true),
     isVerified: true,
