@@ -2,14 +2,46 @@ import 'package:flutter/material.dart';
 import 'package:ott_chat_app/navigation/app_router.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/auth_service.dart';
+import '../../services/fake_auth_flow_service.dart';
 import '../../widgets/common/common_widgets.dart';
 
-class SettingScreen extends StatelessWidget {
+class SettingScreen extends StatefulWidget {
   const SettingScreen({super.key});
+
+  @override
+  State<SettingScreen> createState() => _SettingScreenState();
+}
+
+class _SettingScreenState extends State<SettingScreen> {
+  bool _logoutLoading = false;
+
+  Future<void> _logoutCurrentDevice() async {
+    if (_logoutLoading) return;
+
+    setState(() => _logoutLoading = true);
+    try {
+      final refresh = authService.refreshToken;
+      if (refresh != null && refresh.isNotEmpty) {
+        await fakeAuthFlowService.logout(refresh);
+      }
+    } catch (_) {
+      // Keep UX smooth: still allow local logout when API call fails.
+    }
+
+    if (!mounted) return;
+    authService.logout();
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      AppRouter.login,
+      (route) => false,
+    );
+    setState(() => _logoutLoading = false);
+  }
 
   @override
   Widget build(BuildContext context) {
     final user = authService.currentUser;
+    final coverUrl = (user?.coverImage ?? '').trim();
+    final hasCover = coverUrl.isNotEmpty;
 
     return Scaffold(
       backgroundColor: AppColors.bgDark,
@@ -30,87 +62,116 @@ class SettingScreen extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-              decoration: BoxDecoration(
-                color: AppColors.bgCard,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  Stack(
-                    children: [
-                      AvatarWidget(
-                        url: user?.avatar,
-                        name: user?.fullName ?? 'User',
-                        size: 82,
-                        showOnline: true,
-                        isOnline: true,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.bgCard,
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Stack(
+                  children: [
+                    if (hasCover)
+                      Positioned.fill(
+                        child: Image.network(
+                          coverUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return _buildCoverFallback();
+                          },
+                        ),
+                      )
+                    else
+                      Positioned.fill(child: _buildCoverFallback()),
+                    Positioned.fill(
+                      child: Container(
+                        color: hasCover
+                            ? Colors.black.withValues(alpha: 0.38)
+                            : AppColors.bgCard.withValues(alpha: 0.95),
                       ),
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.bgDark, width: 2),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                      child: Column(
+                        children: [
+                          Stack(
+                            children: [
+                              AvatarWidget(
+                                url: user?.avatar,
+                                name: user?.fullName ?? 'User',
+                                size: 82,
+                                showOnline: true,
+                                isOnline: true,
+                              ),
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: AppColors.bgDark, width: 2),
+                                  ),
+                                  child: const Icon(
+                                    Icons.edit,
+                                    size: 18,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          child: const Icon(
-                            Icons.edit,
-                            size: 18,
-                            color: AppColors.textPrimary,
+                          const SizedBox(height: 18),
+                          Text(
+                            user?.fullName ?? 'Minh Anh Lê',
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                              fontFamily: 'Inter',
+                            ),
                           ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    user?.fullName ?? 'Minh Anh Lê',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                      fontFamily: 'Inter',
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    user?.email ?? 'minhanh.le@azureconnect.com',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
-                      fontFamily: 'Inter',
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: const Text(
-                        'Chỉnh sửa hồ sơ',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          fontFamily: 'Inter',
-                          color: AppColors.textPrimary,
-                        ),
+                          const SizedBox(height: 6),
+                          Text(
+                            user?.email ?? 'minhanh.le@azureconnect.com',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: AppColors.textSecondary,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.pushNamed(context, AppRouter.editProfile);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                              ),
+                              child: const Text(
+                                'Chỉnh sửa hồ sơ',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'Inter',
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -121,11 +182,17 @@ class SettingScreen extends StatelessWidget {
                 icon: Icons.lock_outline,
                 title: 'Tài khoản & Bảo mật',
                 subtitle: 'Mật khẩu, xác thực 2 lớp',
+                onTap: () {
+                  Navigator.pushNamed(context, AppRouter.accountSecurity);
+                },
               ),
               _SettingsItemData(
                 icon: Icons.devices_outlined,
                 title: 'Thiết bị & Phiên đăng nhập',
                 subtitle: 'Quản lý các thiết bị đang kết nối',
+                onTap: () {
+                  Navigator.pushNamed(context, AppRouter.deviceSessions);
+                },
               ),
               _SettingsItemData(
                 icon: Icons.notifications_outlined,
@@ -136,6 +203,9 @@ class SettingScreen extends StatelessWidget {
                 icon: Icons.privacy_tip_outlined,
                 title: 'Quyền riêng tư',
                 subtitle: 'Ai có thể nhìn tin, trạng thái',
+                onTap: () {
+                  Navigator.pushNamed(context, AppRouter.privacy);
+                },
               ),
               _SettingsItemData(
                 icon: Icons.chat_bubble_outline,
@@ -178,10 +248,19 @@ class SettingScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: OutlinedButton.icon(
-              icon: const Icon(Icons.logout, color: AppColors.error),
-              label: const Text(
-                'Đăng xuất',
-                style: TextStyle(
+              icon: _logoutLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.error,
+                      ),
+                    )
+                  : const Icon(Icons.logout, color: AppColors.error),
+              label: Text(
+                _logoutLoading ? 'Đang đăng xuất...' : 'Đăng xuất',
+                style: const TextStyle(
                   color: AppColors.error,
                   fontFamily: 'Inter',
                   fontWeight: FontWeight.w600,
@@ -195,16 +274,25 @@ class SettingScreen extends StatelessWidget {
                 ),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-              onPressed: () {
-                authService.logout();
-                Navigator.of(context).pushNamedAndRemoveUntil(AppRouter.login, (route) => false);
-              },
+              onPressed: _logoutLoading ? null : _logoutCurrentDevice,
             ),
           ),
         ],
       ),
     );
   }
+}
+
+Widget _buildCoverFallback() {
+  return Container(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF334155)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+  );
 }
 
 class _SettingsGroup extends StatelessWidget {
