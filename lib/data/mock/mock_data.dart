@@ -207,7 +207,7 @@ final Map<String, List<MessageModel>> mockMessages = {
   'CONV_AI': [
     MessageModel(
       id: 'MSG_AI_0', conversationId: 'CONV_AI', senderId: 'BOT_AI',
-      content: 'Xin chào! Tôi là Trợ lý AI của Azure Connect. Hôm nay tôi có thể giúp gì cho bạn?',
+      content: 'Xin chào! Tôi là Trợ lý AI của QuickChat. Hôm nay tôi có thể giúp gì cho bạn?',
       createdAt: now.subtract(const Duration(hours: 2)),
     ),
     MessageModel(

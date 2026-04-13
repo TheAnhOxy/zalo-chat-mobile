@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/utils/image_utils.dart';
 
 // ── AvatarWidget ─────────────────────────────────────────────────────────────
 class AvatarWidget extends StatelessWidget {
@@ -47,7 +48,7 @@ class AvatarWidget extends StatelessWidget {
           child: ClipOval(
             child: url != null && url!.isNotEmpty
                 ? CachedNetworkImage(
-                    imageUrl: url!,
+                    imageUrl: webSafeImageUrl(url!),
                     fit: BoxFit.cover,
                     placeholder: (_, __) => _buildInitials(),
                     errorWidget: (_, __, ___) => _buildInitials(),

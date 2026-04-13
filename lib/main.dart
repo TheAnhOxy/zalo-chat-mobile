@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Azure Connect',
+      title: 'QuickChat',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,          // ← đổi từ dark → light
       initialRoute: authService.isLoggedIn
