@@ -16,6 +16,8 @@ import '../screens/setting/edit_profile_screen.dart';
 import '../screens/setting/privacy_screen.dart';
 import '../screens/contacts/add_friend_screen.dart';
 import '../screens/contacts/found_user_screen.dart';
+import '../screens/contacts/friend_requests_screen.dart';
+import '../screens/contacts/birthday_screen.dart';
 import '../services/contacts_api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +53,8 @@ class AppRouter {
   static const String privacy = '/settings/privacy';
   static const String addFriend = '/contacts/add-friend';
   static const String foundUser = '/contacts/found-user';
+  static const String friendRequests = '/contacts/friend-requests';
+  static const String birthday = '/contacts/birthday';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -91,6 +95,12 @@ class AppRouter {
       case foundUser:
         final user = settings.arguments as ApiUserModel;
         return _slide(FoundUserScreen(user: user));
+
+      case friendRequests:
+        return _slide(const FriendRequestsScreen());
+
+      case birthday:
+        return _slide(const BirthdayScreen());
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:

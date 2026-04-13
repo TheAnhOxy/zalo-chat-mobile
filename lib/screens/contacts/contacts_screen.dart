@@ -238,14 +238,16 @@ class _FriendsTabState extends State<_FriendsTab> {
             title: _pendingCount > 0
                 ? 'Lời mời kết bạn ($_pendingCount)'
                 : 'Lời mời kết bạn',
-            onTap: () {},
+            badge: _pendingCount > 0 ? _pendingCount : null,
+            onTap: () => Navigator.pushNamed(context, AppRouter.friendRequests)
+                .then((_) => _load()),
           ),
           _QuickActionTile(
             icon: Icons.cake_rounded,
             iconBg: const Color(0xFFFFF3E0),
             iconColor: const Color(0xFFFF9800),
             title: 'Sinh nhật',
-            onTap: () {},
+            onTap: () => Navigator.pushNamed(context, AppRouter.birthday),
           ),
           const SizedBox(height: 8),
           _FilterRow(
@@ -409,6 +411,7 @@ class _QuickActionTile extends StatelessWidget {
   final Color iconBg;
   final Color iconColor;
   final String title;
+  final int? badge;
   final VoidCallback onTap;
 
   const _QuickActionTile({
@@ -416,6 +419,7 @@ class _QuickActionTile extends StatelessWidget {
     required this.iconBg,
     required this.iconColor,
     required this.title,
+    this.badge,
     required this.onTap,
   });
 
@@ -428,11 +432,37 @@ class _QuickActionTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Row(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
-              child: Icon(icon, color: iconColor, size: 20),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+                  child: Icon(icon, color: iconColor, size: 20),
+                ),
+                if (badge != null && badge! > 0)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: AppColors.badge,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        badge! > 99 ? '99+' : '$badge',
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(width: 12),
             Expanded(

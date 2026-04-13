@@ -22,13 +22,21 @@ class ContactsApiService {
 
   // ── Models ──────────────────────────────────────────────────────────────────
 
-  static ApiUserModel _parseUser(Map<String, dynamic> j) => ApiUserModel(
-        id: (j['_id'] ?? j['id'] ?? '').toString(),
-        fullName: (j['fullName'] ?? '').toString(),
-        phone: (j['phone'] ?? '').toString(),
-        avatar: (j['avatar'] ?? '').toString(),
-        isOnline: (j['status'] as Map<String, dynamic>?)?['isOnline'] == true,
-      );
+  static ApiUserModel _parseUser(Map<String, dynamic> j) {
+    DateTime? dob;
+    final dobRaw = j['dob'];
+    if (dobRaw != null && dobRaw.toString().isNotEmpty) {
+      dob = DateTime.tryParse(dobRaw.toString());
+    }
+    return ApiUserModel(
+      id: (j['_id'] ?? j['id'] ?? '').toString(),
+      fullName: (j['fullName'] ?? '').toString(),
+      phone: (j['phone'] ?? '').toString(),
+      avatar: (j['avatar'] ?? '').toString(),
+      isOnline: (j['status'] as Map<String, dynamic>?)?['isOnline'] == true,
+      dob: dob,
+    );
+  }
 
   static ApiGroupModel _parseGroup(Map<String, dynamic> j) {
     final members = (j['members'] as List? ?? [])
@@ -182,6 +190,132 @@ class ContactsApiService {
       return 0;
     }
   }
+
+  // ── Fetch Received Friend Requests ───────────────────────────────────────────
+
+  /// Lời mời kết bạn ĐÃ NHẬN (PENDING, addresseeId == userId).
+  Future<ContactsResult<List<ApiFriendRequest>>> fetchReceivedRequests(
+      String userId) async {
+    return _fetchRequests(userId, received: true);
+  }
+
+  /// Lời mời kết bạn ĐÃ GỬI (PENDING, requesterId == userId).
+  Future<ContactsResult<List<ApiFriendRequest>>> fetchSentRequests(
+      String userId) async {
+    return _fetchRequests(userId, received: false);
+  }
+
+  Future<ContactsResult<List<ApiFriendRequest>>> _fetchRequests(
+      String userId, {required bool received}) async {
+    try {
+      final fsRes = await _client
+          .get(Uri.parse('$baseUrl/friendships/user/$userId'))
+          .timeout(const Duration(seconds: 10));
+
+      if (fsRes.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${fsRes.statusCode}');
+      }
+
+      final List<dynamic> list = jsonDecode(fsRes.body) as List;
+      final pending = list.where((f) {
+        if (f['status'] != 'PENDING') return false;
+        final aid = (f['addresseeId'] ?? '').toString();
+        final rid = (f['requesterId'] ?? '').toString();
+        return received ? aid == userId : rid == userId;
+      }).toList();
+
+      if (pending.isEmpty) return ContactsResult.success([]);
+
+      // Lấy thông tin user đối diện song song
+      final futures = pending.map((f) {
+        final otherId = received
+            ? (f['requesterId'] ?? '').toString()
+            : (f['addresseeId'] ?? '').toString();
+        return _client
+            .get(Uri.parse('$baseUrl/users/$otherId'))
+            .timeout(const Duration(seconds: 10));
+      }).toList();
+
+      final responses = await Future.wait(futures, eagerError: false);
+      final requests = <ApiFriendRequest>[];
+
+      for (int i = 0; i < pending.length; i++) {
+        final f = pending[i];
+        final res = responses[i];
+        if (res.statusCode != 200) continue;
+        final userData = jsonDecode(res.body) as Map<String, dynamic>;
+        final createdAt = f['createdAt'] != null
+            ? DateTime.tryParse(f['createdAt'].toString()) ?? DateTime.now()
+            : DateTime.now();
+        requests.add(ApiFriendRequest(
+          friendshipId: (f['_id'] ?? f['id'] ?? '').toString(),
+          user: _parseUser(userData),
+          createdAt: createdAt,
+        ));
+      }
+
+      requests.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return ContactsResult.success(requests);
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được backend: $e');
+    }
+  }
+
+  // ── Accept / Reject Friend Request ───────────────────────────────────────────
+
+  Future<bool> acceptFriendRequest(String friendshipId) async {
+    try {
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/friendships/$friendshipId'),
+            headers: {'Content-Type': 'application/json'},
+            body: '{"status":"ACCEPTED"}',
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> rejectFriendRequest(String friendshipId) async {
+    try {
+      final res = await _client
+          .delete(Uri.parse('$baseUrl/friendships/$friendshipId'))
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200 || res.statusCode == 204;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> cancelSentRequest(String friendshipId) => rejectFriendRequest(friendshipId);
+
+  // ── Fetch Birthday Contacts ───────────────────────────────────────────────────
+
+  /// Lấy tất cả user (trừ mình) có dob, dùng cho màn hình Sinh nhật.
+  Future<ContactsResult<List<ApiUserModel>>> fetchBirthdayContacts(
+      String currentUserId) async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/users'))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+
+      final List<dynamic> json = jsonDecode(res.body) as List;
+      final users = json
+          .map((u) => _parseUser(u as Map<String, dynamic>))
+          .where((u) => u.id != currentUserId && u.dob != null)
+          .toList();
+
+      return ContactsResult.success(users);
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được backend: $e');
+    }
+  }
 }
 
 // ── Result wrapper ────────────────────────────────────────────────────────────
@@ -207,6 +341,7 @@ class ApiUserModel {
   final String phone;
   final String avatar;
   final bool isOnline;
+  final DateTime? dob;
 
   const ApiUserModel({
     required this.id,
@@ -214,6 +349,7 @@ class ApiUserModel {
     required this.phone,
     required this.avatar,
     required this.isOnline,
+    this.dob,
   });
 }
 
@@ -241,4 +377,16 @@ class ApiGroupMember {
   final String userId;
   final String role;
   const ApiGroupMember({required this.userId, required this.role});
+}
+
+class ApiFriendRequest {
+  final String friendshipId;
+  final ApiUserModel user;
+  final DateTime createdAt;
+
+  const ApiFriendRequest({
+    required this.friendshipId,
+    required this.user,
+    required this.createdAt,
+  });
 }
