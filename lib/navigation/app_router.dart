@@ -104,8 +104,8 @@ class AppRouter {
 
   /// Slide từ phải — dùng cho màn hình con (chat detail, call...)
   static PageRoute _slide(Widget page) => PageRouteBuilder(
-    pageBuilder: (_, a, __) => page,
-    transitionsBuilder: (_, a, __, child) => SlideTransition(
+    pageBuilder: (_, a, _) => page,
+    transitionsBuilder: (_, a, _, child) => SlideTransition(
       position: Tween<Offset>(
         begin: const Offset(1, 0),
         end: Offset.zero,
@@ -117,16 +117,16 @@ class AppRouter {
 
   /// Fade — dùng cho màn hình chính (login, main)
   static PageRoute _fade(Widget page) => PageRouteBuilder(
-    pageBuilder: (_, a, __) => page,
-    transitionsBuilder: (_, a, __, child) =>
+    pageBuilder: (_, a, _) => page,
+    transitionsBuilder: (_, a, _, child) =>
         FadeTransition(opacity: a, child: child),
     transitionDuration: const Duration(milliseconds: 220),
   );
 
   /// Full screen (không animation rõ) — dùng cho call
   static PageRoute _fullscreen(Widget page) => PageRouteBuilder(
-    pageBuilder: (_, a, __) => page,
-    transitionsBuilder: (_, a, __, child) => SlideTransition(
+    pageBuilder: (_, a, _) => page,
+    transitionsBuilder: (_, a, _, child) => SlideTransition(
       position: Tween<Offset>(
         begin: const Offset(0, 1),
         end: Offset.zero,

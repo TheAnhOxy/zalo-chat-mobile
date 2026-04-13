@@ -68,6 +68,19 @@ class ConversationMember {
     this.isPinned = false,
     required this.joinedAt,
   });
+
+  factory ConversationMember.fromJson(Map<String, dynamic> json) {
+    return ConversationMember(
+      userId: json['userId'] ?? '',
+      role: json['role'] ?? 'MEMBER',
+      nickname: json['nickname'],
+      isMuted: json['isMuted'] ?? false,
+      isPinned: json['isPinned'] ?? false,
+      joinedAt: json['joinedAt'] != null 
+          ? DateTime.parse(json['joinedAt']) 
+          : DateTime.now(),
+    );
+  }
 }
 
 class LastMessagePreview {
@@ -82,6 +95,15 @@ class LastMessagePreview {
     required this.senderId,
     required this.createdAt,
   });
+
+  factory LastMessagePreview.fromJson(Map<String, dynamic> json) {
+    return LastMessagePreview(
+      messageId: json['messageId'] ?? '',
+      content: json['content'] ?? '',
+      senderId: json['senderId'] ?? '',
+      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
+    );
+  }
 }
 
 class ConversationModel {
@@ -107,6 +129,26 @@ class ConversationModel {
     required this.updatedAt,
   });
 
+  factory ConversationModel.fromJson(Map<String, dynamic> json) {
+    return ConversationModel(
+      id: json['_id'] ?? '',
+      type: json['type'] ?? 'PRIVATE',
+      name: json['name'],
+      avatar: json['avatar'],
+      unreadCount: json['unreadCount'] ?? 0,
+      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
+      updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : DateTime.now(),
+      // Map list members
+      members: (json['members'] as List? ?? [])
+          .map((m) => ConversationMember.fromJson(m))
+          .toList(),
+      // Map last message preview nếu có
+      lastMessage: json['lastMessage'] != null 
+          ? LastMessagePreview.fromJson(json['lastMessage']) 
+          : null,
+    );
+  }
+
   bool get isGroup => type == 'GROUP';
   bool get isPinned => members.any((m) => m.isPinned);
 }
@@ -117,6 +159,14 @@ class Reaction {
   final String type; // LIKE | LOVE | HAHA | WOW | SAD | ANGRY
 
   const Reaction({required this.userId, required this.type});
+
+  // Bổ sung hàm này để parse từ Backend
+  factory Reaction.fromJson(Map<String, dynamic> json) {
+    return Reaction(
+      userId: json['userId'] ?? '',
+      type: json['reactionType'] ?? json['type'] ?? 'LIKE',
+    );
+  }
 
   String get emoji {
     const map = {
@@ -131,6 +181,15 @@ class SeenBy {
   final String userId;
   final DateTime seenAt;
   const SeenBy({required this.userId, required this.seenAt});
+
+  factory SeenBy.fromJson(Map<String, dynamic> json) {
+    return SeenBy(
+      userId: json['userId'] ?? '',
+      seenAt: json['seenAt'] != null 
+          ? DateTime.parse(json['seenAt']) 
+          : DateTime.now(),
+    );
+  }
 }
 
 class MessageMetadata {
@@ -140,6 +199,17 @@ class MessageMetadata {
   final double? lat;
   final double? lng;
   final int? duration; // seconds (voice)
+
+  factory MessageMetadata.fromJson(Map<String, dynamic> json) {
+    return MessageMetadata(
+      fileName: json['fileName'],
+      fileSize: json['fileSize'],
+      thumbnail: json['thumbnail'],
+      lat: (json['lat'] as num?)?.toDouble(),
+      lng: (json['lng'] as num?)?.toDouble(),
+      duration: json['duration'],
+    );
+  }
 
   const MessageMetadata({
     this.fileName,
@@ -167,6 +237,31 @@ class MessageModel {
   final List<Reaction> reactions;
   final List<SeenBy> seenBy;
   final DateTime createdAt;
+
+  factory MessageModel.fromJson(Map<String, dynamic> json) {
+    return MessageModel(
+      id: json['_id'] ?? '',
+      conversationId: json['conversationId'] ?? '',
+      senderId: json['senderId'] ?? '',
+      // Map từ messageType (tên thật trong DB) hoặc type (alias)
+      type: json['messageType'] ?? json['type'] ?? 'TEXT',
+      content: json['content'] ?? '',
+      metadata: json['metadata'] != null ? MessageMetadata.fromJson(json['metadata']) : null,
+      replyToId: json['replyTo'],
+      status: json['status'] ?? 'SENT',
+      isRecalled: json['isRecalled'] ?? false,
+      deletedBy: List<String>.from(json['deletedBy'] ?? []),
+      reactions: (json['reactions'] as List? ?? [])
+          .map((r) => Reaction.fromJson(r))
+          .toList(),
+      seenBy: (json['seenBy'] as List? ?? [])
+          .map((s) => SeenBy.fromJson(s))
+          .toList(),
+      createdAt: json['createdAt'] != null 
+          ? DateTime.parse(json['createdAt']) 
+          : DateTime.now(),
+    );
+  }
 
   const MessageModel({
     required this.id,

@@ -285,7 +285,6 @@ class _SettingsItemData {
     required this.icon,
     required this.title,
     required this.subtitle,
-    this.onTap = _defaultAction,
   });
 
   static void _defaultAction() {}

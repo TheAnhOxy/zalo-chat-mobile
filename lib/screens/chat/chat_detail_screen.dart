@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
-import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../services/auth_service.dart';
+import '../../services/api_service.dart'; // Import ApiService
+import '../../services/socket_service.dart'; // Import SocketService
 import '../../widgets/common/common_widgets.dart';
 import '../call/voice_call_screen.dart';
 import '../call/video_call_screen.dart';
 import 'package:uuid/uuid.dart';
+import 'dart:developer';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -27,42 +30,315 @@ class ChatDetailScreen extends StatefulWidget {
 }
 
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
-  final _textCtrl    = TextEditingController();
-  final _scrollCtrl  = ScrollController();
-  final _focusNode   = FocusNode();
+  final _textCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  final _focusNode = FocusNode();
 
-  late List<MessageModel> _messages;
-  bool _showEmoji    = false;
-  bool _showExtra    = false;
+  // 1. Thay đổi List messages khởi tạo rỗng và thêm biến loading
+  List<MessageModel> _messages = [];
+  bool _isLoading = true;
+  bool _showEmoji = false;
+  bool _showExtra = false;
   MessageModel? _replyTo;
-  bool _isTyping     = false; // fake typing indicator
+  bool _isTyping = false; 
+  int _selectedBackgroundIndex = 0;
+
+  static const List<_ChatBackgroundOption> _backgroundOptions = [
+    _ChatBackgroundOption(
+      label: 'Mặc định',
+      gradient: LinearGradient(
+        colors: [Color(0xFFEEF1F6), Color(0xFFE3E8EF)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+    _ChatBackgroundOption(
+      label: 'Sky',
+      gradient: LinearGradient(
+        colors: [Color(0xFFEAF6FF), Color(0xFFD4ECFF)],
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+      ),
+    ),
+    _ChatBackgroundOption(
+      label: 'Mint',
+      gradient: LinearGradient(
+        colors: [Color(0xFFE9FFF6), Color(0xFFD4F5E8)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+    _ChatBackgroundOption(
+      label: 'Sunset',
+      gradient: LinearGradient(
+        colors: [Color(0xFFFFF1E6), Color(0xFFFFDCC6)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+  ];
 
   final _uuid = const Uuid();
+
+  String get _backgroundPrefKey => 'chat_bg_${widget.conversationId}';
 
   @override
   void initState() {
     super.initState();
-    _messages = List.from(getMessages(widget.conversationId));
-    _startFakeTyping();
+    _restoreBackground();
+    _loadMessages(); // Lấy lịch sử từ MongoDB
+    _initSocket();   // Kết nối real-time
   }
 
-  void _startFakeTyping() {
-    Future.delayed(const Duration(seconds: 4), () {
-      if (!mounted) return;
-      setState(() => _isTyping = true);
-      Future.delayed(const Duration(seconds: 3), () {
-        if (!mounted) return;
-        setState(() => _isTyping = false);
+  // 2. Lấy lịch sử tin nhắn từ API
+  Future<void> _loadMessages() async {
+    try {
+      final msgs = _normalizeMessages(await apiService.getMessages(widget.conversationId));
+      setState(() {
+        _messages = msgs;
+        _isLoading = false;
       });
+      _emitSeenForLatest();
+      _scrollToBottom(animated: false);
+    } catch (e) {
+      log('❌ Lỗi tải tin nhắn: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // 3. Khởi tạo Socket và các sự kiện lắng nghe
+  void _initSocket() {
+    // Tham gia phòng chat
+    socketService.emit('join_conversation', {
+      'conversationId': widget.conversationId,
+    });
+
+    // Lắng nghe tin nhắn mới
+    socketService.on('new_message', (data) {
+      final newMessage = MessageModel.fromJson(data);
+      if (newMessage.conversationId == widget.conversationId) {
+        setState(() {
+          _messages = _upsertMessage(_messages, _normalizeMessage(newMessage));
+        });
+        _emitSeenForLatest();
+        _scrollToBottom();
+      }
+    });
+
+    socketService.on('message_seen', (data) {
+      try {
+        if (data['conversationId'] != widget.conversationId) return;
+        final messageId = data['messageId']?.toString();
+        if (messageId == null || messageId.isEmpty) return;
+        final status = data['status']?.toString();
+        final rawSeenBy = (data['seenBy'] as List?) ?? const [];
+        final seenBy = rawSeenBy
+            .whereType<Map>()
+            .map((s) => SeenBy.fromJson(Map<String, dynamic>.from(s)))
+            .toList();
+
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == messageId);
+          if (idx == -1) return;
+          final old = _messages[idx];
+          _messages[idx] = MessageModel(
+            id: old.id,
+            conversationId: old.conversationId,
+            senderId: old.senderId,
+            type: old.type,
+            content: old.content,
+            metadata: old.metadata,
+            replyToId: old.replyToId,
+            status: status ?? old.status,
+            isRecalled: old.isRecalled,
+            deletedBy: old.deletedBy,
+            reactions: old.reactions,
+            seenBy: seenBy.isNotEmpty ? seenBy : old.seenBy,
+            createdAt: old.createdAt,
+          );
+          _messages = _normalizeMessages(_messages);
+        });
+      } catch (_) {}
+    });
+
+    for (final event in const [
+      'message_reaction_updated',
+      'reaction_updated',
+      'message_reaction',
+    ]) {
+      socketService.on(event, _handleReactionEvent);
+    }
+
+    for (final event in const [
+      'conversation_theme_changed',
+      'theme_changed',
+    ]) {
+      socketService.on(event, _handleThemeEvent);
+    }
+
+    // Lắng nghe sự kiện typing (Nếu backend có phát)
+    socketService.on('typing', (data) {
+      if (data['conversationId'] == widget.conversationId && data['userId'] != authService.userId) {
+        setState(() => _isTyping = true);
+      }
+    });
+
+    socketService.on('stop_typing', (data) {
+       if (data['conversationId'] == widget.conversationId) {
+        setState(() => _isTyping = false);
+      }
     });
   }
 
   @override
   void dispose() {
+    // 4. Hủy lắng nghe để tránh trùng lặp tin nhắn khi quay lại
+    socketService.off('new_message');
+    socketService.off('typing');
+    socketService.off('stop_typing');
+    socketService.off('message_seen');
+    socketService.off('message_reaction_updated');
+    socketService.off('reaction_updated');
+    socketService.off('message_reaction');
+    socketService.off('conversation_theme_changed');
+    socketService.off('theme_changed');
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  List<MessageModel> _normalizeMessages(List<MessageModel> input) {
+    final byId = <String, MessageModel>{};
+    for (final m in input) {
+      byId[m.id] = _normalizeMessage(m);
+    }
+    final list = byId.values.toList()
+      ..sort((a, b) {
+        final c = a.createdAt.compareTo(b.createdAt);
+        if (c != 0) return c;
+        return a.id.compareTo(b.id);
+      });
+    return list;
+  }
+
+  MessageModel _normalizeMessage(MessageModel m) {
+    return MessageModel(
+      id: m.id,
+      conversationId: m.conversationId,
+      senderId: m.senderId,
+      type: m.type,
+      content: m.content,
+      metadata: m.metadata,
+      replyToId: m.replyToId,
+      status: m.status,
+      isRecalled: m.isRecalled,
+      deletedBy: m.deletedBy,
+      reactions: m.reactions,
+      seenBy: m.seenBy,
+      createdAt: m.createdAt.toLocal(),
+    );
+  }
+
+  List<MessageModel> _upsertMessage(List<MessageModel> source, MessageModel next) {
+    final idx = source.indexWhere((m) => m.id == next.id);
+    if (idx == -1) {
+      return _normalizeMessages([...source, next]);
+    }
+    final copied = [...source];
+    copied[idx] = next;
+    return _normalizeMessages(copied);
+  }
+
+  Map<String, dynamic>? _tryMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) {
+      try {
+        return Map<String, dynamic>.from(data);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  void _handleReactionEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final convId = map['conversationId']?.toString();
+    if (convId != null && convId != widget.conversationId) return;
+
+    final messageData = _tryMap(map['message']);
+    if (messageData != null) {
+      final next = _normalizeMessage(MessageModel.fromJson(messageData));
+      if (next.conversationId != widget.conversationId) return;
+      setState(() {
+        _messages = _upsertMessage(_messages, next);
+      });
+      return;
+    }
+
+    final messageId = map['messageId']?.toString();
+    if (messageId == null || messageId.isEmpty) return;
+    final raw = map['reactions'];
+    if (raw is! List) return;
+    final nextReactions = raw
+        .whereType<Map>()
+        .map((r) => Reaction.fromJson(Map<String, dynamic>.from(r)))
+        .toList();
+
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == messageId);
+      if (idx == -1) return;
+      final old = _messages[idx];
+      _messages[idx] = MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: old.isRecalled,
+        deletedBy: old.deletedBy,
+        reactions: nextReactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      );
+      _messages = _normalizeMessages(_messages);
+    });
+  }
+
+  Future<void> _restoreBackground() async {
+    final prefs = await SharedPreferences.getInstance();
+    final idx = prefs.getInt(_backgroundPrefKey);
+    if (!mounted || idx == null) return;
+    if (idx < 0 || idx >= _backgroundOptions.length) return;
+    setState(() => _selectedBackgroundIndex = idx);
+  }
+
+  Future<void> _setBackground(int index, {bool emitSync = false}) async {
+    setState(() => _selectedBackgroundIndex = index);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_backgroundPrefKey, index);
+
+    if (emitSync) {
+      socketService.emit('change_conversation_theme', {
+        'conversationId': widget.conversationId,
+        'backgroundIndex': index,
+      });
+    }
+  }
+
+  void _handleThemeEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    if (map['conversationId']?.toString() != widget.conversationId) return;
+    final index = map['backgroundIndex'];
+    if (index is! int) return;
+    if (index < 0 || index >= _backgroundOptions.length) return;
+    _setBackground(index);
   }
 
   void _scrollToBottom({bool animated = true}) {
@@ -81,72 +357,221 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
+  // 5. Gửi tin nhắn thật qua Socket
   void _sendMessage() {
     final text = _textCtrl.text.trim();
     if (text.isEmpty) return;
-    final msg = MessageModel(
-      id: _uuid.v4(),
-      conversationId: widget.conversationId,
-      senderId: authService.userId!,
-      content: text,
-      replyToId: _replyTo?.id,
-      status: 'SENDING',
-      createdAt: DateTime.now(),
-    );
+
+    final msgData = {
+      'conversationId': widget.conversationId,
+      'senderId': authService.userId!,
+      'content': text,
+      'type': 'TEXT',
+      if (_replyTo != null) 'replyToId': _replyTo!.id,
+    };
+
+    socketService.sendMessage(msgData);
+    
     setState(() {
-      _messages.add(msg);
       _textCtrl.clear();
       _replyTo = null;
+      _showEmoji = false;
     });
-    _scrollToBottom();
-    // Fake: SENDING → SENT after 500ms
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (!mounted) return;
-      final idx = _messages.indexWhere((m) => m.id == msg.id);
-      if (idx < 0) return;
-      setState(() {
-        _messages[idx] = MessageModel(
-          id: msg.id, conversationId: msg.conversationId,
-          senderId: msg.senderId, content: msg.content,
-          status: 'SENT', createdAt: msg.createdAt,
+  }
+
+  void _emitSeenForLatest() {
+    final unread = _messages.where((m) =>
+      m.senderId != authService.userId &&
+      !m.isRecalled &&
+      !_isSeenByCurrentUser(m),
+    );
+    if (unread.isEmpty) return;
+    final latest = unread.last;
+    socketService.emit('seen_message', {
+      'conversationId': widget.conversationId,
+      'messageId': latest.id,
+      'userId': authService.userId,
+    });
+  }
+
+  bool _isSeenByCurrentUser(MessageModel msg) {
+    if (msg.senderId == authService.userId) return false;
+    return msg.seenBy.any((s) => s.userId == authService.userId);
+  }
+
+  bool _isSeenByPeer(MessageModel msg) {
+    if (msg.status == 'SEEN') return true;
+    final peerId = widget.otherUser?.id;
+    if (peerId != null && peerId.isNotEmpty) {
+      return msg.seenBy.any((s) => s.userId == peerId);
+    }
+    return msg.seenBy.isNotEmpty;
+  }
+
+  String? _lastOutgoingMessageId() {
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      if (_messages[i].senderId == authService.userId) {
+        return _messages[i].id;
+      }
+    }
+    return null;
+  }
+
+  void _showAppearanceSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Text(
+                'Đổi nền đoạn chat',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Inter',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: List.generate(_backgroundOptions.length, (i) {
+                  final item = _backgroundOptions[i];
+                  final active = i == _selectedBackgroundIndex;
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.pop(context);
+                      _setBackground(i, emitSync: true);
+                    },
+                    child: Container(
+                      width: 76,
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgCardLight,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: active ? AppColors.primary : AppColors.border,
+                          width: active ? 1.6 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Container(
+                            height: 48,
+                            decoration: BoxDecoration(
+                              gradient: item.gradient,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            item.label,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textPrimary,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
         );
-      });
-    });
+      },
+    );
   }
 
-  void _recallMessage(MessageModel msg) {
-    final idx = _messages.indexWhere((m) => m.id == msg.id);
-    if (idx < 0) return;
-    setState(() {
-      _messages[idx] = MessageModel(
-        id: msg.id, conversationId: msg.conversationId,
-        senderId: msg.senderId, content: msg.content,
-        isRecalled: true, status: msg.status, createdAt: msg.createdAt,
-      );
-    });
-  }
-
+  // Các hàm reaction và thu hồi tin nhắn sẽ gọi API/Socket ở đây (nâng cấp sau)
   void _addReaction(MessageModel msg, String type) {
-    final idx = _messages.indexWhere((m) => m.id == msg.id);
-    if (idx < 0) return;
-    final uid = authService.userId!;
-    final reactions = List<Reaction>.from(msg.reactions)
-      ..removeWhere((r) => r.userId == uid)
-      ..add(Reaction(userId: uid, type: type));
     setState(() {
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx == -1) return;
+      final old = _messages[idx];
+      final me = authService.userId ?? '';
+      final nextReactions = old.reactions.where((r) => r.userId != me).toList()
+        ..add(Reaction(userId: me, type: type));
+
       _messages[idx] = MessageModel(
-        id: msg.id, conversationId: msg.conversationId,
-        senderId: msg.senderId, content: msg.content,
-        type: msg.type, status: msg.status, replyToId: msg.replyToId,
-        isRecalled: msg.isRecalled, reactions: reactions,
-        seenBy: msg.seenBy, createdAt: msg.createdAt,
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: old.isRecalled,
+        deletedBy: old.deletedBy,
+        reactions: nextReactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
       );
+      _messages = _normalizeMessages(_messages);
+    });
+
+    socketService.emit('add_reaction', {
+      'messageId': msg.id,
+      'reactionType': type,
+      'userId': authService.userId,
+    });
+    // UI sẽ cập nhật khi nhận lại event từ socket hoặc tối ưu hóa local tại đây
+  }
+  ConversationMember? _getMemberInfo(String userId) {
+    try {
+      return widget.conversation.members.firstWhere((m) => m.userId == userId);
+    } catch (e) {
+    return null;
+    }
+  }
+  void _recallMessage(MessageModel msg) {
+  // Gửi sự kiện thu hồi tin nhắn lên Server NestJS
+    socketService.emit('recall_message', {
+      'messageId': msg.id,
+      'conversationId': widget.conversationId,
+    });
+  
+  // Thông báo cho UI local (tùy chọn, vì socket sẽ trả về event cho cả 2)
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx != -1) {
+        _messages[idx] = MessageModel(
+          id: msg.id,
+          conversationId: msg.conversationId,
+          senderId: msg.senderId,
+          content: msg.content,
+          isRecalled: true,
+          createdAt: msg.createdAt,
+        );
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final isGroup = widget.conversation.isGroup;
+    final lastOutgoingMessageId = _lastOutgoingMessageId();
     final title = isGroup ? widget.conversation.name ?? 'Nhóm'
                           : widget.otherUser?.fullName ?? 'Chat';
 
@@ -155,55 +580,60 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // ── Header ─────────────────────────────────────────
             _buildHeader(title, isGroup),
             const Divider(color: AppColors.divider, height: 1),
 
-            // ── Messages ───────────────────────────────────────
             Expanded(
-              child: GestureDetector(
-                onTap: () {
-                  _focusNode.unfocus();
-                  setState(() { _showEmoji = false; _showExtra = false; });
-                },
-                child: ListView.builder(
-                  controller: _scrollCtrl,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  itemCount: _messages.length + (_isTyping ? 1 : 0),
-                  itemBuilder: (_, i) {
-                    if (i == _messages.length) return _buildTypingIndicator();
-                    final msg = _messages[i];
-                    final prev = i > 0 ? _messages[i - 1] : null;
-                    final showDate = prev == null ||
-                        !du.DateUtils.isSameDay(prev.createdAt, msg.createdAt);
-                    return Column(
-                      children: [
-                        if (showDate) ChatDateDivider(label: du.DateUtils.formatDateSeparator(msg.createdAt)),
-                        _MessageBubble(
-                          msg: msg,
-                          isMe: msg.senderId == authService.userId,
-                          senderUser: isGroup ? getUser(msg.senderId) : null,
-                          showSenderName: isGroup && msg.senderId != authService.userId,
-                          replyToMsg: msg.replyToId != null
-                              ? _messages.firstWhere((m) => m.id == msg.replyToId, orElse: () => msg)
-                              : null,
-                          onLongPress: () => _showMessageActions(msg),
-                          onReply: () => setState(() => _replyTo = msg),
-                        ),
-                      ],
-                    );
-                  },
+              child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                : Container(
+                    decoration: BoxDecoration(
+                      gradient: _backgroundOptions[_selectedBackgroundIndex].gradient,
+                    ),
+                    child: GestureDetector(
+                    onTap: () {
+                      _focusNode.unfocus();
+                      setState(() { _showEmoji = false; _showExtra = false; });
+                    },
+                    child: ListView.builder(
+                      controller: _scrollCtrl,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      itemCount: _messages.length + (_isTyping ? 1 : 0),
+                      itemBuilder: (_, i) {
+                        if (i == _messages.length) return _buildTypingIndicator();
+                        final msg = _messages[i];
+                        final prev = i > 0 ? _messages[i - 1] : null;
+                        final senderMember = _getMemberInfo(msg.senderId);
+                        final showDate = prev == null ||
+                            !du.DateUtils.isSameDay(prev.createdAt, msg.createdAt);
+                        
+                        return Column(
+                          children: [
+                            if (showDate) ChatDateDivider(label: du.DateUtils.formatDateSeparator(msg.createdAt)),
+                            _MessageBubble(
+                              msg: msg,
+                              isMe: msg.senderId.toString() == authService.userId.toString(),
+                              senderUser: isGroup ? null : widget.otherUser, // Cần logic lấy user từ members nếu là group
+                              senderMember: senderMember,
+                              showSenderName: isGroup && msg.senderId != authService.userId,
+                              showSeenLabel: !isGroup && msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
+                              replyToMsg: msg.replyToId != null
+                                  ? _messages.firstWhere((m) => m.id == msg.replyToId, orElse: () => msg)
+                                  : null,
+                              onLongPress: () => _showMessageActions(msg),
+                              onDoubleTap: () => _addReaction(msg, 'LIKE'),
+                              onReply: () => setState(() => _replyTo = msg),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
                 ),
-              ),
             ),
 
-            // ── Reply Preview ──────────────────────────────────
             if (_replyTo != null) _buildReplyPreview(),
-
-            // ── Input Bar ──────────────────────────────────────
             _buildInputBar(),
-
-            // ── Emoji (toggle) ─────────────────────────────────
             if (_showEmoji) _buildEmojiPanel(),
           ],
         ),
@@ -224,8 +654,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           ),
           isGroup
               ? GroupAvatarWidget(
-                  avatarUrls: widget.conversation.members.take(3).map((m) => getUser(m.userId)?.avatar).toList(),
-                  names: widget.conversation.members.take(3).map((m) => getUser(m.userId)?.fullName ?? '').toList(),
+                avatarUrls: widget.conversation.members
+                  .take(3)
+                  .map((m) => (_getMemberInfo(m.userId))?.userId)
+                  .toList(), // Hoặc .avatar tùy model
+                names: widget.conversation.members
+                  .take(3)
+                  .map((m) => (_getMemberInfo(m.userId))?.nickname ?? m.userId)
+                  .toList(),
                   size: 38,
                 )
               : AvatarWidget(
@@ -245,7 +681,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     maxLines: 1, overflow: TextOverflow.ellipsis),
                 Text(
                   isGroup
-                      ? '${widget.conversation.members.length} thành viên · ${widget.conversation.members.where((m) => getUser(m.userId)?.isOnline ?? false).length} đang hoạt động'
+                      ? '${widget.conversation.members.length} thành viên'
                       : online ? 'Đang hoạt động' : 'Ngoại tuyến',
                   style: TextStyle(
                     fontSize: 12, fontFamily: 'Inter',
@@ -269,6 +705,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               onPressed: () => Navigator.push(context, MaterialPageRoute(
                   builder: (_) => VideoCallScreen(otherUser: widget.otherUser!, isIncoming: false))),
             ),
+          IconButton(
+            icon: const Icon(Icons.wallpaper_outlined, color: AppColors.textPrimary, size: 22),
+            onPressed: _showAppearanceSheet,
+          ),
           IconButton(
             icon: const Icon(Icons.info_outline, color: AppColors.textPrimary, size: 22),
             onPressed: () {},
@@ -380,7 +820,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           // Send / Voice record
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: _textCtrl,
-            builder: (_, val, __) {
+            builder: (_, val, _) {
               final hasText = val.text.trim().isNotEmpty;
               return GestureDetector(
                 onTap: hasText ? _sendMessage : () {},
@@ -489,35 +929,44 @@ class _MessageBubble extends StatelessWidget {
   final MessageModel msg;
   final bool isMe;
   final UserModel? senderUser;
+  final ConversationMember? senderMember;
   final bool showSenderName;
+  final bool showSeenLabel;
   final MessageModel? replyToMsg;
   final VoidCallback onLongPress;
+  final VoidCallback onDoubleTap;
   final VoidCallback onReply;
 
   const _MessageBubble({
     required this.msg,
     required this.isMe,
     this.senderUser,
+    this.senderMember,
     this.showSenderName = false,
+    this.showSeenLabel = false,
     this.replyToMsg,
     required this.onLongPress,
+    required this.onDoubleTap,
     required this.onReply,
   });
 
+  
   @override
   Widget build(BuildContext context) {
     if (msg.isRecalled) return _buildRecalled();
+    final senderDisplayName = senderMember?.nickname ?? senderMember?.userId ?? senderUser?.fullName ?? 'User';
 
     return GestureDetector(
       onLongPress: onLongPress,
+      onDoubleTap: onDoubleTap,
       child: Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(
           mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            if (!isMe && senderUser != null) ...[
-              AvatarWidget(url: senderUser!.avatar, name: senderUser!.fullName, size: 28),
+            if (!isMe && (senderUser != null || senderMember != null)) ...[
+              AvatarWidget(url: senderUser?.avatar, name: senderDisplayName, size: 28),
               const SizedBox(width: 6),
             ],
             ConstrainedBox(
@@ -525,10 +974,10 @@ class _MessageBubble extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                 children: [
-                  if (showSenderName && senderUser != null)
+                  if (showSenderName && (senderUser != null || senderMember != null))
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2, left: 4),
-                      child: Text(senderUser!.fullName,
+                      child: Text(senderDisplayName,
                           style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontFamily: 'Inter')),
                     ),
                   if (replyToMsg != null) _buildReplyQuote(),
@@ -546,6 +995,19 @@ class _MessageBubble extends StatelessWidget {
                     ],
                   ),
                   if (msg.reactions.isNotEmpty) _buildReactions(),
+                  if (isMe && showSeenLabel)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Text(
+                        'Đã xem',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.primary,
+                          fontFamily: 'Inter',
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -561,7 +1023,7 @@ class _MessageBubble extends StatelessWidget {
       content = ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Image.network(msg.content, width: 200, height: 150, fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const SizedBox(width: 200, height: 100,
+            errorBuilder: (_, _, _) => const SizedBox(width: 200, height: 100,
                 child: Center(child: Icon(Icons.image_not_supported_outlined, color: AppColors.textHint)))),
       );
     } else if (msg.type == 'FILE') {
@@ -636,8 +1098,7 @@ class _MessageBubble extends StatelessWidget {
 
   Widget _buildStatusIcon() {
     switch (msg.status) {
-      case 'SENDING': return const SizedBox(width: 12, height: 12,
-          child: CircularProgressIndicator(color: AppColors.textHint, strokeWidth: 1.5));
+      case 'SENDING': return const Icon(Icons.done, size: 14, color: AppColors.textHint);
       case 'SENT': return const Icon(Icons.done, size: 14, color: AppColors.textHint);
       case 'DELIVERED': return const Icon(Icons.done_all, size: 14, color: AppColors.textHint);
       case 'SEEN': return const Icon(Icons.done_all, size: 14, color: AppColors.primary);
@@ -702,7 +1163,7 @@ class _DotAnimationState extends State<_DotAnimation> with SingleTickerProviderS
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: _anim,
-    builder: (_, __) => Transform.translate(
+    builder: (_, _) => Transform.translate(
       offset: Offset(0, _anim.value),
       child: Container(
         width: 7, height: 7, margin: const EdgeInsets.symmetric(horizontal: 2),
@@ -710,4 +1171,14 @@ class _DotAnimationState extends State<_DotAnimation> with SingleTickerProviderS
       ),
     ),
   );
+}
+
+class _ChatBackgroundOption {
+  final String label;
+  final Gradient gradient;
+
+  const _ChatBackgroundOption({
+    required this.label,
+    required this.gradient,
+  });
 }
