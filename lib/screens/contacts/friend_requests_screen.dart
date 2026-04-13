@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import 'friend_request_settings_screen.dart';
 
 class FriendRequestsScreen extends StatefulWidget {
   const FriendRequestsScreen({super.key});
@@ -158,7 +159,12 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () {},
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const FriendRequestSettingsScreen(),
+              ),
+            ),
           ),
         ],
         bottom: TabBar(

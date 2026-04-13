@@ -291,6 +291,41 @@ class ContactsApiService {
 
   Future<bool> cancelSentRequest(String friendshipId) => rejectFriendRequest(friendshipId);
 
+  // ── Privacy: findByPhone ──────────────────────────────────────────────────────
+
+  /// Lấy giá trị privacy.findByPhone của user từ backend.
+  Future<bool?> fetchUserPrivacy(String userId) async {
+    try {
+      if (userId.isEmpty) return null;
+      final res = await _client
+          .get(Uri.parse('$baseUrl/users/$userId'))
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return null;
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final privacy = data['privacy'] as Map<String, dynamic>?;
+      return privacy?['findByPhone'] as bool? ?? true;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Cập nhật privacy.findByPhone lên backend.
+  Future<bool> updateFindByPhone(String userId, bool value) async {
+    try {
+      if (userId.isEmpty) return false;
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/users/$userId/privacy'),
+            headers: {'Content-Type': 'application/json'},
+            body: '{"findByPhone":$value}',
+          )
+          .timeout(const Duration(seconds: 8));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ── Fetch Birthday Contacts ───────────────────────────────────────────────────
 
   /// Lấy tất cả user (trừ mình) có dob, dùng cho màn hình Sinh nhật.
