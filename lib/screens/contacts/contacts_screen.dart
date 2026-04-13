@@ -4,6 +4,7 @@ import '../../core/utils/image_utils.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../navigation/app_router.dart';
+import '../group/group_options_screen.dart';
 import 'create_group_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
@@ -485,9 +486,12 @@ class _GroupsTabState extends State<_GroupsTab> {
           ),
           const SizedBox(height: 8),
           _GroupsHeaderRow(
-            title: 'Nhóm đang tham gia (${filtered.length})',
+            title: _sortMode == _GroupSortMode.managed
+                ? 'Nhóm quản lý (${filtered.length})'
+                : 'Nhóm đang tham gia (${filtered.length})',
             sortMode: _sortMode,
-            onSort: _showSortSheet,
+            sortKey: _sortKey,
+            onSort: _showSortPopup,
           ),
           if (filtered.isEmpty)
             Padding(
@@ -517,7 +521,12 @@ class _GroupsTabState extends State<_GroupsTab> {
                     : _formatRelative(g.updatedAt),
                 avatarUrls: avatarUrls,
                 showDivider: i != filtered.length - 1,
-                onTap: () {},
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => GroupOptionsScreen(group: g),
+                  ),
+                ),
               );
             }),
           const SizedBox(height: 12),
@@ -527,120 +536,6 @@ class _GroupsTabState extends State<_GroupsTab> {
   }
 }
 
-// ── Sort bottom sheet ─────────────────────────────────────────────────────────
-
-class _SortBottomSheet extends StatelessWidget {
-  final _GroupSortMode current;
-  final void Function(_GroupSortMode) onSelect;
-
-  const _SortBottomSheet({required this.current, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 36,
-            height: 4,
-            margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Row(
-              children: const [
-                Text(
-                  'Sắp xếp nhóm theo',
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: AppColors.divider),
-          ..._GroupSortMode.values.map(
-            (mode) => _SortOptionTile(
-              icon: mode.icon,
-              label: mode.label,
-              isSelected: mode == current,
-              onTap: () => onSelect(mode),
-              flipIcon: mode == _GroupSortMode.nameZA,
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-}
-
-class _SortOptionTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isSelected;
-  final bool flipIcon;
-  final VoidCallback onTap;
-
-  const _SortOptionTile({
-    required this.icon,
-    required this.label,
-    required this.isSelected,
-    required this.onTap,
-    this.flipIcon = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        color: isSelected
-            ? AppColors.primary.withOpacity(0.06)
-            : Colors.transparent,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Transform.flip(
-              flipY: flipIcon,
-              child: Icon(
-                icon,
-                size: 22,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 14,
-                  fontWeight:
-                      isSelected ? FontWeight.w700 : FontWeight.w500,
-                  color: isSelected
-                      ? AppColors.primary
-                      : AppColors.textPrimary,
-                ),
-              ),
-            ),
-            if (isSelected)
-              const Icon(Icons.check_rounded,
-                  size: 20, color: AppColors.primary),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _QuickActionTile extends StatelessWidget {
   final IconData icon;
@@ -817,11 +712,13 @@ class _SectionHeader extends StatelessWidget {
 class _GroupsHeaderRow extends StatelessWidget {
   final String title;
   final _GroupSortMode sortMode;
+  final GlobalKey sortKey;
   final VoidCallback onSort;
 
   const _GroupsHeaderRow({
     required this.title,
     required this.sortMode,
+    required this.sortKey,
     required this.onSort,
   });
 
@@ -845,6 +742,7 @@ class _GroupsHeaderRow extends StatelessWidget {
             ),
           ),
           InkWell(
+            key: sortKey,
             onTap: onSort,
             borderRadius: BorderRadius.circular(16),
             child: Container(
@@ -868,9 +766,7 @@ class _GroupsHeaderRow extends StatelessWidget {
                   Icon(
                     Icons.swap_vert_rounded,
                     size: 15,
-                    color: isDefault
-                        ? AppColors.textHint
-                        : AppColors.primary,
+                    color: isDefault ? AppColors.textHint : AppColors.primary,
                   ),
                   const SizedBox(width: 4),
                   Text(
@@ -883,6 +779,12 @@ class _GroupsHeaderRow extends StatelessWidget {
                           ? AppColors.textHint
                           : AppColors.primary,
                     ),
+                  ),
+                  const SizedBox(width: 2),
+                  Icon(
+                    Icons.arrow_drop_down_rounded,
+                    size: 16,
+                    color: isDefault ? AppColors.textHint : AppColors.primary,
                   ),
                 ],
               ),
