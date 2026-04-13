@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/utils/image_utils.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../navigation/app_router.dart';
+import 'create_group_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -303,6 +305,26 @@ class _FriendsTabState extends State<_FriendsTab> {
   }
 }
 
+// ── Sort/filter enum ──────────────────────────────────────────────────────────
+
+enum _GroupSortMode {
+  recent,   // Hoạt động cuối
+  name,     // Tên nhóm
+  managed,  // Nhóm quản lý
+}
+
+extension _GroupSortModeLabel on _GroupSortMode {
+  String get label {
+    switch (this) {
+      case _GroupSortMode.recent:  return 'Hoạt động cuối';
+      case _GroupSortMode.name:    return 'Tên nhóm';
+      case _GroupSortMode.managed: return 'Nhóm quản lý';
+    }
+  }
+}
+
+// ── GroupsTab ─────────────────────────────────────────────────────────────────
+
 class _GroupsTab extends StatefulWidget {
   final String query;
   const _GroupsTab({required this.query});
@@ -314,6 +336,8 @@ class _GroupsTab extends StatefulWidget {
 class _GroupsTabState extends State<_GroupsTab> {
   List<ApiGroupModel>? _groups;
   String? _error;
+  _GroupSortMode _sortMode = _GroupSortMode.recent;
+  final GlobalKey _sortKey = GlobalKey();
 
   @override
   void initState() {
@@ -331,6 +355,98 @@ class _GroupsTabState extends State<_GroupsTab> {
     });
   }
 
+  List<ApiGroupModel> _applySortAndFilter(List<ApiGroupModel> groups) {
+    final q = widget.query.trim().toLowerCase();
+    final myId = authService.userId ?? '';
+
+    var list = q.isEmpty
+        ? List<ApiGroupModel>.from(groups)
+        : groups.where((g) => g.name.toLowerCase().contains(q)).toList();
+
+    switch (_sortMode) {
+      case _GroupSortMode.recent:
+        list.sort((a, b) {
+          final ta = a.lastMessageAt ?? a.updatedAt;
+          final tb = b.lastMessageAt ?? b.updatedAt;
+          return tb.compareTo(ta);
+        });
+      case _GroupSortMode.name:
+        list.sort((a, b) =>
+            _normalize(a.name).compareTo(_normalize(b.name)));
+      case _GroupSortMode.managed:
+        // Chỉ hiển thị nhóm user là ADMIN hoặc MODERATOR
+        list = list.where((g) {
+          return g.members.any((m) =>
+              m.userId == myId &&
+              (m.role == 'ADMIN' || m.role == 'MODERATOR'));
+        }).toList();
+        list.sort((a, b) {
+          final ta = a.lastMessageAt ?? a.updatedAt;
+          final tb = b.lastMessageAt ?? b.updatedAt;
+          return tb.compareTo(ta);
+        });
+    }
+    return list;
+  }
+
+  void _showSortPopup() {
+    final box =
+        _sortKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final offset = box.localToGlobal(Offset.zero);
+    final size = box.size;
+
+    showMenu<_GroupSortMode>(
+      context: context,
+      color: AppColors.bgCard,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      position: RelativeRect.fromLTRB(
+        offset.dx,
+        offset.dy + size.height + 4,
+        offset.dx + size.width,
+        0,
+      ),
+      items: _GroupSortMode.values.map((mode) {
+        final selected = mode == _sortMode;
+        return PopupMenuItem<_GroupSortMode>(
+          value: mode,
+          padding: EdgeInsets.zero,
+          child: Container(
+            color: selected
+                ? AppColors.primary.withOpacity(0.08)
+                : Colors.transparent,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    mode.label,
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 14,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w500,
+                      color: selected
+                          ? AppColors.primary
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  const Icon(Icons.check_rounded,
+                      size: 18, color: AppColors.primary),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    ).then((selected) {
+      if (selected != null) setState(() => _sortMode = selected);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_groups == null && _error == null) {
@@ -343,13 +459,7 @@ class _GroupsTabState extends State<_GroupsTab> {
       return _ErrorView(message: _error!, onRetry: _load);
     }
 
-    final groups = _groups ?? [];
-    final q = widget.query.trim().toLowerCase();
-    final filtered = q.isEmpty
-        ? groups
-        : groups
-            .where((g) => g.name.toLowerCase().contains(q))
-            .toList();
+    final filtered = _applySortAndFilter(_groups ?? []);
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -363,20 +473,31 @@ class _GroupsTabState extends State<_GroupsTab> {
             iconBg: const Color(0xFFE8F0FF),
             iconColor: AppColors.primary,
             title: 'Tạo nhóm mới',
-            onTap: () {},
+            onTap: () async {
+              final result = await Navigator.push<ApiGroupModel>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const CreateGroupScreen(),
+                ),
+              );
+              if (result != null) _load();
+            },
           ),
           const SizedBox(height: 8),
           _GroupsHeaderRow(
             title: 'Nhóm đang tham gia (${filtered.length})',
-            onSort: () {},
+            sortMode: _sortMode,
+            onSort: _showSortSheet,
           ),
           if (filtered.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 48),
+            Padding(
+              padding: const EdgeInsets.only(top: 48),
               child: Center(
                 child: Text(
-                  'Chưa tham gia nhóm nào',
-                  style: TextStyle(
+                  widget.query.isNotEmpty
+                      ? 'Không tìm thấy nhóm "${widget.query}"'
+                      : 'Chưa tham gia nhóm nào',
+                  style: const TextStyle(
                     fontFamily: 'Inter',
                     fontSize: 14,
                     color: AppColors.textHint,
@@ -401,6 +522,121 @@ class _GroupsTabState extends State<_GroupsTab> {
             }),
           const SizedBox(height: 12),
         ],
+      ),
+    );
+  }
+}
+
+// ── Sort bottom sheet ─────────────────────────────────────────────────────────
+
+class _SortBottomSheet extends StatelessWidget {
+  final _GroupSortMode current;
+  final void Function(_GroupSortMode) onSelect;
+
+  const _SortBottomSheet({required this.current, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 36,
+            height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: const [
+                Text(
+                  'Sắp xếp nhóm theo',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.divider),
+          ..._GroupSortMode.values.map(
+            (mode) => _SortOptionTile(
+              icon: mode.icon,
+              label: mode.label,
+              isSelected: mode == current,
+              onTap: () => onSelect(mode),
+              flipIcon: mode == _GroupSortMode.nameZA,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _SortOptionTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isSelected;
+  final bool flipIcon;
+  final VoidCallback onTap;
+
+  const _SortOptionTile({
+    required this.icon,
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+    this.flipIcon = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        color: isSelected
+            ? AppColors.primary.withOpacity(0.06)
+            : Colors.transparent,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Transform.flip(
+              flipY: flipIcon,
+              child: Icon(
+                icon,
+                size: 22,
+                color: isSelected ? AppColors.primary : AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 14,
+                  fontWeight:
+                      isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected
+                      ? AppColors.primary
+                      : AppColors.textPrimary,
+                ),
+              ),
+            ),
+            if (isSelected)
+              const Icon(Icons.check_rounded,
+                  size: 20, color: AppColors.primary),
+          ],
+        ),
       ),
     );
   }
@@ -580,15 +816,18 @@ class _SectionHeader extends StatelessWidget {
 
 class _GroupsHeaderRow extends StatelessWidget {
   final String title;
+  final _GroupSortMode sortMode;
   final VoidCallback onSort;
 
   const _GroupsHeaderRow({
     required this.title,
+    required this.sortMode,
     required this.onSort,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isDefault = sortMode == _GroupSortMode.recent;
     return Container(
       color: AppColors.bgCard,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -607,20 +846,42 @@ class _GroupsHeaderRow extends StatelessWidget {
           ),
           InkWell(
             onTap: onSort,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: isDefault
+                    ? Colors.transparent
+                    : AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: isDefault
+                    ? null
+                    : Border.all(
+                        color: AppColors.primary.withOpacity(0.4),
+                        width: 1,
+                      ),
+              ),
               child: Row(
-                children: const [
-                  Icon(Icons.swap_vert_rounded, size: 16, color: AppColors.textHint),
-                  SizedBox(width: 4),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.swap_vert_rounded,
+                    size: 15,
+                    color: isDefault
+                        ? AppColors.textHint
+                        : AppColors.primary,
+                  ),
+                  const SizedBox(width: 4),
                   Text(
-                    'Sắp xếp',
+                    sortMode.label,
                     style: TextStyle(
                       fontFamily: 'Inter',
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.textHint,
+                      color: isDefault
+                          ? AppColors.textHint
+                          : AppColors.primary,
                     ),
                   ),
                 ],
@@ -726,18 +987,35 @@ class _GroupAvatarStack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Nếu nhóm có avatar riêng (1 URL), hiển thị đầy đủ 44x44
+    if (urls.length == 1) {
+      return ClipOval(
+        child: Image.network(
+          webSafeImageUrl(urls[0]),
+          width: 44,
+          height: 44,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _DefaultGroupAvatar(size: 44),
+        ),
+      );
+    }
+
     final shown = urls.take(3).toList();
+    // Không có URL → hiển thị icon mặc định
+    if (shown.isEmpty) {
+      return _DefaultGroupAvatar(size: 44);
+    }
+
     return SizedBox(
       width: 44,
       height: 44,
       child: Stack(
         children: [
-          if (shown.isNotEmpty)
-            Positioned(
-              left: 0,
-              top: 0,
-              child: _SmallCircleAvatar(url: shown[0]),
-            ),
+          Positioned(
+            left: 0,
+            top: 0,
+            child: _SmallCircleAvatar(url: shown[0]),
+          ),
           if (shown.length >= 2)
             Positioned(
               left: 18,
@@ -756,20 +1034,44 @@ class _GroupAvatarStack extends StatelessWidget {
   }
 }
 
+class _DefaultGroupAvatar extends StatelessWidget {
+  final double size;
+  const _DefaultGroupAvatar({required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(
+        color: Color(0xFFE5E7EB),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(Icons.group, color: AppColors.textSecondary, size: size * 0.5),
+    );
+  }
+}
+
 class _SmallCircleAvatar extends StatelessWidget {
   final String url;
   const _SmallCircleAvatar({required this.url});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 26,
-      height: 26,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: AppColors.bgCard, width: 2),
-        color: const Color(0xFFE5E7EB),
-        image: DecorationImage(image: NetworkImage(url), fit: BoxFit.cover),
+    return ClipOval(
+      child: Image.network(
+        webSafeImageUrl(url),
+        width: 26,
+        height: 26,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          width: 26,
+          height: 26,
+          decoration: const BoxDecoration(
+            color: Color(0xFFE5E7EB),
+            shape: BoxShape.circle,
+          ),
+        ),
       ),
     );
   }
@@ -898,10 +1200,12 @@ class _Avatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initials = _initialsFromName(name);
+    final safeUrl =
+        (url == null || url!.isEmpty) ? null : webSafeImageUrl(url!);
     return CircleAvatar(
       radius: 20,
       backgroundColor: const Color(0xFFE5E7EB),
-      foregroundImage: (url == null || url!.isEmpty) ? null : NetworkImage(url!),
+      foregroundImage: safeUrl == null ? null : NetworkImage(safeUrl),
       child: Text(
         initials,
         style: const TextStyle(

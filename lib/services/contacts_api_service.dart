@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:developer' as dev;
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ContactsApiService — Gọi backend tại http://localhost:8081
@@ -326,6 +328,145 @@ class ContactsApiService {
     }
   }
 
+  // ── Fetch Recent Contacts ────────────────────────────────────────────────────
+
+  /// Lấy danh sách người dùng gần đây (từ conversation PRIVATE), sắp xếp theo thời gian.
+  Future<ContactsResult<List<RecentContact>>> fetchRecentContacts(
+      String userId) async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/conversations/member/$userId'))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+
+      final List<dynamic> json = jsonDecode(res.body) as List;
+      final privates = json.where((c) => c['type'] == 'PRIVATE').toList();
+      privates.sort((a, b) {
+        final ta = DateTime.tryParse((a['updatedAt'] ?? '').toString()) ??
+            DateTime(2000);
+        final tb = DateTime.tryParse((b['updatedAt'] ?? '').toString()) ??
+            DateTime(2000);
+        return tb.compareTo(ta);
+      });
+
+      // Lấy thông tin người kia trong mỗi cuộc trò chuyện
+      final results = <RecentContact>[];
+      for (final c in privates) {
+        final members = (c['members'] as List? ?? []);
+        final otherMember = members.firstWhere(
+          (m) => (m['userId'] ?? '').toString() != userId,
+          orElse: () => null,
+        );
+        if (otherMember == null) continue;
+        final otherId = otherMember['userId'].toString();
+
+        final uRes = await _client
+            .get(Uri.parse('$baseUrl/users/$otherId'))
+            .timeout(const Duration(seconds: 8));
+        if (uRes.statusCode != 200) continue;
+
+        final user =
+            _parseUser(jsonDecode(uRes.body) as Map<String, dynamic>);
+        final lastAt = c['updatedAt'] != null
+            ? DateTime.tryParse(c['updatedAt'].toString())
+            : null;
+        results.add(RecentContact(user: user, lastAt: lastAt));
+      }
+
+      return ContactsResult.success(results);
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được backend: $e');
+    }
+  }
+
+  // ── Create Group ─────────────────────────────────────────────────────────────
+
+  // ── Upload group avatar lên S3 via presign ──────────────────────────────────
+
+  /// Upload ảnh nhóm qua backend → S3, tránh CORS trên web.
+  /// Ném [Exception] với message cụ thể nếu thất bại.
+  Future<String> uploadGroupAvatar({
+    required List<int> bytes,
+    required String fileName,
+    required String mimeType,
+  }) async {
+    dev.log('[Upload] Gửi $fileName (${bytes.length} bytes) lên backend...');
+
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/conversations/avatar/upload'),
+    )..files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: fileName,
+        contentType: MediaType.parse(mimeType),
+      ));
+
+    final streamedRes = await request.send().timeout(const Duration(seconds: 30));
+    final res = await http.Response.fromStream(streamedRes);
+
+    dev.log('[Upload] Response: ${res.statusCode} ${res.body}');
+
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw Exception('Upload thất bại (${res.statusCode}): ${res.body}');
+    }
+
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final fileUrl = data['fileUrl'] as String?;
+    if (fileUrl == null || fileUrl.isEmpty) {
+      throw Exception('Backend không trả về fileUrl');
+    }
+
+    dev.log('[Upload] Thành công: $fileUrl');
+    return fileUrl;
+  }
+
+  /// Tạo cuộc trò chuyện nhóm mới.
+  Future<ContactsResult<ApiGroupModel>> createGroup({
+    required String name,
+    required List<String> memberIds,
+    required String creatorId,
+    String? avatar,
+  }) async {
+    try {
+      final members = memberIds
+          .map((id) => {
+                'userId': id,
+                'role': id == creatorId ? 'ADMIN' : 'MEMBER',
+              })
+          .toList();
+
+      final payload = <String, dynamic>{
+        'type': 'GROUP',
+        'name': name,
+        'members': members,
+      };
+      if (avatar != null && avatar.isNotEmpty) payload['avatar'] = avatar;
+      final body = jsonEncode(payload);
+
+      final res = await _client
+          .post(
+            Uri.parse('$baseUrl/conversations'),
+            headers: {'Content-Type': 'application/json'},
+            body: body,
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        return ContactsResult.success(_parseGroup(data));
+      }
+
+      return ContactsResult.error(
+          'Lỗi ${res.statusCode}: Không thể tạo nhóm');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được backend: $e');
+    }
+  }
+
   // ── Fetch Birthday Contacts ───────────────────────────────────────────────────
 
   /// Lấy tất cả user (trừ mình) có dob, dùng cho màn hình Sinh nhật.
@@ -424,4 +565,10 @@ class ApiFriendRequest {
     required this.user,
     required this.createdAt,
   });
+}
+
+class RecentContact {
+  final ApiUserModel user;
+  final DateTime? lastAt;
+  const RecentContact({required this.user, this.lastAt});
 }
