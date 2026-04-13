@@ -115,15 +115,18 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
     // Lắng nghe tin nhắn mới
     socketService.on('new_message', (data) {
-      final newMessage = MessageModel.fromJson(data);
-      if (newMessage.conversationId == widget.conversationId) {
-        setState(() {
-          _messages = _upsertMessage(_messages, _normalizeMessage(newMessage));
-        });
-        _emitSeenForLatest();
-        _scrollToBottom();
-      }
+  log('📨 Nhận tin nhắn mới: $data');   // thêm dòng này để debug
+
+  final newMessage = MessageModel.fromJson(data as Map<String, dynamic>);
+
+  if (newMessage.conversationId == widget.conversationId) {
+    setState(() {
+      _messages = _upsertMessage(_messages, _normalizeMessage(newMessage));
     });
+    _emitSeenForLatest();
+    _scrollToBottom();
+  }
+});
 
     socketService.on('message_seen', (data) {
       try {
@@ -691,13 +694,18 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               ],
             ),
           ),
-          // Voice call
-          if (!isGroup && widget.conversation.id != 'CONV_AI')
-            IconButton(
-              icon: const Icon(Icons.phone_outlined, color: AppColors.textPrimary, size: 22),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => VoiceCallScreen(otherUser: widget.otherUser!, isIncoming: false))),
-            ),
+// Voice call
+if (!isGroup && widget.conversation.id != 'CONV_AI')
+  IconButton(
+    icon: const Icon(Icons.phone_outlined, color: AppColors.textPrimary, size: 24),
+    onPressed: () => Navigator.push(context, MaterialPageRoute(
+      builder: (_) => VoiceCallScreen(
+        otherUser: widget.otherUser!,
+        isIncoming: false,
+        conversationId: widget.conversationId,
+      ),
+    )),
+  ),
           // Video call
           if (!isGroup && widget.conversation.id != 'CONV_AI')
             IconButton(

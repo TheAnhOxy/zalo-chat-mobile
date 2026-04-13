@@ -1,48 +1,128 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/models/models.dart';
+import '../../services/call_service.dart';
 import '../../widgets/common/common_widgets.dart';
 
 class VoiceCallScreen extends StatefulWidget {
   final UserModel otherUser;
   final bool isIncoming;
+  final String? callId;
+  final String? conversationId;
+  final Map<String, dynamic>? offer;
 
-  const VoiceCallScreen({super.key, required this.otherUser, this.isIncoming = false});
+  const VoiceCallScreen({
+    super.key,
+    required this.otherUser,
+    this.isIncoming = false,
+    this.callId,
+    this.conversationId,
+    this.offer,
+  });
 
   @override
   State<VoiceCallScreen> createState() => _VoiceCallScreenState();
 }
 
-class _VoiceCallScreenState extends State<VoiceCallScreen> with SingleTickerProviderStateMixin {
-  bool _isConnected = false;
-  bool _isMuted     = false;
-  bool _isSpeaker   = false;
-  int  _seconds     = 0;
+class _VoiceCallScreenState extends State<VoiceCallScreen>
+    with SingleTickerProviderStateMixin {
+  bool _isMuted = false;
+  bool _isSpeaker = false;
+  int _seconds = 0;
   Timer? _timer;
+  CallState _callState = CallState.idle;
+
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
+  late RTCVideoRenderer _remoteRenderer;
 
   @override
   void initState() {
     super.initState();
-    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
-    _pulseAnim = Tween<double>(begin: 1.0, end: 1.18).animate(
+    if (!kIsWeb) WakelockPlus.enable();
+
+    _remoteRenderer = RTCVideoRenderer();
+    _remoteRenderer.initialize();
+
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 1.0, end: 1.15).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    if (!widget.isIncoming) {
-      Future.delayed(const Duration(seconds: 3), () {
-        if (!mounted) return;
-        setState(() => _isConnected = true);
-        _startTimer();
-      });
+    callService.onRemoteStream = _onRemoteStream;
+    callService.addStateListener(_onCallStateChanged);
+    _init();
+  }
+
+  void _onRemoteStream(MediaStream stream) {
+    print('🎵 VoiceCallScreen received remote stream');
+    _remoteRenderer.srcObject = stream;
+    _remoteRenderer.muted = false;
+  }
+
+  void _onCallStateChanged(CallState state) {
+    print('🎯 VoiceCallScreen: state changed to $state');
+    if (!mounted) return;
+    setState(() => _callState = state);
+    if (state == CallState.connected) _startTimer();
+    if (state == CallState.ended) _onCallEnded();
+  }
+
+  Future<void> _init() async {
+    print('🎯 VoiceCallScreen _init called, isIncoming: ${widget.isIncoming}');
+    if (!kIsWeb) {
+      final status = await Permission.microphone.request();
+      if (status.isDenied) {
+        print('❌ Microphone permission denied');
+        _showError('Cần quyền microphone để gọi');
+        return;
+      }
+    }
+    if (widget.isIncoming) {
+      print('📞 Incoming call, setting state to incoming');
+      setState(() => _callState = CallState.incoming);
+    } else {
+      print('📞 Outgoing call, starting call');
+      await callService.startCall(
+        conversationId: widget.conversationId ?? '',
+        calleeId: widget.otherUser.id,
+        isVideo: false,
+      );
+      print('📞 Outgoing call initiated, setting state to calling');
+      setState(() => _callState = CallState.calling);
     }
   }
 
+  @override
+  void dispose() {
+    if (!kIsWeb) WakelockPlus.disable();
+    _pulseCtrl.dispose();
+    _remoteRenderer.dispose();
+    _timer?.cancel();
+    callService.removeStateListener(_onCallStateChanged);
+    if (_callState == CallState.calling || _callState == CallState.connected) {
+      callService.endCall();
+    }
+    super.dispose();
+  }
+
   void _startTimer() {
+    print('⏱️ Starting timer');
+    _timer?.cancel();
+    _seconds = 0;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _seconds++);
+      if (mounted) {
+        setState(() => _seconds++);
+        print('⏱️ Timer tick: $_seconds seconds');
+      }
     });
   }
 
@@ -52,71 +132,47 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> with SingleTickerProv
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-  @override
-  void dispose() {
-    _pulseCtrl.dispose();
+  void _onCallEnded() {
+    print('📵 VoiceCallScreen _onCallEnded called, timer: $_seconds seconds');
     _timer?.cancel();
-    super.dispose();
+    if (mounted) Navigator.pop(context);
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF080C1A),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0A0A18), Color(0xFF0D1B35), Color(0xFF0A0A18)],
-            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          gradient: RadialGradient(
+            center: Alignment(0, -0.3),
+            radius: 1.2,
+            colors: [Color(0xFF1A2744), Color(0xFF080C1A)],
           ),
         ),
         child: SafeArea(
           child: Column(
             children: [
+              _buildTopBar(),
+              const Spacer(flex: 2),
+              _buildAvatar(),
+              const SizedBox(height: 20),
+              _buildNameAndStatus(),
+              const Spacer(flex: 3),
+              _buildControls(),
               const SizedBox(height: 48),
-              // Status
-              Text(
-                _isConnected ? _timerLabel : widget.isIncoming ? 'Cuộc gọi đến...' : 'Đang gọi...',
-                style: TextStyle(
-                  fontSize: 18, fontFamily: 'Inter',
-                  color: _isConnected ? AppColors.online : AppColors.textSecondary,
-                  fontWeight: FontWeight.w500,
-                ),
+              Container(
+                width: 1,
+                height: 1,
+                child: RTCVideoView(_remoteRenderer),
               ),
-              const SizedBox(height: 40),
-
-              // Pulsing Avatar
-              AnimatedBuilder(
-                animation: _pulseAnim,
-                builder: (_, child) => Transform.scale(
-                  scale: _isConnected ? 1.0 : _pulseAnim.value,
-                  child: child,
-                ),
-                child: Container(
-                  width: 110, height: 110,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.primary.withOpacity(0.5), width: 3),
-                    boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.25), blurRadius: 30, spreadRadius: 8)],
-                  ),
-                  child: AvatarWidget(url: widget.otherUser.avatar, name: widget.otherUser.fullName, size: 110),
-                ),
-              ),
-
-              const SizedBox(height: 24),
-              Text(widget.otherUser.fullName,
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: AppColors.textPrimary, fontFamily: 'Inter')),
-              const SizedBox(height: 6),
-              Text(widget.otherUser.phone,
-                  style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, fontFamily: 'Inter')),
-
-              const Spacer(),
-
-              // Controls
-              if (_isConnected) _buildConnectedControls(),
-              if (!_isConnected && widget.isIncoming) _buildIncomingControls(),
-              if (!_isConnected && !widget.isIncoming) _buildCallingControls(),
-
-              const SizedBox(height: 40),
             ],
           ),
         ),
@@ -124,36 +180,269 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> with SingleTickerProv
     );
   }
 
-  Widget _buildConnectedControls() {
+  Widget _buildTopBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Row(
+        children: [
+          // Mã hóa badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withOpacity(0.12)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_outline,
+                    size: 12, color: Colors.white.withOpacity(0.7)),
+                const SizedBox(width: 4),
+                Text(
+                  'Mã hoá đầu cuối',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white.withOpacity(0.7),
+                    fontFamily: 'Inter',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          // Minimize button
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.keyboard_arrow_down,
+                  color: Colors.white.withOpacity(0.8)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAvatar() {
+    final isConnected = _callState == CallState.connected;
+    final isPulsing =
+        _callState == CallState.calling || _callState == CallState.incoming;
+
+    return AnimatedBuilder(
+      animation: _pulseAnim,
+      builder: (_, child) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Outer glow ring (pulsing)
+            if (isPulsing)
+              Transform.scale(
+                scale: _pulseAnim.value * 1.3,
+                child: Container(
+                  width: 130,
+                  height: 130,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.15),
+                      width: 1,
+                    ),
+                  ),
+                ),
+              ),
+            // Middle ring
+            if (isPulsing)
+              Transform.scale(
+                scale: _pulseAnim.value * 1.15,
+                child: Container(
+                  width: 130,
+                  height: 130,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.25),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+            // Avatar
+            Container(
+              width: 130,
+              height: 130,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: isConnected
+                      ? AppColors.online.withOpacity(0.6)
+                      : AppColors.primary.withOpacity(0.5),
+                  width: 2.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (isConnected ? AppColors.online : AppColors.primary)
+                        .withOpacity(0.3),
+                    blurRadius: 30,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: AvatarWidget(
+                  url: widget.otherUser.avatar,
+                  name: widget.otherUser.fullName,
+                  size: 130,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildNameAndStatus() {
+    String statusText;
+    Color statusColor;
+    IconData? statusIcon;
+
+    switch (_callState) {
+      case CallState.calling:
+        statusText = 'Đang gọi...';
+        statusColor = Colors.white54;
+        statusIcon = null;
+        break;
+      case CallState.incoming:
+        statusText = 'Cuộc gọi thoại';
+        statusColor = Colors.white54;
+        statusIcon = Icons.call_outlined;
+        break;
+      case CallState.connected:
+        statusText = _timerLabel;
+        statusColor = AppColors.online;
+        statusIcon = Icons.call_outlined;
+        break;
+      case CallState.ended:
+        statusText = 'Đã kết thúc';
+        statusColor = AppColors.error;
+        statusIcon = null;
+        break;
+      default:
+        statusText = 'Đang kết nối...';
+        statusColor = Colors.white54;
+        statusIcon = null;
+    }
+
     return Column(
       children: [
+        Text(
+          widget.otherUser.fullName,
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+            fontFamily: 'Inter',
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
         Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            _CallBtn(
-              icon: _isMuted ? Icons.mic_off : Icons.mic,
-              label: _isMuted ? 'Bật mic' : 'Tắt mic',
-              color: _isMuted ? AppColors.callMuted : AppColors.callMuted,
-              onTap: () => setState(() => _isMuted = !_isMuted),
-            ),
-            const SizedBox(width: 24),
-            _CallBtn(
-              icon: _isSpeaker ? Icons.volume_up : Icons.volume_down,
-              label: 'Loa ngoài',
-              color: _isSpeaker ? AppColors.primary : AppColors.callMuted,
-              onTap: () => setState(() => _isSpeaker = !_isSpeaker),
-            ),
-            const SizedBox(width: 24),
-            _CallBtn(
-              icon: Icons.keyboard,
-              label: 'Bàn phím',
-              color: AppColors.callMuted,
-              onTap: () {},
+            if (statusIcon != null) ...[
+              Icon(statusIcon, size: 14, color: statusColor),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              statusText,
+              style: TextStyle(
+                fontSize: 15,
+                color: statusColor,
+                fontFamily: 'Inter',
+                fontWeight: _callState == CallState.connected
+                    ? FontWeight.w600
+                    : FontWeight.w400,
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 40),
-        _EndCallBtn(onTap: () => Navigator.pop(context)),
+        if (widget.otherUser.phone.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            widget.otherUser.phone,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.white.withOpacity(0.4),
+              fontFamily: 'Inter',
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildControls() {
+    switch (_callState) {
+      case CallState.connected:
+        return _buildConnectedControls();
+      case CallState.incoming:
+        return _buildIncomingControls();
+      default:
+        return _buildCallingControls();
+    }
+  }
+
+  Widget _buildConnectedControls() {
+    return Column(
+      children: [
+        // Control buttons row
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _ControlBtn(
+                icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                label: _isMuted ? 'Bật mic' : 'Tắt mic',
+                isActive: _isMuted,
+                activeColor: AppColors.error,
+                onTap: () {
+                  setState(() => _isMuted = !_isMuted);
+                  callService.toggleMute(_isMuted);
+                },
+              ),
+              _ControlBtn(
+                icon: _isSpeaker
+                    ? Icons.volume_up_rounded
+                    : Icons.volume_down_rounded,
+                label: 'Loa ngoài',
+                isActive: _isSpeaker,
+                activeColor: AppColors.primary,
+                onTap: () {
+                  setState(() => _isSpeaker = !_isSpeaker);
+                  callService.toggleSpeaker(_isSpeaker);
+                },
+              ),
+              _ControlBtn(
+                icon: Icons.dialpad_rounded,
+                label: 'Bàn phím',
+                onTap: () {},
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 36),
+        _EndCallButton(onTap: () {
+          callService.endCall();
+          Navigator.pop(context);
+        }),
       ],
     );
   }
@@ -161,97 +450,237 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> with SingleTickerProv
   Widget _buildCallingControls() {
     return Column(
       children: [
-        _CallBtn(icon: Icons.mic_off, label: 'Tắt mic', color: AppColors.callMuted, onTap: () => setState(() => _isMuted = !_isMuted)),
-        const SizedBox(height: 40),
-        _EndCallBtn(onTap: () => Navigator.pop(context)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _ControlBtn(
+                icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                label: _isMuted ? 'Bật mic' : 'Tắt mic',
+                isActive: _isMuted,
+                activeColor: AppColors.error,
+                onTap: () {
+                  setState(() => _isMuted = !_isMuted);
+                  callService.toggleMute(_isMuted);
+                },
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 36),
+        _EndCallButton(onTap: () {
+          callService.endCall();
+          Navigator.pop(context);
+        }),
       ],
     );
   }
 
   Widget _buildIncomingControls() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 60),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(children: [
-            _RoundCallBtn(icon: Icons.call_end, color: AppColors.callReject, size: 70,
-                onTap: () => Navigator.pop(context)),
-            const SizedBox(height: 8),
-            const Text('Từ chối', style: TextStyle(color: AppColors.textSecondary, fontFamily: 'Inter', fontSize: 13)),
-          ]),
-          Column(children: [
-            _RoundCallBtn(icon: Icons.call, color: AppColors.callAccept, size: 70,
-                onTap: () => setState(() { _isConnected = true; _startTimer(); })),
-            const SizedBox(height: 8),
-            const Text('Chấp nhận', style: TextStyle(color: AppColors.textSecondary, fontFamily: 'Inter', fontSize: 13)),
-          ]),
+          // Reject
+          Column(
+            children: [
+              _ActionButton(
+                icon: Icons.call_end_rounded,
+                color: AppColors.callReject,
+                size: 68,
+                onTap: () {
+                  callService.rejectCall(
+                    callId: widget.callId ?? '',
+                    conversationId: widget.conversationId ?? '',
+                  );
+                  Navigator.pop(context);
+                },
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Từ chối',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontFamily: 'Inter',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          // Accept
+          Column(
+            children: [
+              _ActionButton(
+                icon: Icons.call_rounded,
+                color: AppColors.callAccept,
+                size: 68,
+                onTap: () async {
+                  await callService.answerCall(
+                    conversationId: widget.conversationId ?? '',
+                    callId: widget.callId ?? '',
+                    offer: widget.offer ?? {},
+                    isVideo: false,
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Chấp nhận',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontFamily: 'Inter',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 }
 
-class _CallBtn extends StatelessWidget {
+// ── Control Button (tròn nhỏ có label) ───────────────────────────────────────
+class _ControlBtn extends StatelessWidget {
   final IconData icon;
   final String label;
-  final Color color;
   final VoidCallback onTap;
-  const _CallBtn({required this.icon, required this.label, required this.color, required this.onTap});
+  final bool isActive;
+  final Color activeColor;
+
+  const _ControlBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isActive = false,
+    this.activeColor = Colors.white,
+  });
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Column(children: [
-      Container(
-        width: 54, height: 54,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        child: Icon(icon, color: Colors.white, size: 24),
-      ),
-      const SizedBox(height: 6),
-      Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontFamily: 'Inter')),
-    ]),
-  );
-}
-
-class _EndCallBtn extends StatelessWidget {
-  final VoidCallback onTap;
-  const _EndCallBtn({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    GestureDetector(
+  Widget build(BuildContext context) {
+    return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: 70, height: 70,
-        decoration: BoxDecoration(
-          color: AppColors.callReject,
-          shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: AppColors.callReject.withOpacity(0.4), blurRadius: 16)],
-        ),
-        child: const Icon(Icons.call_end, color: Colors.white, size: 32),
+      child: Column(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: isActive
+                  ? activeColor.withOpacity(0.2)
+                  : Colors.white.withOpacity(0.1),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isActive
+                    ? activeColor.withOpacity(0.5)
+                    : Colors.white.withOpacity(0.15),
+                width: 1,
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: isActive ? activeColor : Colors.white,
+              size: 24,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withOpacity(0.7),
+              fontFamily: 'Inter',
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
       ),
-    ),
-    const SizedBox(height: 8),
-    const Text('Kết thúc', style: TextStyle(color: AppColors.textSecondary, fontFamily: 'Inter', fontSize: 13)),
-  ]);
+    );
+  }
 }
 
-class _RoundCallBtn extends StatelessWidget {
+// ── End Call Button ───────────────────────────────────────────────────────────
+class _EndCallButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EndCallButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              color: AppColors.callReject,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.callReject.withOpacity(0.5),
+                  blurRadius: 20,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.call_end_rounded,
+                color: Colors.white, size: 30),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Kết thúc',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.7),
+            fontFamily: 'Inter',
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Action Button (incoming call) ─────────────────────────────────────────────
+class _ActionButton extends StatelessWidget {
   final IconData icon;
   final Color color;
   final double size;
   final VoidCallback onTap;
-  const _RoundCallBtn({required this.icon, required this.color, required this.size, required this.onTap});
+
+  const _ActionButton({
+    required this.icon,
+    required this.color,
+    required this.size,
+    required this.onTap,
+  });
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      width: size, height: size,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: color.withOpacity(0.4), blurRadius: 16)]),
-      child: Icon(icon, color: Colors.white, size: size * 0.45),
-    ),
-  );
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.5),
+              blurRadius: 20,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Icon(icon, color: Colors.white, size: size * 0.42),
+      ),
+    );
+  }
 }

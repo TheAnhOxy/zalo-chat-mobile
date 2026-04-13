@@ -32,6 +32,7 @@ dependencies:
     sdk: flutter
   dio: ^5.4.0                # Gọi API Restful (HTTP)
   flutter_webrtc: ^0.12.1    # Xử lý Video/Voice Call
+  wakelock_plus: ^1.2.8
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

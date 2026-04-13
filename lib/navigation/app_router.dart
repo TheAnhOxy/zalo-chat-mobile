@@ -8,6 +8,8 @@ import '../data/models/models.dart';
 import '../navigation/main_navigator.dart';
 import '../screens/auth/register_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
+import '../widgets/call/incoming_call_overlay.dart';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppRouter — Tập trung tất cả route vào 1 chỗ
@@ -50,7 +52,7 @@ class AppRouter {
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:
-        return _fade(const MainNavigator());
+        return _fade(IncomingCallListener(child: const MainNavigator()));
 
       // ── Chat 1-1 ──────────────────────────────────────────────
       case chatDetail:

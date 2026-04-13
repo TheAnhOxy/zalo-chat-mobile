@@ -4,6 +4,7 @@ import 'core/themes/app_theme.dart';
 import 'navigation/app_router.dart';
 import 'services/auth_service.dart';
 import 'services/socket_service.dart'; // Import thêm SocketService
+import 'services/call_service.dart';
 
 void main() {
   // 1. Đảm bảo các dịch vụ hệ thống của Flutter được khởi tạo
@@ -23,6 +24,7 @@ void main() {
   // Ngay khi có userId từ authService, ta phải kết nối socket ngay lập tức
   if (authService.isLoggedIn) {
     socketService.connect(authService.userId!);
+    callService.init();
   }
 
   // 5. Cấu hình giao diện thanh trạng thái (Status Bar)

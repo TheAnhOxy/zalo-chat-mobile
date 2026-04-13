@@ -1,5 +1,17 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:developer';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+
+String get socketUrl {
+  if (kIsWeb) {
+    return 'http://localhost:8081';
+  } else if (Platform.isAndroid) {
+    return 'http://10.0.2.2:8081';
+  } else {
+    return 'http://localhost:8081';
+  }
+}
 
 class SocketService {
   static final SocketService _instance = SocketService._internal();
@@ -9,30 +21,25 @@ class SocketService {
   IO.Socket? _socket;
   bool get isConnected => _socket?.connected ?? false;
 
-  void connect(String userId) {
-    if (_socket?.connected == true) return;
+void connect(String userId) {
+  if (_socket?.connected == true) return;
 
-    // Thay đổi IP này theo IP máy tính của bạn nếu chạy trên điện thoại thật
-    // Hoặc 10.0.2.2 nếu chạy trên Android Emulator
-    _socket = IO.io(
-      'http://localhost:8081', 
-      IO.OptionBuilder()
-          .setTransports(['websocket'])
-          .setQuery({'userId': userId}) 
-          .enableAutoConnect()
-          .build(),
-    );
+  _socket = IO.io(
+    socketUrl,
+    IO.OptionBuilder()
+        .setTransports(['websocket'])
+        .setQuery({'userId': userId})
+        .enableForceNew()           // ← quan trọng cho emulator
+        .enableReconnection()
+        .setReconnectionAttempts(10)
+        .build(),
+  );
 
-    _socket!.onConnect((_) {
-      log('✅ Connected to Socket Server');
-    });
-
-    _socket!.onDisconnect((_) {
-      log('❌ Disconnected from Socket Server');
-    });
-
-    _socket!.onConnectError((err) => log('⚠️ Connect Error: $err'));
-  }
+  _socket!.onConnect((_) => log('✅ Socket Connected'));
+  _socket!.onConnectError((err) => log('❌ Socket Connect Error: $err'));
+  _socket!.onError((err) => log('❌ Socket Error: $err'));
+  _socket!.onDisconnect((_) => log('❌ Socket Disconnected'));
+}
 
   // Lắng nghe sự kiện chung
   void on(String event, Function(dynamic) handler) {
