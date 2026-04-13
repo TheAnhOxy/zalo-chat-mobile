@@ -52,13 +52,13 @@ dependencies:
   # Realtime & Communication
   socket_io_client: ^2.0.3+1
   permission_handler: ^11.3.1
-  http: ^1.2.2
   another_flushbar: ^1.12.30
 
   # Utils
   intl: ^0.19.0
   uuid: ^4.4.0
   timeago: ^3.6.1
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

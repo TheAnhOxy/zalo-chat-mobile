@@ -68,7 +68,7 @@ class FakeAuthFlowService {
 
   static const String _defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:8081/api/v1',
+    defaultValue: 'http://localhost:8081',
   );
 
   final http.Client _client = http.Client();
