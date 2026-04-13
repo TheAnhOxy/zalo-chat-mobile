@@ -40,6 +40,8 @@ class _SettingScreenState extends State<SettingScreen> {
   @override
   Widget build(BuildContext context) {
     final user = authService.currentUser;
+    final coverUrl = (user?.coverImage ?? '').trim();
+    final hasCover = coverUrl.isNotEmpty;
 
     return Scaffold(
       backgroundColor: AppColors.bgDark,
@@ -60,87 +62,116 @@ class _SettingScreenState extends State<SettingScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-              decoration: BoxDecoration(
-                color: AppColors.bgCard,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  Stack(
-                    children: [
-                      AvatarWidget(
-                        url: user?.avatar,
-                        name: user?.fullName ?? 'User',
-                        size: 82,
-                        showOnline: true,
-                        isOnline: true,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.bgCard,
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Stack(
+                  children: [
+                    if (hasCover)
+                      Positioned.fill(
+                        child: Image.network(
+                          coverUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return _buildCoverFallback();
+                          },
+                        ),
+                      )
+                    else
+                      Positioned.fill(child: _buildCoverFallback()),
+                    Positioned.fill(
+                      child: Container(
+                        color: hasCover
+                            ? Colors.black.withValues(alpha: 0.38)
+                            : AppColors.bgCard.withValues(alpha: 0.95),
                       ),
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.bgDark, width: 2),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                      child: Column(
+                        children: [
+                          Stack(
+                            children: [
+                              AvatarWidget(
+                                url: user?.avatar,
+                                name: user?.fullName ?? 'User',
+                                size: 82,
+                                showOnline: true,
+                                isOnline: true,
+                              ),
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: AppColors.bgDark, width: 2),
+                                  ),
+                                  child: const Icon(
+                                    Icons.edit,
+                                    size: 18,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          child: const Icon(
-                            Icons.edit,
-                            size: 18,
-                            color: AppColors.textPrimary,
+                          const SizedBox(height: 18),
+                          Text(
+                            user?.fullName ?? 'Minh Anh Lê',
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                              fontFamily: 'Inter',
+                            ),
                           ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    user?.fullName ?? 'Minh Anh Lê',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                      fontFamily: 'Inter',
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    user?.email ?? 'minhanh.le@azureconnect.com',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
-                      fontFamily: 'Inter',
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: const Text(
-                        'Chỉnh sửa hồ sơ',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          fontFamily: 'Inter',
-                          color: AppColors.textPrimary,
-                        ),
+                          const SizedBox(height: 6),
+                          Text(
+                            user?.email ?? 'minhanh.le@azureconnect.com',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: AppColors.textSecondary,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.pushNamed(context, AppRouter.editProfile);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                              ),
+                              child: const Text(
+                                'Chỉnh sửa hồ sơ',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'Inter',
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -172,6 +203,9 @@ class _SettingScreenState extends State<SettingScreen> {
                 icon: Icons.privacy_tip_outlined,
                 title: 'Quyền riêng tư',
                 subtitle: 'Ai có thể nhìn tin, trạng thái',
+                onTap: () {
+                  Navigator.pushNamed(context, AppRouter.privacy);
+                },
               ),
               _SettingsItemData(
                 icon: Icons.chat_bubble_outline,
@@ -225,7 +259,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     )
                   : const Icon(Icons.logout, color: AppColors.error),
               label: Text(
-                _logoutLoading ? 'Dang dang xuat...' : 'Dang xuat',
+                _logoutLoading ? 'Đang đăng xuất...' : 'Đăng xuất',
                 style: const TextStyle(
                   color: AppColors.error,
                   fontFamily: 'Inter',
@@ -247,6 +281,18 @@ class _SettingScreenState extends State<SettingScreen> {
       ),
     );
   }
+}
+
+Widget _buildCoverFallback() {
+  return Container(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF334155)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+  );
 }
 
 class _SettingsGroup extends StatelessWidget {

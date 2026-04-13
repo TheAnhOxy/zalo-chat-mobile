@@ -161,6 +161,11 @@ class AuthService {
     _notify();
   }
 
+  void updateCurrentUser(UserModel user) {
+    _currentUser = user;
+    _notify();
+  }
+
   /// NGƯỜI 1 implement: gọi API /auth/login-phone
   Future<void> loginWithPhone(String phone, String password) async {
     // TODO(AUTH_TEAM): Gọi API thật

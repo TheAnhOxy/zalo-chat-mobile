@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:another_flushbar/flushbar.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
@@ -82,22 +83,12 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
     setState(() => _loading = true);
     try {
       if (widget.args.purpose == FakeAuthFlowService.emailOtpPurposeRegister) {
-        final result = await fakeAuthFlowService.verifyRegisterOtp(
+        await fakeAuthFlowService.verifyRegisterOtp(
           sessionId: _sessionId,
           otp: otp,
         );
-        authService.setUser(
-          result.user,
-          token: result.tokens.accessToken,
-          refreshToken: result.tokens.refreshToken,
-        );
-
         if (!mounted) return;
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          AppRouter.main,
-          (route) => false,
-        );
+        await _showRegisterSuccessAndGoLogin();
         return;
       }
 
@@ -128,7 +119,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       if (!mounted) return;
       showTopNotice(
         context,
-        message: 'Doi mat khau thanh cong. Vui long dang nhap lai.',
+        message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.',
       );
       Navigator.pushNamedAndRemoveUntil(context, AppRouter.login, (r) => false);
     } on FakeAuthException catch (e) {
@@ -150,12 +141,32 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       _startCountdown(from: next.expiredAt);
 
       if (!mounted) return;
-      showTopNotice(context, message: 'Da gui lai OTP toi ${next.email}.');
+      showTopNotice(context, message: 'Đã gửi lại mã OTP.');
     } on FakeAuthException catch (e) {
       _showError(e.message);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _showRegisterSuccessAndGoLogin() async {
+    await Flushbar<void>(
+      messageText: const Text(
+        'Đăng ký thành công. Mời bạn đăng nhập để tiếp tục.',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+      ),
+      icon: const Icon(Icons.check_circle_rounded, color: Colors.white),
+      duration: const Duration(seconds: 2),
+      margin: const EdgeInsets.all(12),
+      borderRadius: BorderRadius.circular(14),
+      backgroundGradient: const LinearGradient(
+        colors: [Color(0xFF0EA5E9), Color(0xFF22C55E)],
+      ),
+      flushbarPosition: FlushbarPosition.TOP,
+    ).show(context);
+
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, AppRouter.login, (r) => false);
   }
 
   void _showError(String message) {
@@ -173,7 +184,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text(isRegister ? 'Xac thuc OTP Email' : 'OTP Quen Mat Khau'),
+        title: Text(isRegister ? 'Xác thực OTP Email' : 'OTP quên mật khẩu'),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -198,8 +209,8 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
               const SizedBox(height: 20),
               Text(
                 isRegister
-                    ? 'Nhap ma OTP da gui den email cua ban'
-                    : 'Xac minh OTP de dat lai mat khau',
+                  ? 'Nhập mã OTP đã gửi đến email của bạn'
+                  : 'Xác minh OTP để đặt lại mật khẩu',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 18,
@@ -209,15 +220,6 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                widget.args.email,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: AppColors.textSecondary,
-                  fontFamily: 'Inter',
-                ),
-              ),
               const SizedBox(height: 24),
               Container(
                 padding: const EdgeInsets.all(20),
@@ -230,7 +232,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Ma OTP (6 so)',
+                      'Mã OTP (6 số)',
                       style: TextStyle(
                         fontSize: 13,
                         color: AppColors.textSecondary,
@@ -274,7 +276,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
                     const SizedBox(height: 10),
                     const SizedBox(height: 16),
                     GradientButton(
-                      label: isRegister ? 'Xac thuc va tao tai khoan' : 'Xac thuc OTP',
+                      label: isRegister ? 'Xác thực và tạo tài khoản' : 'Xác thực OTP',
                       loading: _loading,
                       onTap: _verifyOtp,
                     ),
@@ -285,18 +287,9 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
                           : null,
                       child: Text(
                         _remainingSeconds == 0
-                            ? 'Gui lai OTP'
-                            : 'Gui lai sau $_remainingSeconds s',
+                            ? 'Gửi lại OTP'
+                            : 'Gửi lại sau $_remainingSeconds s',
                         style: const TextStyle(fontFamily: 'Inter'),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'OTP duoc gui tu backend qua email da dang ky.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textHint,
-                        fontFamily: 'Inter',
                       ),
                     ),
                   ],

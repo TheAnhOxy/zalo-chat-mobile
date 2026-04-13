@@ -51,7 +51,7 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
     try {
       await fakeAuthFlowService.logoutAllDevices(userId);
       if (!mounted) return;
-      showTopNotice(context, message: 'Da dang xuat tat ca thiet bi.');
+      showTopNotice(context, message: 'Đã đăng xuất tất cả thiết bị.');
       await _loadSessions();
     } on FakeAuthException catch (e) {
       if (!mounted) return;
@@ -69,7 +69,7 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
         backgroundColor: AppColors.bgDark,
         elevation: 0,
         title: const Text(
-          'Thiet bi & Phien dang nhap',
+          'Thiết bị & Phiên đăng nhập',
           style: TextStyle(
             fontFamily: 'Inter',
             fontWeight: FontWeight.w700,
@@ -95,7 +95,7 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.power_settings_new),
-                label: const Text('Dang xuat tat ca thiet bi'),
+                label: const Text('Đăng xuất tất cả thiết bị'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.error,
                   side: const BorderSide(color: AppColors.error),
@@ -110,7 +110,7 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
                 : _sessions.isEmpty
                     ? const Center(
                         child: Text(
-                          'Khong co phien dang nhap nao.',
+                          'Không có phiên đăng nhập nào.',
                           style: TextStyle(
                             color: AppColors.textSecondary,
                             fontFamily: 'Inter',
@@ -189,7 +189,7 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: Text(
-                                    isActive ? 'Active' : 'Inactive',
+                                    isActive ? 'Đang hoạt động' : 'Không hoạt động',
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: isActive

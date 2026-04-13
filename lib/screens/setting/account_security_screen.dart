@@ -36,7 +36,7 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
 
     final userId = authService.userId;
     if (userId == null || userId.isEmpty) {
-      showTopNotice(context, message: 'Ban chua dang nhap.', isError: true);
+      showTopNotice(context, message: 'Bạn chưa đăng nhập.', isError: true);
       return;
     }
 
@@ -47,13 +47,13 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
     if (!fakeAuthFlowService.isStrongPassword(newPassword)) {
       showTopNotice(
         context,
-        message: 'Mat khau moi can >=8 ky tu va co chu hoa, chu thuong, so.',
+        message: 'Mật khẩu mới cần >= 8 ký tự và có chữ hoa, chữ thường, số.',
         isError: true,
       );
       return;
     }
     if (newPassword != confirm) {
-      showTopNotice(context, message: 'Xac nhan mat khau chua khop.', isError: true);
+      showTopNotice(context, message: 'Xác nhận mật khẩu chưa khớp.', isError: true);
       return;
     }
 
@@ -65,10 +65,8 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
         newPassword: newPassword,
       );
       if (!mounted) return;
-      showTopNotice(context, message: 'Doi mat khau thanh cong.');
-      _oldCtrl.clear();
-      _newCtrl.clear();
-      _confirmCtrl.clear();
+      showTopNotice(context, message: 'Đổi mật khẩu thành công.');
+      Navigator.pop(context);
     } on FakeAuthException catch (e) {
       showTopNotice(context, message: e.message, isError: true);
     } finally {
@@ -84,7 +82,7 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
         backgroundColor: AppColors.bgDark,
         elevation: 0,
         title: const Text(
-          'Tai khoan & Bao mat',
+          'Tài khoản & Bảo mật',
           style: TextStyle(
             fontFamily: 'Inter',
             fontWeight: FontWeight.w700,
@@ -106,7 +104,7 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Doi mat khau',
+                  'Đổi mật khẩu',
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
@@ -117,48 +115,31 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
                 const SizedBox(height: 12),
                 _buildPasswordField(
                   controller: _oldCtrl,
-                  label: 'Mat khau hien tai',
+                  label: 'Mật khẩu hiện tại',
                   obscure: _obOld,
                   onToggle: () => setState(() => _obOld = !_obOld),
                 ),
                 const SizedBox(height: 12),
                 _buildPasswordField(
                   controller: _newCtrl,
-                  label: 'Mat khau moi',
+                  label: 'Mật khẩu mới',
                   obscure: _obNew,
                   onToggle: () => setState(() => _obNew = !_obNew),
                 ),
                 const SizedBox(height: 12),
                 _buildPasswordField(
                   controller: _confirmCtrl,
-                  label: 'Nhap lai mat khau moi',
+                  label: 'Nhập lại mật khẩu mới',
                   obscure: _obConfirm,
                   onToggle: () => setState(() => _obConfirm = !_obConfirm),
                 ),
                 const SizedBox(height: 16),
                 GradientButton(
-                  label: 'Cap nhat mat khau',
+                  label: 'Cập nhật mật khẩu',
                   loading: _loading,
                   onTap: _changePassword,
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.bgCard,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: const Text(
-              'Bao mat 2 lop se bo sung o phase sau.',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontFamily: 'Inter',
-                fontSize: 13,
-              ),
             ),
           ),
         ],

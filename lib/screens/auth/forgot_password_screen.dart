@@ -200,15 +200,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       loading: _loading,
                       onTap: _requestOtp,
                     ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Nhap email da dang ky de nhan OTP backend.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textHint,
-                        fontFamily: 'Inter',
-                      ),
-                    ),
                   ],
                 ),
               ),

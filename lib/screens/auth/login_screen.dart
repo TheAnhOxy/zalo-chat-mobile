@@ -216,7 +216,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Text(
-                            'DANG NHAP NHANH',
+                            'ĐĂNG NHẬP NHANH',
                             style: TextStyle(
                               fontSize: 11,
                               color: AppColors.textHint.withValues(alpha: 0.75),
@@ -234,7 +234,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         authService.loginAsUser2();
                         showTopNotice(
                           context,
-                          message: 'Da dang nhap nhanh bang User 2 (fake).',
+                          message: 'Đã đăng nhập nhanh bằng User 2 (fake).',
                         );
                         Navigator.pushNamedAndRemoveUntil(
                           context,
@@ -349,7 +349,7 @@ class _QuickLoginButton extends StatelessWidget {
             Icon(Icons.bolt_rounded, color: Colors.orange, size: 20),
             SizedBox(width: 8),
             Text(
-              'Dang nhap nhanh voi User 2',
+              'Đăng nhập nhanh với User 2',
               style: TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 14,

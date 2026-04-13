@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 import '../data/models/models.dart';
 
@@ -34,6 +35,18 @@ class OtpSession {
     required this.email,
     required this.expiredAt,
   });
+}
+
+class AvatarUploadResult {
+  final String avatarUrl;
+
+  const AvatarUploadResult({required this.avatarUrl});
+}
+
+class S3UploadResult {
+  final String fileUrl;
+
+  const S3UploadResult({required this.fileUrl});
 }
 
 class LoginResult {
@@ -83,6 +96,33 @@ class FakeAuthFlowService {
     final hasLower = RegExp(r'[a-z]').hasMatch(password);
     final hasDigit = RegExp(r'[0-9]').hasMatch(password);
     return minLength && hasUpper && hasLower && hasDigit;
+  }
+
+  bool isValidDob(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return true;
+    final regex = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+    if (!regex.hasMatch(text)) return false;
+    return DateTime.tryParse(text) != null;
+  }
+
+  bool isValidGender(String value) {
+    return value == 'male' || value == 'female' || value == 'other';
+  }
+
+  bool isValidShowPhone(String value) {
+    return value == 'ALL' || value == 'FRIEND' || value == 'PRIVATE';
+  }
+
+  bool isValidUrl(String value) {
+    if (value.trim().isEmpty) return true;
+    final uri = Uri.tryParse(value.trim());
+    return uri != null && uri.hasScheme && uri.hasAuthority;
+  }
+
+  bool isImageMimeType(String? value) {
+    if (value == null || value.trim().isEmpty) return false;
+    return value.toLowerCase().startsWith('image/');
   }
 
   Future<LoginResult> login({
@@ -232,12 +272,168 @@ class FakeAuthFlowService {
     );
   }
 
+  Future<Map<String, dynamic>> getUserProfile(String userId) async {
+    final data = await _get('/users/$userId');
+    if (data.containsKey('user')) {
+      return _extractMap(data['user']);
+    }
+    return data;
+  }
+
+  Future<UserModel> updateUserProfile({
+    required String userId,
+    required String fullName,
+    String? bio,
+    String? gender,
+    String? dob,
+    bool? isBlocked,
+  }) async {
+    final body = <String, dynamic>{
+      'fullName': fullName.trim(),
+    };
+
+    if (bio != null && bio.trim().isNotEmpty) body['bio'] = bio.trim();
+    if (gender != null && gender.trim().isNotEmpty) body['gender'] = gender.trim();
+    if (dob != null && dob.trim().isNotEmpty) body['dob'] = dob.trim();
+    if (isBlocked != null) {
+      body['isBlocked'] = isBlocked;
+    }
+
+    final data = await _put('/users/$userId', body);
+    final userMap = data.containsKey('user') ? _extractMap(data['user']) : data;
+    return _parseUser(userMap);
+  }
+
+  Future<Map<String, dynamic>> updatePrivacy({
+    required String userId,
+    required String showPhone,
+    required bool showOnline,
+    required bool allowStrangerMessage,
+    required bool findByPhone,
+  }) async {
+    if (!isValidShowPhone(showPhone)) {
+      throw const FakeAuthException('showPhone chi nhan ALL | FRIEND | PRIVATE.');
+    }
+
+    final data = await _patch('/users/$userId/privacy', {
+      'showPhone': showPhone,
+      'showOnline': showOnline,
+      'allowStrangerMessage': allowStrangerMessage,
+      'findByPhone': findByPhone,
+    });
+    return data;
+  }
+
+  Future<Map<String, dynamic>> updateOnlineStatus({
+    required String userId,
+    required bool isOnline,
+  }) async {
+    final data = await _patch('/users/$userId/status', {
+      'isOnline': isOnline,
+    });
+    return data;
+  }
+
+  Future<AvatarUploadResult> uploadAvatarToS3({
+    required String userId,
+    required XFile file,
+  }) async {
+    final uploaded = await uploadFileToS3(
+      userId: userId,
+      file: file,
+      presignPath: '/users/$userId/avatar/presign',
+      uploadFailedMessage: 'Upload avatar len S3 that bai.',
+    );
+    await _patch('/users/$userId/avatar', {'avatar': uploaded.fileUrl});
+
+    return AvatarUploadResult(avatarUrl: uploaded.fileUrl);
+  }
+
+  Future<S3UploadResult> uploadCoverToS3({
+    required String userId,
+    required XFile file,
+  }) async {
+    final uploaded = await uploadFileToS3(
+      userId: userId,
+      file: file,
+      presignPath: '/users/$userId/cover/presign',
+      uploadFailedMessage: 'Upload anh bia len S3 that bai.',
+    );
+    await _patch('/users/$userId/cover', {'coverImage': uploaded.fileUrl});
+    return uploaded;
+  }
+
+  Future<S3UploadResult> uploadFileToS3({
+    required String userId,
+    required XFile file,
+    String? presignPath,
+    String uploadFailedMessage = 'Upload len S3 that bai.',
+  }) async {
+    final contentType = _resolveImageMimeType(file);
+    if (contentType == null || !isImageMimeType(contentType)) {
+      throw const FakeAuthException('contentType phai la image/*');
+    }
+
+    final presign = await _post(presignPath ?? '/users/$userId/avatar/presign', {
+      'fileName': file.name,
+      'contentType': contentType,
+    });
+
+    final uploadUrl = (presign['uploadUrl'] ?? '').toString();
+    final fileUrl = (presign['fileUrl'] ?? '').toString();
+
+    if (uploadUrl.isEmpty || fileUrl.isEmpty) {
+      throw const FakeAuthException('Backend chua tra uploadUrl/fileUrl.');
+    }
+
+    final bytes = await file.readAsBytes();
+    final putRes = await _client.put(
+      Uri.parse(uploadUrl),
+      headers: {
+        'Content-Type': contentType,
+      },
+      body: bytes,
+    );
+
+    if (putRes.statusCode < 200 || putRes.statusCode >= 300) {
+      throw FakeAuthException(uploadFailedMessage);
+    }
+
+    return S3UploadResult(fileUrl: fileUrl);
+  }
+
   Future<Map<String, dynamic>> _post(
     String path,
     Map<String, dynamic> body,
   ) async {
     final uri = Uri.parse('$_baseUrl$path');
     final response = await _client.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    return _handleResponse(response);
+  }
+
+  Future<Map<String, dynamic>> _put(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final uri = Uri.parse('$_baseUrl$path');
+    final response = await _client.put(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    return _handleResponse(response);
+  }
+
+  Future<Map<String, dynamic>> _patch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final uri = Uri.parse('$_baseUrl$path');
+    final response = await _client.patch(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
@@ -357,6 +553,10 @@ class FakeAuthFlowService {
         ? map['status'] as Map<String, dynamic>
         : <String, dynamic>{};
 
+    final privacyMap = map['privacy'] is Map<String, dynamic>
+      ? map['privacy'] as Map<String, dynamic>
+      : <String, dynamic>{};
+
     final isOnline = statusMap['isOnline'] == true;
     final lastSeen = _parseDateTime(statusMap['lastSeen']);
 
@@ -366,7 +566,15 @@ class FakeAuthFlowService {
       phone: phone,
       email: email.isEmpty ? null : email,
       avatar: avatar,
+      coverImage: _pickString(map, ['coverImage'], fallback: ''),
+      bio: _pickString(map, ['bio'], fallback: ''),
+      gender: _pickString(map, ['gender'], fallback: 'other'),
       status: UserStatus(isOnline: isOnline, lastSeen: lastSeen),
+      privacy: UserPrivacy(
+        showPhone: _pickString(privacyMap, ['showPhone'], fallback: 'FRIEND'),
+        showOnline: privacyMap['showOnline'] != false,
+        allowStrangerMessage: privacyMap['allowStrangerMessage'] == true,
+      ),
       isVerified: map['isVerified'] == true,
     );
   }
@@ -394,6 +602,17 @@ class FakeAuthFlowService {
     if (value is String && value.trim().isNotEmpty) {
       return DateTime.tryParse(value);
     }
+    return null;
+  }
+
+  String? _resolveImageMimeType(XFile file) {
+    if (isImageMimeType(file.mimeType)) return file.mimeType;
+
+    final lower = file.name.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
     return null;
   }
 }

@@ -12,6 +12,8 @@ import '../screens/auth/otp_verify_screen.dart';
 import '../screens/auth/post_login_security_screen.dart';
 import '../screens/setting/account_security_screen.dart';
 import '../screens/setting/device_sessions_screen.dart';
+import '../screens/setting/edit_profile_screen.dart';
+import '../screens/setting/privacy_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppRouter — Tập trung tất cả route vào 1 chỗ
@@ -42,6 +44,8 @@ class AppRouter {
   static const String postLoginSecurity = '/post-login-security';
   static const String accountSecurity = '/settings/account-security';
   static const String deviceSessions = '/settings/device-sessions';
+  static const String editProfile = '/settings/edit-profile';
+  static const String privacy = '/settings/privacy';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -69,6 +73,12 @@ class AppRouter {
 
       case deviceSessions:
         return _fade(const DeviceSessionsScreen());
+
+      case editProfile:
+        return _fade(const EditProfileScreen());
+
+      case privacy:
+        return _fade(const PrivacyScreen());
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:

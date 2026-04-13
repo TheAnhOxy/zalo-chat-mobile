@@ -64,7 +64,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
         phone: phone,
       );
       if (!mounted) return;
-      showTopNotice(context, message: 'Da gui OTP dang nhap toi $phone');
+          showTopNotice(context, message: 'Đã gửi OTP đăng nhập tới $phone');
       Navigator.pushNamed(
         context,
         AppRouter.otpVerify,
@@ -92,7 +92,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
         return AlertDialog(
           backgroundColor: AppColors.bgCard,
           title: const Text(
-            'Nhap so dien thoai de nhan OTP',
+                'Nhập số điện thoại để nhận OTP',
             style: TextStyle(
               fontFamily: 'Inter',
               fontSize: 16,
@@ -116,7 +116,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Huy'),
+                  child: const Text('Hủy'),
             ),
             TextButton(
               onPressed: () {
@@ -124,14 +124,14 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
                 if (!fakeAuthFlowService.isValidVietnamPhone(phone)) {
                   showTopNotice(
                     context,
-                    message: 'So dien thoai OTP khong hop le.',
+                        message: 'Số điện thoại OTP không hợp lệ.',
                     isError: true,
                   );
                   return;
                 }
                 Navigator.pop(context, phone);
               },
-              child: const Text('Gui OTP'),
+                  child: const Text('Gửi OTP'),
             ),
           ],
         );
@@ -142,7 +142,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
   void _show2faPlan() {
     showTopNotice(
       context,
-      message: '2FA se bat buoc sau khi hoan thanh project.',
+          message: '2FA sẽ bắt buộc sau khi hoàn thành project.',
     );
   }
 
@@ -156,7 +156,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
         backgroundColor: AppColors.bgDark,
         elevation: 0,
         title: const Text(
-          'Chon cach xac thuc',
+            'Chọn cách xác thực',
           style: TextStyle(
             color: AppColors.textPrimary,
             fontFamily: 'Inter',
@@ -209,22 +209,22 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
           const SizedBox(height: 16),
           _MethodCard(
             index: '1',
-            title: 'Dang nhap thang',
-            subtitle: 'Nhanh de test hien tai',
+              title: 'Đăng nhập thẳng',
+              subtitle: 'Nhanh để test hiện tại',
             icon: Icons.flash_on_rounded,
             onTap: _loading ? null : _loginDirect,
           ),
           _MethodCard(
             index: '2',
-            title: 'Nhan ma OTP',
-            subtitle: 'Bat buoc sau khi hoan thanh project',
+              title: 'Nhận mã OTP',
+              subtitle: 'Bắt buộc sau khi hoàn thành project',
             icon: Icons.sms_outlined,
             onTap: _loading ? null : _requestOtpFlow,
           ),
           _MethodCard(
             index: '3',
-            title: 'Xac thuc 2 lop',
-            subtitle: 'Se trien khai tiep theo',
+              title: 'Xác thực 2 lớp',
+              subtitle: 'Sẽ triển khai tiếp theo',
             icon: Icons.admin_panel_settings_outlined,
             onTap: _loading ? null : _show2faPlan,
           ),
@@ -232,15 +232,6 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
             const SizedBox(height: 14),
             const Center(child: CircularProgressIndicator()),
           ],
-          const SizedBox(height: 10),
-          const Text(
-            'Note: hien tai cho phep login thang de lam nhanh, sau nay se bat OTP/2FA.',
-            style: TextStyle(
-              color: AppColors.textHint,
-              fontFamily: 'Inter',
-              fontSize: 12,
-            ),
-          ),
         ],
       ),
     );
