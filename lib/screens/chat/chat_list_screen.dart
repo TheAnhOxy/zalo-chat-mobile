@@ -19,9 +19,12 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   final _searchCtrl = TextEditingController();
   String _query = '';
-  
+
   // 1. Quản lý trạng thái dữ liệu từ API
   late Future<List<ConversationModel>> _conversationsFuture;
+  final Map<String, bool> _onlineStates = {};
+  final Map<String, _ActiveUserItem> _knownUsers = {};
+  final List<String> _activeUserOrder = [];
 
   @override
   void initState() {
@@ -45,12 +48,66 @@ class _ChatListScreenState extends State<ChatListScreen> {
       log('📩 Có tin nhắn mới, tự động tải lại danh sách...');
       _loadConversations();
     });
+
+    socketService.on('user_status_changed', (data) {
+      final map = _tryMap(data);
+      if (map == null) return;
+      final userId = map['userId']?.toString();
+      if (userId == null || userId.isEmpty) return;
+
+      final isOnline = map['isOnline'] == true;
+      final payloadName =
+          map['fullName']?.toString() ??
+          map['nickname']?.toString() ??
+          map['name']?.toString();
+      final payloadAvatar =
+          map['avatar']?.toString() ?? map['avatarUrl']?.toString();
+
+      setState(() {
+        _onlineStates[userId] = isOnline;
+        if (isOnline) {
+          if (!_activeUserOrder.contains(userId)) {
+            _activeUserOrder.insert(0, userId);
+          }
+
+          final existing = _knownUsers[userId];
+          _knownUsers[userId] = _ActiveUserItem(
+            userId: userId,
+            name: payloadName?.isNotEmpty == true
+                ? payloadName!
+                : (existing?.name ?? 'Người dùng'),
+            avatar: payloadAvatar?.isNotEmpty == true
+                ? payloadAvatar
+                : existing?.avatar,
+          );
+        } else {
+          // Giữ user trong active bar, chỉ tắt chấm xanh khi offline.
+          if (!_activeUserOrder.contains(userId)) {
+            _activeUserOrder.add(userId);
+          }
+        }
+      });
+    });
   }
 
   @override
   void dispose() {
+    socketService.off('new_message');
+    socketService.off('user_status_changed');
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic>? _tryMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) {
+      try {
+        return Map<String, dynamic>.from(data);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
   }
 
   // 2. Các hàm Helper để xử lý logic hiển thị dựa trên Model thật
@@ -59,6 +116,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final uid = authService.userId;
     final other = c.members.firstWhere((m) => m.userId != uid, orElse: () => c.members.first);
     return other.nickname ?? 'Người dùng';
+  }
+
+  String _getOtherUserId(ConversationModel c) {
+    if (c.isGroup) return '';
+    final uid = authService.userId;
+    final other = c.members.firstWhere(
+      (m) => m.userId != uid,
+      orElse: () => c.members.first,
+    );
+    return other.userId;
+  }
+
+  void _cacheKnownUsers(List<ConversationModel> conversations) {
+    for (final c in conversations) {
+      if (c.isGroup) continue;
+      final otherId = _getOtherUserId(c);
+      if (otherId.isEmpty || otherId == authService.userId) continue;
+      _knownUsers[otherId] = _ActiveUserItem(
+        userId: otherId,
+        name: _getDisplayName(c),
+        avatar: _getAvatar(c),
+      );
+    }
   }
 
   String? _getAvatar(ConversationModel c) {
@@ -88,6 +168,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         child: Column(
           children: [
             _buildHeader(),
+            _buildActiveBar(),
             _buildSearch(),
 
             Expanded(
@@ -105,6 +186,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   }
 
                   final allConvs = snapshot.data ?? [];
+                  _cacheKnownUsers(allConvs);
                   
                   // Lọc theo tìm kiếm
                   final filteredList = allConvs.where((c) {
@@ -193,6 +275,52 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  Widget _buildActiveBar() {
+    return SizedBox(
+      height: 108,
+      child: _activeUserOrder.isEmpty
+          ? const SizedBox.shrink()
+          : ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              itemCount: _activeUserOrder.length,
+              itemBuilder: (_, index) {
+                final userId = _activeUserOrder[index];
+                final user = _knownUsers[userId];
+                if (user == null) return const SizedBox.shrink();
+
+                return Container(
+                  width: 78,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Column(
+                    children: [
+                      AvatarWidget(
+                        url: user.avatar,
+                        name: user.name,
+                        size: 60,
+                        showOnline: true,
+                        isOnline: _onlineStates[userId] ?? false,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        user.name,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'Inter',
+                          color: AppColors.textSecondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
   Widget _buildAiCard() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -238,6 +366,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final last = c.lastMessage;
     final uid = authService.userId ?? '';
     final isMe = last?.senderId == uid;
+    final otherUserId = _getOtherUserId(c);
+    final isOnline = !c.isGroup && (_onlineStates[otherUserId] ?? false);
 
     return GestureDetector(
       onTap: () => Navigator.push(context, MaterialPageRoute(
@@ -257,7 +387,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
         child: Row(
           children: [
-            AvatarWidget(url: avatar, name: name, size: 52),
+            AvatarWidget(
+              url: avatar,
+              name: name,
+              size: 52,
+              showOnline: !c.isGroup,
+              isOnline: isOnline,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -359,4 +495,16 @@ class _MenuTile extends StatelessWidget {
     title: Text(label, style: TextStyle(color: color, fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.w500)),
     onTap: onTap,
   );
+}
+
+class _ActiveUserItem {
+  final String userId;
+  final String name;
+  final String? avatar;
+
+  const _ActiveUserItem({
+    required this.userId,
+    required this.name,
+    this.avatar,
+  });
 }

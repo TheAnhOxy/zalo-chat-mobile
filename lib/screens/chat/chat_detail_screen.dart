@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
@@ -10,8 +12,11 @@ import '../../services/socket_service.dart'; // Import SocketService
 import '../../widgets/common/common_widgets.dart';
 import '../call/voice_call_screen.dart';
 import '../call/video_call_screen.dart';
-import 'package:uuid/uuid.dart';
 import 'dart:developer';
+import 'dart:typed_data';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -33,14 +38,19 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final _textCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _focusNode = FocusNode();
+  final _imagePicker = ImagePicker();
 
   // 1. Thay đổi List messages khởi tạo rỗng và thêm biến loading
   List<MessageModel> _messages = [];
   bool _isLoading = true;
   bool _showEmoji = false;
-  bool _showExtra = false;
   MessageModel? _replyTo;
+  MessageModel? _editingMessage;
   bool _isTyping = false;
+  bool _isUploading = false;
+  double _uploadProgress = 0;
+  bool _peerOnline = false;
+  DateTime? _peerLastSeen;
   int _selectedBackgroundIndex = 0;
 
   static const List<_ChatBackgroundOption> _backgroundOptions = [
@@ -78,13 +88,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     ),
   ];
 
-  final _uuid = const Uuid();
-
   String get _backgroundPrefKey => 'chat_bg_${widget.conversationId}';
 
   @override
   void initState() {
     super.initState();
+    _peerOnline = widget.otherUser?.isOnline ?? false;
+    _peerLastSeen = widget.otherUser?.status.lastSeen;
     _restoreBackground();
     _loadMessages(); // Lấy lịch sử từ MongoDB
     _initSocket(); // Kết nối real-time
@@ -94,7 +104,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   Future<void> _loadMessages() async {
     try {
       final msgs = _normalizeMessages(
-        await apiService.getMessages(widget.conversationId),
+        await apiService.getMessages(widget.conversationId, authService.userId!,),
       );
       setState(() {
         _messages = msgs;
@@ -111,9 +121,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   // 3. Khởi tạo Socket và các sự kiện lắng nghe
   void _initSocket() {
     // Tham gia phòng chat
-    socketService.emit('join_conversation', {
-      'conversationId': widget.conversationId,
-    });
+    socketService.joinConversation(widget.conversationId);
 
     // Lắng nghe tin nhắn mới
     socketService.on('new_message', (data) {
@@ -177,9 +185,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       'message_reaction_updated',
       'reaction_updated',
       'message_reaction',
+      'message_updated',
     ]) {
-      socketService.on(event, _handleReactionEvent);
+      socketService.on(event, _handleMessageUpdated);
     }
+
+    socketService.on('message_edited', _handleMessageEdited);
+    socketService.on('message_recalled', _handleMessageRecalled);
 
     for (final event in const ['conversation_theme_changed', 'theme_changed']) {
       socketService.on(event, _handleThemeEvent);
@@ -198,6 +210,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         setState(() => _isTyping = false);
       }
     });
+
+    socketService.on('user_status_changed', _handlePeerStatusChanged);
   }
 
   @override
@@ -210,12 +224,63 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     socketService.off('message_reaction_updated');
     socketService.off('reaction_updated');
     socketService.off('message_reaction');
+    socketService.off('message_updated');
+    socketService.off('message_edited');
+    socketService.off('message_recalled');
     socketService.off('conversation_theme_changed');
     socketService.off('theme_changed');
+    socketService.off('user_status_changed');
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  DateTime? _parseDateTime(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw;
+    if (raw is int) {
+      return DateTime.fromMillisecondsSinceEpoch(raw);
+    }
+    if (raw is String && raw.isNotEmpty) {
+      return DateTime.tryParse(raw);
+    }
+    return null;
+  }
+
+  void _handlePeerStatusChanged(dynamic data) {
+    if (widget.otherUser == null || widget.conversation.isGroup) return;
+    final map = _tryMap(data);
+    if (map == null) return;
+    final userId = map['userId']?.toString();
+    if (userId == null || userId != widget.otherUser!.id) return;
+
+    final isOnline = map['isOnline'] == true;
+    final lastSeen = _parseDateTime(map['lastSeen'] ?? map['lastActiveAt']);
+
+    setState(() {
+      _peerOnline = isOnline;
+      if (isOnline) {
+        _peerLastSeen = null;
+      } else if (lastSeen != null) {
+        _peerLastSeen = lastSeen;
+      } else {
+        _peerLastSeen ??= widget.otherUser?.status.lastSeen;
+      }
+    });
+  }
+
+  String _presenceText(bool isGroup) {
+    if (isGroup) return '${widget.conversation.members.length} thành viên';
+    if (_peerOnline) return 'Đang hoạt động';
+    final lastSeen = _peerLastSeen;
+    if (lastSeen == null) return 'Ngoại tuyến';
+
+    final diff = DateTime.now().difference(lastSeen.toLocal());
+    if (diff.inMinutes < 1) return 'Hoạt động vừa xong';
+    if (diff.inHours < 1) return 'Hoạt động ${diff.inMinutes} phút trước';
+    if (diff.inDays < 1) return 'Hoạt động ${diff.inHours} giờ trước';
+    return 'Hoạt động ${diff.inDays} ngày trước';
   }
 
   List<MessageModel> _normalizeMessages(List<MessageModel> input) {
@@ -263,6 +328,147 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     return _normalizeMessages(copied);
   }
 
+  void _updateMessageById(
+    String messageId,
+    MessageModel Function(MessageModel old) updater,
+  ) {
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx == -1) return;
+    setState(() {
+      _messages[idx] = updater(_messages[idx]);
+      _messages = _normalizeMessages(_messages);
+    });
+  }
+
+  List<Reaction> _parseReactions(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((r) => Reaction.fromJson(Map<String, dynamic>.from(r)))
+        .toList();
+  }
+
+  List<SeenBy> _parseSeenBy(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((s) => SeenBy.fromJson(Map<String, dynamic>.from(s)))
+        .toList();
+  }
+
+  MessageModel _mergeMessageData(
+    MessageModel old,
+    Map<String, dynamic> data, {
+    List<Reaction>? reactions,
+    bool? isRecalled,
+  }) {
+    final metadata = data['metadata'] is Map
+        ? MessageMetadata.fromJson(Map<String, dynamic>.from(data['metadata']))
+        : old.metadata;
+    final seenBy = _parseSeenBy(data['seenBy']);
+    return MessageModel(
+      id: old.id,
+      conversationId: data['conversationId']?.toString() ?? old.conversationId,
+      senderId: data['senderId']?.toString() ?? old.senderId,
+      type: data['messageType']?.toString() ?? data['type']?.toString() ?? old.type,
+      content: data['content']?.toString() ?? old.content,
+      metadata: metadata,
+      replyToId: data.containsKey('replyTo')
+          ? data['replyTo']?.toString()
+          : old.replyToId,
+      status: data['status']?.toString() ?? old.status,
+      isRecalled: isRecalled ?? (data['isRecalled'] as bool? ?? old.isRecalled),
+      deletedBy: data['deletedBy'] is List
+          ? List<String>.from(data['deletedBy'] as List)
+          : old.deletedBy,
+      reactions: reactions ?? () {
+        final parsedReactions = _parseReactions(data['reactions']);
+        return parsedReactions.isNotEmpty ? parsedReactions : old.reactions;
+      }(),
+      seenBy: seenBy.isNotEmpty ? seenBy : old.seenBy,
+      createdAt: old.createdAt,
+    );
+  }
+
+void _handleMessageUpdated(dynamic data) {
+  final map = _tryMap(data);
+  if (map == null) return;
+
+  // Kiểm tra nếu dữ liệu là nguyên object tin nhắn (thường xảy ra khi dùng toPlainDoc từ NestJS)
+  final String? messageId = map['id']?.toString() ?? map['_id']?.toString() ?? map['messageId']?.toString();
+  final String? convId = map['conversationId']?.toString();
+
+  if (convId != null && convId != widget.conversationId) return;
+  if (messageId == null || messageId.isEmpty) return;
+
+  setState(() {
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx != -1) {
+      // TRƯỜNG HỢP 1: Dữ liệu trả về là object tin nhắn đầy đủ (ưu tiên)
+      // Kiểm tra các trường bắt buộc để xác định đây là full object
+      if (map.containsKey('senderId') || map.containsKey('content')) {
+        _messages[idx] = _normalizeMessage(MessageModel.fromJson(map));
+      } 
+      // TRƯỜNG HỢP 2: Dữ liệu chỉ là phần update (dùng hàm merge có sẵn của bạn)
+      else {
+        _messages[idx] = _mergeMessageData(_messages[idx], map);
+      }
+
+      // Xóa trạng thái đang sửa nếu tin nhắn đó vừa được cập nhật thành công
+      if (_editingMessage?.id == messageId) {
+        _editingMessage = null;
+        _textCtrl.clear(); // Xóa text trên input sau khi sửa xong
+      }
+      
+      // Sắp xếp và chuẩn hóa lại list
+      _messages = _normalizeMessages(_messages);
+    }
+  });
+}
+
+  void _handleMessageEdited(dynamic data) {
+    _handleMessageUpdated(data);
+  }
+
+  void _handleMessageRecalled(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final convId = map['conversationId']?.toString();
+    if (convId != null && convId != widget.conversationId) return;
+
+    final messageData = _tryMap(map['message']);
+    if (messageData != null) {
+      final recalled = _normalizeMessage(MessageModel.fromJson(messageData));
+      if (recalled.conversationId != widget.conversationId) return;
+      _updateMessageById(recalled.id, (_) => recalled);
+      if (_editingMessage?.id == recalled.id) {
+        setState(() => _editingMessage = null);
+      }
+      return;
+    }
+
+    final messageId = map['messageId']?.toString();
+    if (messageId == null || messageId.isEmpty) return;
+    _updateMessageById(messageId, (old) => MessageModel(
+          id: old.id,
+          conversationId: old.conversationId,
+          senderId: old.senderId,
+          type: old.type,
+          content: old.content,
+          metadata: old.metadata,
+          replyToId: old.replyToId,
+          status: old.status,
+          isRecalled: true,
+          deletedBy: old.deletedBy,
+          reactions: old.reactions,
+          seenBy: old.seenBy,
+          createdAt: old.createdAt,
+        ));
+    if (_editingMessage?.id == messageId) {
+      setState(() => _editingMessage = null);
+    }
+  }
+
   Map<String, dynamic>? _tryMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;
     if (data is Map) {
@@ -273,54 +479,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       }
     }
     return null;
-  }
-
-  void _handleReactionEvent(dynamic data) {
-    final map = _tryMap(data);
-    if (map == null) return;
-    final convId = map['conversationId']?.toString();
-    if (convId != null && convId != widget.conversationId) return;
-
-    final messageData = _tryMap(map['message']);
-    if (messageData != null) {
-      final next = _normalizeMessage(MessageModel.fromJson(messageData));
-      if (next.conversationId != widget.conversationId) return;
-      setState(() {
-        _messages = _upsertMessage(_messages, next);
-      });
-      return;
-    }
-
-    final messageId = map['messageId']?.toString();
-    if (messageId == null || messageId.isEmpty) return;
-    final raw = map['reactions'];
-    if (raw is! List) return;
-    final nextReactions = raw
-        .whereType<Map>()
-        .map((r) => Reaction.fromJson(Map<String, dynamic>.from(r)))
-        .toList();
-
-    setState(() {
-      final idx = _messages.indexWhere((m) => m.id == messageId);
-      if (idx == -1) return;
-      final old = _messages[idx];
-      _messages[idx] = MessageModel(
-        id: old.id,
-        conversationId: old.conversationId,
-        senderId: old.senderId,
-        type: old.type,
-        content: old.content,
-        metadata: old.metadata,
-        replyToId: old.replyToId,
-        status: old.status,
-        isRecalled: old.isRecalled,
-        deletedBy: old.deletedBy,
-        reactions: nextReactions,
-        seenBy: old.seenBy,
-        createdAt: old.createdAt,
-      );
-      _messages = _normalizeMessages(_messages);
-    });
   }
 
   Future<void> _restoreBackground() async {
@@ -370,10 +528,62 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
+  void _startEditing(MessageModel msg) {
+    if (msg.senderId != authService.userId) return;
+    setState(() {
+      _editingMessage = msg;
+      _replyTo = null;
+      _showEmoji = false;
+    });
+    _textCtrl.text = msg.content;
+    _textCtrl.selection = TextSelection.collapsed(offset: msg.content.length);
+    _focusNode.requestFocus();
+  }
+
+  void _cancelEditing() {
+    if (_editingMessage == null) return;
+    setState(() => _editingMessage = null);
+    _textCtrl.clear();
+  }
+
   // 5. Gửi tin nhắn thật qua Socket
   void _sendMessage() {
+    if (_isUploading) return;
     final text = _textCtrl.text.trim();
     if (text.isEmpty) return;
+
+    final editingMessage = _editingMessage;
+    if (editingMessage != null) {
+      socketService.editMessage(
+        editingMessage.id,
+        text,
+        widget.conversationId,
+      );
+      _updateMessageById(
+        editingMessage.id,
+        (old) => MessageModel(
+          id: old.id,
+          conversationId: old.conversationId,
+          senderId: old.senderId,
+          type: old.type,
+          content: text,
+          metadata: old.metadata,
+          replyToId: old.replyToId,
+          status: old.status,
+          isRecalled: old.isRecalled,
+          deletedBy: old.deletedBy,
+          reactions: old.reactions,
+          seenBy: old.seenBy,
+          createdAt: old.createdAt,
+        ),
+      );
+      setState(() {
+        _editingMessage = null;
+        _textCtrl.clear();
+        _showEmoji = false;
+      });
+      return;
+    }
 
     final msgData = {
       'conversationId': widget.conversationId,
@@ -390,6 +600,150 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       _replyTo = null;
       _showEmoji = false;
     });
+  }
+
+  String _detectContentType(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    if (lower.endsWith('.doc')) return 'application/msword';
+    if (lower.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    if (lower.endsWith('.xls')) return 'application/vnd.ms-excel';
+    if (lower.endsWith('.xlsx')) {
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    if (lower.endsWith('.zip')) return 'application/zip';
+    if (lower.endsWith('.txt')) return 'text/plain';
+    return 'application/octet-stream';
+  }
+
+  Future<void> _uploadToS3AndSendMessage({
+    required Uint8List bytes,
+    required String fileName,
+    required int fileSize,
+    required String type,
+    required String contentType,
+  }) async {
+    if (_isUploading) return;
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0;
+    });
+
+    try {
+      final signed = await apiService.getPresignedUrl(
+        fileName,
+        contentType,
+      );
+      if (signed == null) {
+        throw Exception('Không lấy được presigned URL');
+      }
+      final uploadUrl = signed['uploadUrl']?.toString();
+      final fileUrl = signed['fileUrl']?.toString();
+      if (uploadUrl == null || uploadUrl.isEmpty) {
+        throw Exception('Thiếu uploadUrl từ API presigned URL');
+      }
+      if (fileUrl == null || fileUrl.isEmpty) {
+        throw Exception('Thiếu fileUrl từ API presigned URL');
+      }
+
+      final uploaded = await apiService.uploadFileToS3(
+        uploadUrl,
+        bytes,
+        contentType,
+        onSendProgress: (sent, total) {
+          if (!mounted) return;
+          if (total <= 0) return;
+          setState(() => _uploadProgress = sent / total);
+        },
+      );
+      if (!uploaded) {
+        throw Exception('Upload S3 thất bại');
+      }
+
+      socketService.sendMessage({
+        'conversationId': widget.conversationId,
+        'senderId': authService.userId!,
+        'type': type,
+        'content': fileUrl,
+        if (_replyTo != null) 'replyToId': _replyTo!.id,
+        'metadata': {
+          'fileName': fileName,
+          'fileSize': fileSize,
+        },
+      });
+
+      setState(() {
+        _replyTo = null;
+      });
+    } catch (e) {
+      log('❌ Upload file thất bại: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tải file lên thất bại, vui lòng thử lại.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+          _uploadProgress = 0;
+        });
+      }
+    }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    try {
+      final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      await _uploadToS3AndSendMessage(
+        bytes: bytes,
+        fileName: picked.name,
+        fileSize: bytes.length,
+        type: 'IMAGE',
+        contentType: _detectContentType(picked.name),
+      );
+    } catch (e) {
+      log('❌ Chọn ảnh thất bại: $e');
+    }
+  }
+
+  Future<void> _pickAndSendFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(withData: true);
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+
+      // Ưu tiên bytes có sẵn (web), fallback đọc lại từ path cho mobile/desktop.
+      Uint8List? bytes = file.bytes;
+      if (bytes == null && file.path != null) {
+        bytes = await XFile(file.path!).readAsBytes();
+      }
+      if (bytes == null) {
+        throw Exception('Không đọc được dữ liệu file');
+      }
+
+      await _uploadToS3AndSendMessage(
+        bytes: bytes,
+        fileName: file.name,
+        fileSize: file.size,
+        type: 'FILE',
+        contentType: _detectContentType(file.name),
+      );
+    } catch (e) {
+      log('❌ Chọn file thất bại: $e');
+    }
   }
 
   void _emitSeenForLatest() {
@@ -519,15 +873,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   // Các hàm reaction và thu hồi tin nhắn sẽ gọi API/Socket ở đây (nâng cấp sau)
   void _addReaction(MessageModel msg, String type) {
-    setState(() {
-      final idx = _messages.indexWhere((m) => m.id == msg.id);
-      if (idx == -1) return;
-      final old = _messages[idx];
-      final me = authService.userId ?? '';
+    final me = authService.userId ?? '';
+    _updateMessageById(msg.id, (old) {
       final nextReactions = old.reactions.where((r) => r.userId != me).toList()
         ..add(Reaction(userId: me, type: type));
-
-      _messages[idx] = MessageModel(
+      return MessageModel(
         id: old.id,
         conversationId: old.conversationId,
         senderId: old.senderId,
@@ -542,15 +892,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         seenBy: old.seenBy,
         createdAt: old.createdAt,
       );
-      _messages = _normalizeMessages(_messages);
     });
 
-    socketService.emit('add_reaction', {
-      'messageId': msg.id,
-      'reactionType': type,
-      'userId': authService.userId,
-    });
-    // UI sẽ cập nhật khi nhận lại event từ socket hoặc tối ưu hóa local tại đây
+    socketService.sendReaction(
+      msg.id,
+      authService.userId ?? '',
+      type,
+      widget.conversationId,
+    );
   }
 
   ConversationMember? _getMemberInfo(String userId) {
@@ -562,26 +911,103 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _recallMessage(MessageModel msg) {
-    // Gửi sự kiện thu hồi tin nhắn lên Server NestJS
-    socketService.emit('recall_message', {
-      'messageId': msg.id,
-      'conversationId': widget.conversationId,
-    });
+    socketService.recallMessage(msg.id, widget.conversationId);
+    _updateMessageById(
+      msg.id,
+      (old) => MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: true,
+        deletedBy: old.deletedBy,
+        reactions: old.reactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      ),
+    );
+    if (_editingMessage?.id == msg.id) {
+      setState(() => _editingMessage = null);
+    }
+  }
 
-    // Thông báo cho UI local (tùy chọn, vì socket sẽ trả về event cho cả 2)
-    setState(() {
-      final idx = _messages.indexWhere((m) => m.id == msg.id);
-      if (idx != -1) {
-        _messages[idx] = MessageModel(
-          id: msg.id,
-          conversationId: msg.conversationId,
-          senderId: msg.senderId,
-          content: msg.content,
-          isRecalled: true,
-          createdAt: msg.createdAt,
+void _deleteMessageForMe(MessageModel msg) {
+  // 1. Gửi lệnh xóa lên server để lưu vào Database (Tránh hiện lại khi load lại chat)
+  socketService.deleteMessageMe(msg.id, authService.userId ?? '');
+  
+  log('🗑️ Requesting delete message ${msg.id} for user ${authService.userId}');
+
+  setState(() {
+    // 2. Xóa ngay lập tức khỏi danh sách đang hiển thị
+    _messages.removeWhere((m) => m.id == msg.id);
+
+    // 3. Reset các trạng thái liên quan
+    if (_replyTo?.id == msg.id) {
+      _replyTo = null;
+    }
+    if (_editingMessage?.id == msg.id) {
+      _editingMessage = null;
+      _textCtrl.clear();
+      _focusNode.unfocus();
+    }
+  });
+}
+
+  void _openImageViewer(MessageModel msg) {
+    if (!msg.isImage) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ImageViewerScreen(
+          imageUrl: msg.content,
+          heroTag: 'image_${msg.id}',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadFile(MessageModel msg) async {
+    if (msg.type != 'FILE') return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Đang bắt đầu tải xuống...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      final url = msg.content;
+      if (await canLaunchUrl(Uri.parse(url))) {
+        await launchUrl(
+          Uri.parse(url),
+          mode: LaunchMode.externalApplication,
+        );
+        log('✅ Tải file thành công: $url');
+      } else {
+        log('❌ Không thể mở URL: $url');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không thể tải xuống file'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      log('❌ Lỗi tải file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Lỗi khi tải xuống file'),
+          ),
         );
       }
-    });
+    }
   }
 
   @override
@@ -617,7 +1043,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           _focusNode.unfocus();
                           setState(() {
                             _showEmoji = false;
-                            _showExtra = false;
                           });
                         },
                         child: ListView.builder(
@@ -674,6 +1099,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                   onLongPress: () => _showMessageActions(msg),
                                   onDoubleTap: () => _addReaction(msg, 'LIKE'),
                                   onReply: () => setState(() => _replyTo = msg),
+                                  onImageTap: () => _openImageViewer(msg),
+                                  onFileTap: () => _downloadFile(msg),
                                 ),
                               ],
                             );
@@ -684,6 +1111,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
 
             if (_replyTo != null) _buildReplyPreview(),
+            if (_editingMessage != null) _buildEditPreview(),
+            if (_isUploading)
+              LinearProgressIndicator(
+                value: _uploadProgress > 0 ? _uploadProgress : null,
+                minHeight: 3,
+                color: AppColors.primary,
+                backgroundColor: AppColors.bgInput,
+              ),
             _buildInputBar(),
             if (_showEmoji) _buildEmojiPanel(),
           ],
@@ -693,7 +1128,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Widget _buildHeader(String title, bool isGroup) {
-    final online = widget.otherUser?.isOnline ?? false;
+    final online = _peerOnline;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       color: AppColors.bgDark,
@@ -741,11 +1176,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  isGroup
-                      ? '${widget.conversation.members.length} thành viên'
-                      : online
-                      ? 'Đang hoạt động'
-                      : 'Ngoại tuyến',
+                  _presenceText(isGroup),
                   style: TextStyle(
                     fontSize: 12,
                     fontFamily: 'Inter',
@@ -892,7 +1323,64 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
+  Widget _buildEditPreview() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: AppColors.bgCardLight,
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Đang sửa tin nhắn',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Nội dung sẽ được cập nhật khi bấm gửi',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    fontFamily: 'Inter',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.close,
+              color: AppColors.textSecondary,
+              size: 18,
+            ),
+            onPressed: _cancelEditing,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInputBar() {
+    final isEditing = _editingMessage != null;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: const BoxDecoration(
@@ -901,11 +1389,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ),
       child: Row(
         children: [
-          // Emoji
           GestureDetector(
             onTap: () => setState(() {
               _showEmoji = !_showEmoji;
-              _showExtra = false;
             }),
             child: Icon(
               _showEmoji ? Icons.keyboard : Icons.emoji_emotions_outlined,
@@ -914,9 +1400,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
           ),
           const SizedBox(width: 6),
-          // Image
           GestureDetector(
-            onTap: () {},
+            onTap: _isUploading ? null : _pickAndSendImage,
             child: const Icon(
               Icons.image_outlined,
               color: AppColors.textSecondary,
@@ -924,18 +1409,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
           ),
           const SizedBox(width: 6),
-          // Voice
           GestureDetector(
-            onTap: () {},
+            onTap: _isUploading ? null : _pickAndSendFile,
             child: const Icon(
-              Icons.mic_outlined,
+              Icons.attach_file,
               color: AppColors.textSecondary,
               size: 26,
             ),
           ),
           const SizedBox(width: 8),
-
-          // TextField
           Expanded(
             child: TextField(
               controller: _textCtrl,
@@ -978,8 +1460,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
           ),
           const SizedBox(width: 8),
-
-          // Send / Voice record
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: _textCtrl,
             builder: (_, val, _) {
@@ -1003,7 +1483,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         : null,
                   ),
                   child: Icon(
-                    hasText ? Icons.send_rounded : Icons.thumb_up_outlined,
+                    hasText
+                        ? (isEditing ? Icons.check_rounded : Icons.send_rounded)
+                        : Icons.thumb_up_outlined,
                     color: hasText ? Colors.white : AppColors.textSecondary,
                     size: 20,
                   ),
@@ -1063,129 +1545,104 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     HapticFeedback.mediumImpact();
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: AppColors.bgCard,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 36,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+      showDragHandle: true,
+      builder: (sheetContext) {
+        const reactions = [
+          ('LIKE', '👍'),
+          ('LOVE', '❤️'),
+          ('HAHA', '😂'),
+          ('WOW', '😮'),
+          ('SAD', '😢'),
+          ('ANGRY', '😠'),
+        ];
 
-            // Reaction row
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: ['LIKE', 'LOVE', 'HAHA', 'WOW', 'SAD', 'ANGRY'].map((
-                  type,
-                ) {
-                  final r = Reaction(userId: '', type: type);
-                  return GestureDetector(
+                children: reactions.map((item) {
+                  final type = item.$1;
+                  final emoji = item.$2;
+                  return InkResponse(
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _addReaction(msg, type);
                     },
-                    child: Text(r.emoji, style: const TextStyle(fontSize: 30)),
+                    radius: 28,
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: Text(
+                        emoji,
+                        style: const TextStyle(fontSize: 30),
+                      ),
+                    ),
                   );
                 }).toList(),
               ),
-            ),
-            const Divider(color: AppColors.divider),
-
-            ListTile(
-              leading: const Icon(
-                Icons.reply,
-                color: AppColors.textPrimary,
-                size: 22,
-              ),
-              title: const Text(
-                'Trả lời',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontFamily: 'Inter',
+              const SizedBox(height: 12),
+              if (isMe)
+                ListTile(
+                  leading: const Icon(
+                    Icons.edit_outlined,
+                    color: AppColors.textPrimary,
+                    size: 22,
+                  ),
+                  title: const Text(
+                    'Sửa',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontFamily: 'Inter',
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _startEditing(msg);
+                  },
                 ),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                setState(() => _replyTo = msg);
-              },
-            ),
-            ListTile(
-              leading: const Icon(
-                Icons.copy,
-                color: AppColors.textPrimary,
-                size: 22,
-              ),
-              title: const Text(
-                'Sao chép',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontFamily: 'Inter',
+              if (isMe && !msg.isRecalled)
+                ListTile(
+                  leading: const Icon(
+                    Icons.undo,
+                    color: AppColors.error,
+                    size: 22,
+                  ),
+                  title: const Text(
+                    'Thu hồi',
+                    style: TextStyle(
+                      color: AppColors.error,
+                      fontFamily: 'Inter',
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _recallMessage(msg);
+                  },
                 ),
-              ),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: msg.content));
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(
-                Icons.forward,
-                color: AppColors.textPrimary,
-                size: 22,
-              ),
-              title: const Text(
-                'Chuyển tiếp',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontFamily: 'Inter',
-                ),
-              ),
-              onTap: () => Navigator.pop(context),
-            ),
-            if (isMe && !msg.isRecalled)
               ListTile(
                 leading: const Icon(
-                  Icons.undo,
+                  Icons.delete_outline,
                   color: AppColors.error,
                   size: 22,
                 ),
                 title: const Text(
-                  'Thu hồi',
+                  'Xóa phía tôi',
                   style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
                 ),
                 onTap: () {
-                  Navigator.pop(context);
-                  _recallMessage(msg);
+                  Navigator.pop(sheetContext);
+                  _deleteMessageForMe(msg);
                 },
               ),
-            ListTile(
-              leading: const Icon(
-                Icons.delete_outline,
-                color: AppColors.error,
-                size: 22,
-              ),
-              title: const Text(
-                'Xoá (phía tôi)',
-                style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                setState(() => _messages.removeWhere((m) => m.id == msg.id));
-              },
-            ),
-            const SizedBox(height: 12),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -1204,6 +1661,8 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback onLongPress;
   final VoidCallback onDoubleTap;
   final VoidCallback onReply;
+  final VoidCallback? onImageTap;
+  final VoidCallback? onFileTap;
 
   const _MessageBubble({
     required this.msg,
@@ -1216,7 +1675,30 @@ class _MessageBubble extends StatelessWidget {
     required this.onLongPress,
     required this.onDoubleTap,
     required this.onReply,
+    this.onImageTap,
+    this.onFileTap,
   });
+
+  String _extractFileNameFromUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      if (uri.pathSegments.isNotEmpty) {
+        return Uri.decodeComponent(uri.pathSegments.last);
+      }
+    } catch (_) {}
+    return url;
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(1)} GB';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1314,39 +1796,92 @@ class _MessageBubble extends StatelessWidget {
   Widget _buildBubble(BuildContext context) {
     Widget content;
     if (msg.isImage) {
-      content = ClipRRect(
+      log('🖼️ IMAGE MESSAGE: type=${msg.type}, content=${msg.content.substring(0, msg.content.length > 50 ? 50 : msg.content.length)}..., isImage=${msg.isImage}');
+      final imageContent = ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Image.network(
           msg.content,
-          width: 200,
-          height: 150,
+          width: 220,
+          height: 160,
           fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => const SizedBox(
-            width: 200,
-            height: 100,
-            child: Center(
-              child: Icon(
-                Icons.image_not_supported_outlined,
-                color: AppColors.textHint,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return SizedBox(
+              width: 220,
+              height: 160,
+              child: Container(
+                color: AppColors.bgCardLight,
+                child: Center(
+                  child: CircularProgressIndicator(
+                    value: progress.cumulativeBytesLoaded /
+                        (progress.expectedTotalBytes ?? 1),
+                    strokeWidth: 2,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      AppColors.primary,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            log('❌ IMAGE LOAD ERROR: $error');
+            return SizedBox(
+              width: 220,
+              height: 160,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.bgCardLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.broken_image_outlined,
+                        color: AppColors.textHint,
+                        size: 32,
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Không tải được ảnh',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textHint,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+      content = GestureDetector(
+        onTap: onImageTap,
+        child: Hero(
+          tag: 'image_${msg.id}',
+          child: imageContent,
         ),
       );
     } else if (msg.type == 'FILE') {
-      content = Row(
+      final fileName = msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
+      final fileContent = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
+              color: (isMe ? Colors.white : AppColors.primary).withOpacity(0.15),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.insert_drive_file_outlined,
-              color: Colors.white,
+              color: isMe ? Colors.white : AppColors.primary,
               size: 20,
             ),
           ),
@@ -1356,10 +1891,12 @@ class _MessageBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  msg.content,
-                  style: const TextStyle(
+                  fileName,
+                  style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white,
+                    color: isMe
+                        ? Colors.white
+                        : AppColors.bubbleOtherText,
                     fontWeight: FontWeight.w500,
                     fontFamily: 'Inter',
                   ),
@@ -1367,10 +1904,12 @@ class _MessageBubble extends StatelessWidget {
                 ),
                 if (msg.metadata?.fileSize != null)
                   Text(
-                    '${(msg.metadata!.fileSize! / 1024 / 1024).toStringAsFixed(1)} MB',
-                    style: const TextStyle(
+                    _formatFileSize(msg.metadata!.fileSize!),
+                    style: TextStyle(
                       fontSize: 11,
-                      color: AppColors.bubbleMeText,
+                      color: isMe
+                          ? AppColors.bubbleMeText
+                          : AppColors.textSecondary,
                       fontFamily: 'Inter',
                     ),
                   ),
@@ -1378,6 +1917,10 @@ class _MessageBubble extends StatelessWidget {
             ),
           ),
         ],
+      );
+      content = GestureDetector(
+        onTap: onFileTap,
+        child: fileContent,
       );
     } else {
       content = Text(
@@ -1570,4 +2113,74 @@ class _ChatBackgroundOption {
   final Gradient gradient;
 
   const _ChatBackgroundOption({required this.label, required this.gradient});
+}
+
+// ── Full-Screen Image Viewer with Hero Animation ────────────────────────────
+class ImageViewerScreen extends StatelessWidget {
+  final String imageUrl;
+  final String heroTag;
+
+  const ImageViewerScreen({
+    required this.imageUrl,
+    required this.heroTag,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: CloseButton(
+          color: Colors.white,
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Hero(
+        tag: heroTag,
+        child: PhotoView(
+          imageProvider: NetworkImage(imageUrl),
+          loadingBuilder: (context, event) {
+            return Center(
+              child: CircularProgressIndicator(
+                value: event == null
+                    ? 0
+                    : event.cumulativeBytesLoaded /
+                        (event.expectedTotalBytes ?? 1),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  AppColors.primary,
+                ),
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Không thể tải ảnh',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          minScale: PhotoViewComputedScale.contained * 0.8,
+          maxScale: PhotoViewComputedScale.covered * 2,
+          initialScale: PhotoViewComputedScale.contained,
+        ),
+      ),
+    );
+  }
 }
