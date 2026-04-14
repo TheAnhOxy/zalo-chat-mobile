@@ -7,6 +7,8 @@ import '../../services/auth_service.dart';
 import '../../services/socket_service.dart'; // Thêm mới
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
+import '../call/voice_call_screen.dart';
+import '../call/video_call_screen.dart';
 import 'dart:developer';
 
 class ChatListScreen extends StatefulWidget {
@@ -88,12 +90,69 @@ class _ChatListScreenState extends State<ChatListScreen> {
         }
       });
     });
+
+    // Lắng nghe tín hiệu cuộc gọi toàn cục
+    socketService.on('incoming_call', (data) {
+      final map = _tryMap(data);
+      if (map == null) return;
+
+      log('📞 Nhận tín hiệu cuộc gọi: $map');
+
+      // Lấy dữ liệu từ server
+      final callType = map['type']?.toString() ?? 'voice'; // 'voice' hoặc 'video'
+      final otherUserId = map['otherUserId']?.toString() ?? '';
+      final otherUserName = map['otherUserName']?.toString() ?? 'Người dùng';
+      final otherUserAvatar = map['otherUserAvatar']?.toString();
+      final conversationId = map['conversationId']?.toString();
+      final callId = map['callId']?.toString();
+      final offer = map['offer'] is Map ? Map<String, dynamic>.from(map['offer'] as Map) : null;
+
+      if (otherUserId.isEmpty) return;
+
+      // Tạo UserModel cho người gọi
+      final otherUser = UserModel(
+        id: otherUserId,
+        fullName: otherUserName,
+        avatar: otherUserAvatar ?? '',
+        phone: '',
+      );
+
+      // Mở màn hình Call tương ứng
+      Widget callScreen;
+      if (callType == 'video') {
+        callScreen = VideoCallScreen(
+          otherUser: otherUser,
+          isIncoming: true,
+          callId: callId,
+          conversationId: conversationId,
+          offer: offer,
+        );
+      } else {
+        callScreen = VoiceCallScreen(
+          otherUser: otherUser,
+          isIncoming: true,
+          callId: callId,
+          conversationId: conversationId,
+          offer: offer,
+        );
+      }
+
+      // Dùng Navigator.push để mở màn hình Call
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => callScreen),
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
     socketService.off('new_message');
     socketService.off('user_status_changed');
+    // 🔴 KHÔNG gọi socketService.off('incoming_call') ở đây
+    // Vì chúng ta muốn nó luôn lắng nghe chừng nào app còn mở
     _searchCtrl.dispose();
     super.dispose();
   }

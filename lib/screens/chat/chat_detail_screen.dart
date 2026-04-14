@@ -1053,8 +1053,9 @@ void _deleteMessageForMe(MessageModel msg) {
                           ),
                           itemCount: _messages.length + (_isTyping ? 1 : 0),
                           itemBuilder: (_, i) {
-                            if (i == _messages.length)
+                            if (i == _messages.length) {
                               return _buildTypingIndicator();
+                            }
                             final msg = _messages[i];
                             final prev = i > 0 ? _messages[i - 1] : null;
                             final senderMember = _getMemberInfo(msg.senderId);
@@ -2120,7 +2121,7 @@ class ImageViewerScreen extends StatelessWidget {
   final String imageUrl;
   final String heroTag;
 
-  const ImageViewerScreen({
+  const ImageViewerScreen({super.key, 
     required this.imageUrl,
     required this.heroTag,
   });

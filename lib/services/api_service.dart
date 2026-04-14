@@ -3,7 +3,6 @@ import '../data/models/models.dart';
 import 'dart:developer';
 import 'package:flutter/foundation.dart';
 import 'dart:io';
-import 'dart:typed_data';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();

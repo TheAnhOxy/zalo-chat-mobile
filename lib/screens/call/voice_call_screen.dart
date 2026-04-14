@@ -249,7 +249,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
               const Spacer(flex: 3),
               _buildControls(),
               const SizedBox(height: 48),
-              Container(
+              SizedBox(
                 width: 1,
                 height: 1,
                 child: RTCVideoView(_remoteRenderer),
