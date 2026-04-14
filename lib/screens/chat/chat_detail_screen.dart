@@ -40,7 +40,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   bool _showEmoji = false;
   bool _showExtra = false;
   MessageModel? _replyTo;
-  bool _isTyping = false; 
+  bool _isTyping = false;
   int _selectedBackgroundIndex = 0;
 
   static const List<_ChatBackgroundOption> _backgroundOptions = [
@@ -87,13 +87,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     super.initState();
     _restoreBackground();
     _loadMessages(); // Lấy lịch sử từ MongoDB
-    _initSocket();   // Kết nối real-time
+    _initSocket(); // Kết nối real-time
   }
 
   // 2. Lấy lịch sử tin nhắn từ API
   Future<void> _loadMessages() async {
     try {
-      final msgs = _normalizeMessages(await apiService.getMessages(widget.conversationId));
+      final msgs = _normalizeMessages(
+        await apiService.getMessages(widget.conversationId),
+      );
       setState(() {
         _messages = msgs;
         _isLoading = false;
@@ -115,18 +117,25 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
     // Lắng nghe tin nhắn mới
     socketService.on('new_message', (data) {
-  log('📨 Nhận tin nhắn mới: $data');   // thêm dòng này để debug
-
-  final newMessage = MessageModel.fromJson(data as Map<String, dynamic>);
-
-  if (newMessage.conversationId == widget.conversationId) {
-    setState(() {
-      _messages = _upsertMessage(_messages, _normalizeMessage(newMessage));
+      try {
+        final map = data is Map<String, dynamic>
+            ? data
+            : Map<String, dynamic>.from(data as Map);
+        final newMessage = MessageModel.fromJson(map);
+        if (newMessage.conversationId == widget.conversationId) {
+          setState(() {
+            _messages = _upsertMessage(
+              _messages,
+              _normalizeMessage(newMessage),
+            );
+          });
+          _emitSeenForLatest();
+          _scrollToBottom();
+        }
+      } catch (e) {
+        log('❌ Lỗi parse new_message: $e');
+      }
     });
-    _emitSeenForLatest();
-    _scrollToBottom();
-  }
-});
 
     socketService.on('message_seen', (data) {
       try {
@@ -172,22 +181,20 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       socketService.on(event, _handleReactionEvent);
     }
 
-    for (final event in const [
-      'conversation_theme_changed',
-      'theme_changed',
-    ]) {
+    for (final event in const ['conversation_theme_changed', 'theme_changed']) {
       socketService.on(event, _handleThemeEvent);
     }
 
     // Lắng nghe sự kiện typing (Nếu backend có phát)
     socketService.on('typing', (data) {
-      if (data['conversationId'] == widget.conversationId && data['userId'] != authService.userId) {
+      if (data['conversationId'] == widget.conversationId &&
+          data['userId'] != authService.userId) {
         setState(() => _isTyping = true);
       }
     });
 
     socketService.on('stop_typing', (data) {
-       if (data['conversationId'] == widget.conversationId) {
+      if (data['conversationId'] == widget.conversationId) {
         setState(() => _isTyping = false);
       }
     });
@@ -243,7 +250,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
-  List<MessageModel> _upsertMessage(List<MessageModel> source, MessageModel next) {
+  List<MessageModel> _upsertMessage(
+    List<MessageModel> source,
+    MessageModel next,
+  ) {
     final idx = source.indexWhere((m) => m.id == next.id);
     if (idx == -1) {
       return _normalizeMessages([...source, next]);
@@ -374,7 +384,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     };
 
     socketService.sendMessage(msgData);
-    
+
     setState(() {
       _textCtrl.clear();
       _replyTo = null;
@@ -383,10 +393,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _emitSeenForLatest() {
-    final unread = _messages.where((m) =>
-      m.senderId != authService.userId &&
-      !m.isRecalled &&
-      !_isSeenByCurrentUser(m),
+    final unread = _messages.where(
+      (m) =>
+          m.senderId != authService.userId &&
+          !m.isRecalled &&
+          !_isSeenByCurrentUser(m),
     );
     if (unread.isEmpty) return;
     final latest = unread.last;
@@ -541,21 +552,23 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
     // UI sẽ cập nhật khi nhận lại event từ socket hoặc tối ưu hóa local tại đây
   }
+
   ConversationMember? _getMemberInfo(String userId) {
     try {
       return widget.conversation.members.firstWhere((m) => m.userId == userId);
     } catch (e) {
-    return null;
+      return null;
     }
   }
+
   void _recallMessage(MessageModel msg) {
-  // Gửi sự kiện thu hồi tin nhắn lên Server NestJS
+    // Gửi sự kiện thu hồi tin nhắn lên Server NestJS
     socketService.emit('recall_message', {
       'messageId': msg.id,
       'conversationId': widget.conversationId,
     });
-  
-  // Thông báo cho UI local (tùy chọn, vì socket sẽ trả về event cho cả 2)
+
+    // Thông báo cho UI local (tùy chọn, vì socket sẽ trả về event cho cả 2)
     setState(() {
       final idx = _messages.indexWhere((m) => m.id == msg.id);
       if (idx != -1) {
@@ -575,8 +588,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   Widget build(BuildContext context) {
     final isGroup = widget.conversation.isGroup;
     final lastOutgoingMessageId = _lastOutgoingMessageId();
-    final title = isGroup ? widget.conversation.name ?? 'Nhóm'
-                          : widget.otherUser?.fullName ?? 'Chat';
+    final title = isGroup
+        ? widget.conversation.name ?? 'Nhóm'
+        : widget.otherUser?.fullName ?? 'Chat';
 
     return Scaffold(
       backgroundColor: AppColors.bgDark,
@@ -588,51 +602,85 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
             Expanded(
               child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-                : Container(
-                    decoration: BoxDecoration(
-                      gradient: _backgroundOptions[_selectedBackgroundIndex].gradient,
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                      ),
+                    )
+                  : Container(
+                      decoration: BoxDecoration(
+                        gradient: _backgroundOptions[_selectedBackgroundIndex]
+                            .gradient,
+                      ),
+                      child: GestureDetector(
+                        onTap: () {
+                          _focusNode.unfocus();
+                          setState(() {
+                            _showEmoji = false;
+                            _showExtra = false;
+                          });
+                        },
+                        child: ListView.builder(
+                          controller: _scrollCtrl,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          itemCount: _messages.length + (_isTyping ? 1 : 0),
+                          itemBuilder: (_, i) {
+                            if (i == _messages.length)
+                              return _buildTypingIndicator();
+                            final msg = _messages[i];
+                            final prev = i > 0 ? _messages[i - 1] : null;
+                            final senderMember = _getMemberInfo(msg.senderId);
+                            final showDate =
+                                prev == null ||
+                                !du.DateUtils.isSameDay(
+                                  prev.createdAt,
+                                  msg.createdAt,
+                                );
+
+                            return Column(
+                              children: [
+                                if (showDate)
+                                  ChatDateDivider(
+                                    label: du.DateUtils.formatDateSeparator(
+                                      msg.createdAt,
+                                    ),
+                                  ),
+                                _MessageBubble(
+                                  msg: msg,
+                                  isMe:
+                                      msg.senderId.toString() ==
+                                      authService.userId.toString(),
+                                  senderUser: isGroup
+                                      ? null
+                                      : widget
+                                            .otherUser, // Cần logic lấy user từ members nếu là group
+                                  senderMember: senderMember,
+                                  showSenderName:
+                                      isGroup &&
+                                      msg.senderId != authService.userId,
+                                  showSeenLabel:
+                                      !isGroup &&
+                                      msg.id == lastOutgoingMessageId &&
+                                      _isSeenByPeer(msg),
+                                  replyToMsg: msg.replyToId != null
+                                      ? _messages.firstWhere(
+                                          (m) => m.id == msg.replyToId,
+                                          orElse: () => msg,
+                                        )
+                                      : null,
+                                  onLongPress: () => _showMessageActions(msg),
+                                  onDoubleTap: () => _addReaction(msg, 'LIKE'),
+                                  onReply: () => setState(() => _replyTo = msg),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
                     ),
-                    child: GestureDetector(
-                    onTap: () {
-                      _focusNode.unfocus();
-                      setState(() { _showEmoji = false; _showExtra = false; });
-                    },
-                    child: ListView.builder(
-                      controller: _scrollCtrl,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      itemCount: _messages.length + (_isTyping ? 1 : 0),
-                      itemBuilder: (_, i) {
-                        if (i == _messages.length) return _buildTypingIndicator();
-                        final msg = _messages[i];
-                        final prev = i > 0 ? _messages[i - 1] : null;
-                        final senderMember = _getMemberInfo(msg.senderId);
-                        final showDate = prev == null ||
-                            !du.DateUtils.isSameDay(prev.createdAt, msg.createdAt);
-                        
-                        return Column(
-                          children: [
-                            if (showDate) ChatDateDivider(label: du.DateUtils.formatDateSeparator(msg.createdAt)),
-                            _MessageBubble(
-                              msg: msg,
-                              isMe: msg.senderId.toString() == authService.userId.toString(),
-                              senderUser: isGroup ? null : widget.otherUser, // Cần logic lấy user từ members nếu là group
-                              senderMember: senderMember,
-                              showSenderName: isGroup && msg.senderId != authService.userId,
-                              showSeenLabel: !isGroup && msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
-                              replyToMsg: msg.replyToId != null
-                                  ? _messages.firstWhere((m) => m.id == msg.replyToId, orElse: () => msg)
-                                  : null,
-                              onLongPress: () => _showMessageActions(msg),
-                              onDoubleTap: () => _addReaction(msg, 'LIKE'),
-                              onReply: () => setState(() => _replyTo = msg),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ),
             ),
 
             if (_replyTo != null) _buildReplyPreview(),
@@ -657,14 +705,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           ),
           isGroup
               ? GroupAvatarWidget(
-                avatarUrls: widget.conversation.members
-                  .take(3)
-                  .map((m) => (_getMemberInfo(m.userId))?.userId)
-                  .toList(), // Hoặc .avatar tùy model
-                names: widget.conversation.members
-                  .take(3)
-                  .map((m) => (_getMemberInfo(m.userId))?.nickname ?? m.userId)
-                  .toList(),
+                  avatarUrls: widget.conversation.members
+                      .take(3)
+                      .map((m) => (_getMemberInfo(m.userId))?.userId)
+                      .toList(), // Hoặc .avatar tùy model
+                  names: widget.conversation.members
+                      .take(3)
+                      .map(
+                        (m) => (_getMemberInfo(m.userId))?.nickname ?? m.userId,
+                      )
+                      .toList(),
                   size: 38,
                 )
               : AvatarWidget(
@@ -679,46 +729,85 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary, fontFamily: 'Inter'),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    fontFamily: 'Inter',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 Text(
                   isGroup
                       ? '${widget.conversation.members.length} thành viên'
-                      : online ? 'Đang hoạt động' : 'Ngoại tuyến',
+                      : online
+                      ? 'Đang hoạt động'
+                      : 'Ngoại tuyến',
                   style: TextStyle(
-                    fontSize: 12, fontFamily: 'Inter',
+                    fontSize: 12,
+                    fontFamily: 'Inter',
                     color: online ? AppColors.online : AppColors.textSecondary,
                   ),
                 ),
               ],
             ),
           ),
-// Voice call
-if (!isGroup && widget.conversation.id != 'CONV_AI')
-  IconButton(
-    icon: const Icon(Icons.phone_outlined, color: AppColors.textPrimary, size: 24),
-    onPressed: () => Navigator.push(context, MaterialPageRoute(
-      builder: (_) => VoiceCallScreen(
-        otherUser: widget.otherUser!,
-        isIncoming: false,
-        conversationId: widget.conversationId,
-      ),
-    )),
-  ),
+          // Voice call
+          if (!isGroup && widget.conversation.id != 'CONV_AI')
+            IconButton(
+              icon: const Icon(
+                Icons.phone_outlined,
+                color: AppColors.textPrimary,
+                size: 24,
+              ),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => VoiceCallScreen(
+                    otherUser: widget.otherUser!,
+                    isIncoming: false,
+                    conversationId: widget.conversationId,
+                  ),
+                ),
+              ),
+            ),
           // Video call
           if (!isGroup && widget.conversation.id != 'CONV_AI')
             IconButton(
-              icon: const Icon(Icons.videocam_outlined, color: AppColors.textPrimary, size: 24),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => VideoCallScreen(otherUser: widget.otherUser!, isIncoming: false))),
+              icon: const Icon(
+                Icons.videocam_outlined,
+                color: AppColors.textPrimary,
+                size: 24,
+              ),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  fullscreenDialog: true,
+                  builder: (_) => VideoCallScreen(
+                    otherUser: widget.otherUser!,
+                    isIncoming: false,
+                    conversationId: widget.conversationId,
+                  ),
+                ),
+              ),
             ),
           IconButton(
-            icon: const Icon(Icons.wallpaper_outlined, color: AppColors.textPrimary, size: 22),
+            icon: const Icon(
+              Icons.wallpaper_outlined,
+              color: AppColors.textPrimary,
+              size: 22,
+            ),
             onPressed: _showAppearanceSheet,
           ),
           IconButton(
-            icon: const Icon(Icons.info_outline, color: AppColors.textPrimary, size: 22),
+            icon: const Icon(
+              Icons.info_outline,
+              color: AppColors.textPrimary,
+              size: 22,
+            ),
             onPressed: () {},
           ),
         ],
@@ -735,8 +824,10 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
         decoration: BoxDecoration(
           color: AppColors.bubbleOther,
           borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(4), topRight: Radius.circular(18),
-            bottomLeft: Radius.circular(18), bottomRight: Radius.circular(18),
+            topLeft: Radius.circular(4),
+            topRight: Radius.circular(18),
+            bottomLeft: Radius.circular(18),
+            bottomRight: Radius.circular(18),
           ),
         ),
         child: Row(
@@ -753,19 +844,47 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
       color: AppColors.bgCardLight,
       child: Row(
         children: [
-          Container(width: 3, height: 36, decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 3,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Trả lời', style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600, fontFamily: 'Inter')),
-                Text(_replyTo!.content, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'Inter'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                const Text(
+                  'Trả lời',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                Text(
+                  _replyTo!.content,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    fontFamily: 'Inter',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ],
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.close, color: AppColors.textSecondary, size: 18),
+            icon: const Icon(
+              Icons.close,
+              color: AppColors.textSecondary,
+              size: 18,
+            ),
             onPressed: () => setState(() => _replyTo = null),
           ),
         ],
@@ -784,21 +903,35 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
         children: [
           // Emoji
           GestureDetector(
-            onTap: () => setState(() { _showEmoji = !_showEmoji; _showExtra = false; }),
-            child: Icon(_showEmoji ? Icons.keyboard : Icons.emoji_emotions_outlined,
-                color: _showEmoji ? AppColors.primary : AppColors.textSecondary, size: 26),
+            onTap: () => setState(() {
+              _showEmoji = !_showEmoji;
+              _showExtra = false;
+            }),
+            child: Icon(
+              _showEmoji ? Icons.keyboard : Icons.emoji_emotions_outlined,
+              color: _showEmoji ? AppColors.primary : AppColors.textSecondary,
+              size: 26,
+            ),
           ),
           const SizedBox(width: 6),
           // Image
           GestureDetector(
             onTap: () {},
-            child: const Icon(Icons.image_outlined, color: AppColors.textSecondary, size: 26),
+            child: const Icon(
+              Icons.image_outlined,
+              color: AppColors.textSecondary,
+              size: 26,
+            ),
           ),
           const SizedBox(width: 6),
           // Voice
           GestureDetector(
             onTap: () {},
-            child: const Icon(Icons.mic_outlined, color: AppColors.textSecondary, size: 26),
+            child: const Icon(
+              Icons.mic_outlined,
+              color: AppColors.textSecondary,
+              size: 26,
+            ),
           ),
           const SizedBox(width: 8),
 
@@ -807,18 +940,39 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
             child: TextField(
               controller: _textCtrl,
               focusNode: _focusNode,
-              style: const TextStyle(color: AppColors.textPrimary, fontFamily: 'Inter', fontSize: 14),
-              maxLines: 4, minLines: 1,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontFamily: 'Inter',
+                fontSize: 14,
+              ),
+              maxLines: 4,
+              minLines: 1,
               textCapitalization: TextCapitalization.sentences,
               decoration: InputDecoration(
                 hintText: 'Nhập tin nhắn...',
-                hintStyle: const TextStyle(color: AppColors.textHint, fontSize: 14, fontFamily: 'Inter'),
+                hintStyle: const TextStyle(
+                  color: AppColors.textHint,
+                  fontSize: 14,
+                  fontFamily: 'Inter',
+                ),
                 filled: true,
                 fillColor: AppColors.bgInput,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  borderSide: BorderSide.none,
+                ),
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -833,15 +987,26 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
               return GestureDetector(
                 onTap: hasText ? _sendMessage : () {},
                 child: Container(
-                  width: 40, height: 40,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     gradient: hasText ? AppColors.primaryGradient : null,
                     color: hasText ? null : AppColors.bgInput,
                     shape: BoxShape.circle,
-                    boxShadow: hasText ? [BoxShadow(color: AppColors.primary.withOpacity(0.4), blurRadius: 8)] : null,
+                    boxShadow: hasText
+                        ? [
+                            BoxShadow(
+                              color: AppColors.primary.withOpacity(0.4),
+                              blurRadius: 8,
+                            ),
+                          ]
+                        : null,
                   ),
-                  child: Icon(hasText ? Icons.send_rounded : Icons.thumb_up_outlined,
-                      color: hasText ? Colors.white : AppColors.textSecondary, size: 20),
+                  child: Icon(
+                    hasText ? Icons.send_rounded : Icons.thumb_up_outlined,
+                    color: hasText ? Colors.white : AppColors.textSecondary,
+                    size: 20,
+                  ),
                 ),
               );
             },
@@ -852,18 +1017,43 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
   }
 
   Widget _buildEmojiPanel() {
-    const emojis = ['😀', '😂', '😍', '😎', '😭', '🥺', '😡', '😱',
-                    '👍', '❤️', '🔥', '✨', '🎉', '💯', '👏', '🙏'];
+    const emojis = [
+      '😀',
+      '😂',
+      '😍',
+      '😎',
+      '😭',
+      '🥺',
+      '😡',
+      '😱',
+      '👍',
+      '❤️',
+      '🔥',
+      '✨',
+      '🎉',
+      '💯',
+      '👏',
+      '🙏',
+    ];
     return Container(
       height: 220,
       color: AppColors.bgCard,
       child: GridView.count(
         crossAxisCount: 8,
         padding: const EdgeInsets.all(12),
-        children: emojis.map((e) => GestureDetector(
-          onTap: () { _textCtrl.text += e; setState(() {}); },
-          child: Center(child: Text(e, style: const TextStyle(fontSize: 26))),
-        )).toList(),
+        children: emojis
+            .map(
+              (e) => GestureDetector(
+                onTap: () {
+                  _textCtrl.text += e;
+                  setState(() {});
+                },
+                child: Center(
+                  child: Text(e, style: const TextStyle(fontSize: 26)),
+                ),
+              ),
+            )
+            .toList(),
       ),
     );
   }
@@ -874,23 +1064,37 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.bgCard,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (_) {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 36, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
 
             // Reaction row
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: ['LIKE', 'LOVE', 'HAHA', 'WOW', 'SAD', 'ANGRY'].map((type) {
+                children: ['LIKE', 'LOVE', 'HAHA', 'WOW', 'SAD', 'ANGRY'].map((
+                  type,
+                ) {
                   final r = Reaction(userId: '', type: type);
                   return GestureDetector(
-                    onTap: () { Navigator.pop(context); _addReaction(msg, type); },
+                    onTap: () {
+                      Navigator.pop(context);
+                      _addReaction(msg, type);
+                    },
                     child: Text(r.emoji, style: const TextStyle(fontSize: 30)),
                   );
                 }).toList(),
@@ -899,30 +1103,86 @@ if (!isGroup && widget.conversation.id != 'CONV_AI')
             const Divider(color: AppColors.divider),
 
             ListTile(
-              leading: const Icon(Icons.reply, color: AppColors.textPrimary, size: 22),
-              title: const Text('Trả lời', style: TextStyle(color: AppColors.textPrimary, fontFamily: 'Inter')),
-              onTap: () { Navigator.pop(context); setState(() => _replyTo = msg); },
+              leading: const Icon(
+                Icons.reply,
+                color: AppColors.textPrimary,
+                size: 22,
+              ),
+              title: const Text(
+                'Trả lời',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontFamily: 'Inter',
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _replyTo = msg);
+              },
             ),
             ListTile(
-              leading: const Icon(Icons.copy, color: AppColors.textPrimary, size: 22),
-              title: const Text('Sao chép', style: TextStyle(color: AppColors.textPrimary, fontFamily: 'Inter')),
-              onTap: () { Clipboard.setData(ClipboardData(text: msg.content)); Navigator.pop(context); },
+              leading: const Icon(
+                Icons.copy,
+                color: AppColors.textPrimary,
+                size: 22,
+              ),
+              title: const Text(
+                'Sao chép',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontFamily: 'Inter',
+                ),
+              ),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: msg.content));
+                Navigator.pop(context);
+              },
             ),
             ListTile(
-              leading: const Icon(Icons.forward, color: AppColors.textPrimary, size: 22),
-              title: const Text('Chuyển tiếp', style: TextStyle(color: AppColors.textPrimary, fontFamily: 'Inter')),
+              leading: const Icon(
+                Icons.forward,
+                color: AppColors.textPrimary,
+                size: 22,
+              ),
+              title: const Text(
+                'Chuyển tiếp',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontFamily: 'Inter',
+                ),
+              ),
               onTap: () => Navigator.pop(context),
             ),
             if (isMe && !msg.isRecalled)
               ListTile(
-                leading: const Icon(Icons.undo, color: AppColors.error, size: 22),
-                title: const Text('Thu hồi', style: TextStyle(color: AppColors.error, fontFamily: 'Inter')),
-                onTap: () { Navigator.pop(context); _recallMessage(msg); },
+                leading: const Icon(
+                  Icons.undo,
+                  color: AppColors.error,
+                  size: 22,
+                ),
+                title: const Text(
+                  'Thu hồi',
+                  style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _recallMessage(msg);
+                },
               ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: AppColors.error, size: 22),
-              title: const Text('Xoá (phía tôi)', style: TextStyle(color: AppColors.error, fontFamily: 'Inter')),
-              onTap: () { Navigator.pop(context); setState(() => _messages.removeWhere((m) => m.id == msg.id)); },
+              leading: const Icon(
+                Icons.delete_outline,
+                color: AppColors.error,
+                size: 22,
+              ),
+              title: const Text(
+                'Xoá (phía tôi)',
+                style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _messages.removeWhere((m) => m.id == msg.id));
+              },
             ),
             const SizedBox(height: 12),
           ],
@@ -958,11 +1218,14 @@ class _MessageBubble extends StatelessWidget {
     required this.onReply,
   });
 
-  
   @override
   Widget build(BuildContext context) {
     if (msg.isRecalled) return _buildRecalled();
-    final senderDisplayName = senderMember?.nickname ?? senderMember?.userId ?? senderUser?.fullName ?? 'User';
+    final senderDisplayName =
+        senderMember?.nickname ??
+        senderMember?.userId ??
+        senderUser?.fullName ??
+        'User';
 
     return GestureDetector(
       onLongPress: onLongPress,
@@ -970,23 +1233,40 @@ class _MessageBubble extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(
-          mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+          mainAxisAlignment: isMe
+              ? MainAxisAlignment.end
+              : MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (!isMe && (senderUser != null || senderMember != null)) ...[
-              AvatarWidget(url: senderUser?.avatar, name: senderDisplayName, size: 28),
+              AvatarWidget(
+                url: senderUser?.avatar,
+                name: senderDisplayName,
+                size: 28,
+              ),
               const SizedBox(width: 6),
             ],
             ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.68),
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.68,
+              ),
               child: Column(
-                crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                crossAxisAlignment: isMe
+                    ? CrossAxisAlignment.end
+                    : CrossAxisAlignment.start,
                 children: [
-                  if (showSenderName && (senderUser != null || senderMember != null))
+                  if (showSenderName &&
+                      (senderUser != null || senderMember != null))
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2, left: 4),
-                      child: Text(senderDisplayName,
-                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontFamily: 'Inter')),
+                      child: Text(
+                        senderDisplayName,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
                     ),
                   if (replyToMsg != null) _buildReplyQuote(),
                   _buildBubble(context),
@@ -994,8 +1274,14 @@ class _MessageBubble extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(du.DateUtils.formatMessageTime(msg.createdAt),
-                          style: const TextStyle(fontSize: 10, color: AppColors.textHint, fontFamily: 'Inter')),
+                      Text(
+                        du.DateUtils.formatMessageTime(msg.createdAt),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textHint,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
                       if (isMe) ...[
                         const SizedBox(width: 4),
                         _buildStatusIcon(),
@@ -1030,33 +1316,85 @@ class _MessageBubble extends StatelessWidget {
     if (msg.isImage) {
       content = ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.network(msg.content, width: 200, height: 150, fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => const SizedBox(width: 200, height: 100,
-                child: Center(child: Icon(Icons.image_not_supported_outlined, color: AppColors.textHint)))),
+        child: Image.network(
+          msg.content,
+          width: 200,
+          height: 150,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const SizedBox(
+            width: 200,
+            height: 100,
+            child: Center(
+              child: Icon(
+                Icons.image_not_supported_outlined,
+                color: AppColors.textHint,
+              ),
+            ),
+          ),
+        ),
       );
     } else if (msg.type == 'FILE') {
-      content = Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 38, height: 38, decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
-            child: const Icon(Icons.insert_drive_file_outlined, color: Colors.white, size: 20)),
-        const SizedBox(width: 10),
-        Flexible(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(msg.content, style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w500, fontFamily: 'Inter'), maxLines: 2),
-          if (msg.metadata?.fileSize != null)
-            Text('${(msg.metadata!.fileSize! / 1024 / 1024).toStringAsFixed(1)} MB',
-                style: const TextStyle(fontSize: 11, color: AppColors.bubbleMeText, fontFamily: 'Inter')),
-        ])),
-      ]);
+      content = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.insert_drive_file_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  msg.content,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'Inter',
+                  ),
+                  maxLines: 2,
+                ),
+                if (msg.metadata?.fileSize != null)
+                  Text(
+                    '${(msg.metadata!.fileSize! / 1024 / 1024).toStringAsFixed(1)} MB',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.bubbleMeText,
+                      fontFamily: 'Inter',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
     } else {
-      content = Text(msg.content,
-          style: TextStyle(
-            fontSize: 14, fontFamily: 'Inter',
-            color: isMe ? AppColors.bubbleMeText : AppColors.bubbleOtherText,
-            height: 1.4,
-          ));
+      content = Text(
+        msg.content,
+        style: TextStyle(
+          fontSize: 14,
+          fontFamily: 'Inter',
+          color: isMe ? AppColors.bubbleMeText : AppColors.bubbleOtherText,
+          height: 1.4,
+        ),
+      );
     }
 
     return Container(
-      padding: msg.isImage ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: msg.isImage
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: isMe ? null : AppColors.bubbleOther,
         gradient: isMe ? AppColors.primaryGradient : null,
@@ -1066,7 +1404,13 @@ class _MessageBubble extends StatelessWidget {
           bottomLeft: Radius.circular(isMe ? 18 : 4),
           bottomRight: Radius.circular(isMe ? 4 : 18),
         ),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: content,
     );
@@ -1079,11 +1423,20 @@ class _MessageBubble extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.bgCardLight,
         borderRadius: BorderRadius.circular(10),
-        border: const Border(left: BorderSide(color: AppColors.primary, width: 3)),
+        border: const Border(
+          left: BorderSide(color: AppColors.primary, width: 3),
+        ),
       ),
-      child: Text(replyToMsg!.content,
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'Inter'),
-          maxLines: 2, overflow: TextOverflow.ellipsis),
+      child: Text(
+        replyToMsg!.content,
+        style: const TextStyle(
+          fontSize: 12,
+          color: AppColors.textSecondary,
+          fontFamily: 'Inter',
+        ),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
     );
   }
 
@@ -1098,19 +1451,31 @@ class _MessageBubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: AppColors.border),
         ),
-        child: const Text('Tin nhắn đã bị thu hồi',
-            style: TextStyle(fontSize: 13, color: AppColors.textHint, fontStyle: FontStyle.italic, fontFamily: 'Inter')),
+        child: const Text(
+          'Tin nhắn đã bị thu hồi',
+          style: TextStyle(
+            fontSize: 13,
+            color: AppColors.textHint,
+            fontStyle: FontStyle.italic,
+            fontFamily: 'Inter',
+          ),
+        ),
       ),
     ),
   );
 
   Widget _buildStatusIcon() {
     switch (msg.status) {
-      case 'SENDING': return const Icon(Icons.done, size: 14, color: AppColors.textHint);
-      case 'SENT': return const Icon(Icons.done, size: 14, color: AppColors.textHint);
-      case 'DELIVERED': return const Icon(Icons.done_all, size: 14, color: AppColors.textHint);
-      case 'SEEN': return const Icon(Icons.done_all, size: 14, color: AppColors.primary);
-      default: return const SizedBox.shrink();
+      case 'SENDING':
+        return const Icon(Icons.done, size: 14, color: AppColors.textHint);
+      case 'SENT':
+        return const Icon(Icons.done, size: 14, color: AppColors.textHint);
+      case 'DELIVERED':
+        return const Icon(Icons.done_all, size: 14, color: AppColors.textHint);
+      case 'SEEN':
+        return const Icon(Icons.done_all, size: 14, color: AppColors.primary);
+      default:
+        return const SizedBox.shrink();
     }
   }
 
@@ -1124,16 +1489,23 @@ class _MessageBubble extends StatelessWidget {
       padding: const EdgeInsets.only(top: 4),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: grouped.entries.map((e) => Container(
-          margin: const EdgeInsets.only(right: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: AppColors.bgCardLight,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Text('${e.key} ${e.value}', style: const TextStyle(fontSize: 11, fontFamily: 'Inter')),
-        )).toList(),
+        children: grouped.entries
+            .map(
+              (e) => Container(
+                margin: const EdgeInsets.only(right: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.bgCardLight,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Text(
+                  '${e.key} ${e.value}',
+                  style: const TextStyle(fontSize: 11, fontFamily: 'Inter'),
+                ),
+              ),
+            )
+            .toList(),
       ),
     );
   }
@@ -1148,25 +1520,32 @@ class _DotAnimation extends StatefulWidget {
   State<_DotAnimation> createState() => _DotAnimationState();
 }
 
-class _DotAnimationState extends State<_DotAnimation> with SingleTickerProviderStateMixin {
+class _DotAnimationState extends State<_DotAnimation>
+    with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
   late Animation<double> _anim;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600))
-      ..repeat(reverse: true);
-    _anim = Tween<double>(begin: 0, end: -5).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
-    );
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(
+      begin: 0,
+      end: -5,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
     Future.delayed(Duration(milliseconds: widget.delay), () {
       if (mounted) _ctrl.forward();
     });
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -1174,8 +1553,13 @@ class _DotAnimationState extends State<_DotAnimation> with SingleTickerProviderS
     builder: (_, _) => Transform.translate(
       offset: Offset(0, _anim.value),
       child: Container(
-        width: 7, height: 7, margin: const EdgeInsets.symmetric(horizontal: 2),
-        decoration: const BoxDecoration(color: AppColors.textSecondary, shape: BoxShape.circle),
+        width: 7,
+        height: 7,
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: const BoxDecoration(
+          color: AppColors.textSecondary,
+          shape: BoxShape.circle,
+        ),
       ),
     ),
   );
@@ -1185,8 +1569,5 @@ class _ChatBackgroundOption {
   final String label;
   final Gradient gradient;
 
-  const _ChatBackgroundOption({
-    required this.label,
-    required this.gradient,
-  });
+  const _ChatBackgroundOption({required this.label, required this.gradient});
 }

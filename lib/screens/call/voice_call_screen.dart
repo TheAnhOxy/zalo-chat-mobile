@@ -33,6 +33,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
     with SingleTickerProviderStateMixin {
   bool _isMuted = false;
   bool _isSpeaker = false;
+  bool _callWasConnected = false;
+  bool _endDialogShown = false;
   int _seconds = 0;
   Timer? _timer;
   CallState _callState = CallState.idle;
@@ -53,9 +55,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
+    _pulseAnim = Tween<double>(
+      begin: 1.0,
+      end: 1.15,
+    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
     callService.onRemoteStream = _onRemoteStream;
     callService.addStateListener(_onCallStateChanged);
@@ -69,10 +72,12 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
   }
 
   void _onCallStateChanged(CallState state) {
-    print('🎯 VoiceCallScreen: state changed to $state');
     if (!mounted) return;
     setState(() => _callState = state);
-    if (state == CallState.connected) _startTimer();
+    if (state == CallState.connected) {
+      _callWasConnected = true;
+      _startTimer();
+    }
     if (state == CallState.ended) _onCallEnded();
   }
 
@@ -108,9 +113,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
     _remoteRenderer.dispose();
     _timer?.cancel();
     callService.removeStateListener(_onCallStateChanged);
-    if (_callState == CallState.calling || _callState == CallState.connected) {
-      callService.endCall();
-    }
+    // if (_callState == CallState.calling || _callState == CallState.connected) {
+    //   callService.endCall();
+    // }
     super.dispose();
   }
 
@@ -133,9 +138,85 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
   }
 
   void _onCallEnded() {
-    print('📵 VoiceCallScreen _onCallEnded called, timer: $_seconds seconds');
+    if (_endDialogShown) return;
+  _endDialogShown = true;
+  
     _timer?.cancel();
-    if (mounted) Navigator.pop(context);
+    if (!mounted) return;
+
+    // ✅ Chỉ hiện dialog nếu đã từng kết nối
+    if (_callWasConnected) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF0D1B35),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.call_end_rounded,
+                  color: Colors.red,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Cuộc gọi đã kết thúc',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Inter',
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Thời lượng: $_timerLabel',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 14,
+                  fontFamily: 'Inter',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () {
+                  Navigator.pop(context); // đóng dialog
+                  Navigator.pop(context); // đóng call screen
+                },
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  'OK',
+                  style: TextStyle(color: Colors.white, fontFamily: 'Inter'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      Navigator.pop(context);
+    }
   }
 
   void _showError(String msg) {
@@ -196,8 +277,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.lock_outline,
-                    size: 12, color: Colors.white.withOpacity(0.7)),
+                Icon(
+                  Icons.lock_outline,
+                  size: 12,
+                  color: Colors.white.withOpacity(0.7),
+                ),
                 const SizedBox(width: 4),
                 Text(
                   'Mã hoá đầu cuối',
@@ -221,8 +305,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
                 color: Colors.white.withOpacity(0.08),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.keyboard_arrow_down,
-                  color: Colors.white.withOpacity(0.8)),
+              child: Icon(
+                Icons.keyboard_arrow_down,
+                color: Colors.white.withOpacity(0.8),
+              ),
             ),
           ),
         ],
@@ -439,10 +525,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
           ),
         ),
         const SizedBox(height: 36),
-        _EndCallButton(onTap: () {
-          callService.endCall();
-          Navigator.pop(context);
-        }),
+        _EndCallButton(
+          onTap: () {
+            callService.endCall();
+          },
+        ),
       ],
     );
   }
@@ -469,10 +556,12 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
           ),
         ),
         const SizedBox(height: 36),
-        _EndCallButton(onTap: () {
-          callService.endCall();
-          Navigator.pop(context);
-        }),
+        _EndCallButton(
+          onTap: () {
+            callService.endCall();
+            Navigator.pop(context);
+          },
+        ),
       ],
     );
   }
@@ -628,8 +717,11 @@ class _EndCallButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Icon(Icons.call_end_rounded,
-                color: Colors.white, size: 30),
+            child: const Icon(
+              Icons.call_end_rounded,
+              color: Colors.white,
+              size: 30,
+            ),
           ),
         ),
         const SizedBox(height: 10),

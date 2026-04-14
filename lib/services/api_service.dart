@@ -40,35 +40,55 @@ class ApiService {
   }
 
   Future<List<MessageModel>> getMessages(String conversationId) async {
-  try {
-    final response = await _dio.get('$baseUrl/messages/conversation/$conversationId');
-    final List data = response.data;
-    return data.map((json) => MessageModel.fromJson(json)).toList();
-  } catch (e) {
-    log('❌ Lỗi getMessages: $e');
-    return [];
+    try {
+      final response = await _dio.get(
+        '$baseUrl/messages/conversation/$conversationId',
+      );
+      final List data = response.data;
+      return data.map((json) => MessageModel.fromJson(json)).toList();
+    } catch (e) {
+      log('❌ Lỗi getMessages: $e');
+      return [];
+    }
   }
-}
 
-Future<Map<String, dynamic>> createCall({
-  required String conversationId,
-  required String callerId,
-  required List<String> participants,
-  required String type,
-}) async {
-  try {
-    final response = await _dio.post('$baseUrl/calls', data: {
-      'conversationId': conversationId,
-      'callerId': callerId,
-      'participants': participants,
-      'type': type,
-    });
-    return Map<String, dynamic>.from(response.data);
-  } catch (e) {
-    log('❌ Lỗi createCall: $e');
-    rethrow;
+  Future<Map<String, dynamic>> createCall({
+    required String conversationId,
+    required String callerId,
+    required List<String> participants,
+    required String type,
+  }) async {
+    try {
+      final response = await _dio.post(
+        '$baseUrl/calls',
+        data: {
+          'conversationId': conversationId,
+          'callerId': callerId,
+          'participants': participants,
+          'type': type,
+        },
+      );
+      return Map<String, dynamic>.from(response.data);
+    } catch (e) {
+      log('❌ Lỗi createCall: $e');
+      rethrow;
+    }
   }
-}
+
+  // Lấy danh sách cuộc gọi của conversation
+  Future<List<Map<String, dynamic>>> getCalls(String conversationId) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl/calls/conversation/$conversationId',
+      );
+
+      final List data = response.data;
+      return data.map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) {
+      log('❌ Lỗi getCalls: $e');
+      return [];
+    }
+  }
 }
 
 final apiService = ApiService();
