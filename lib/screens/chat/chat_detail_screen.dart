@@ -12,6 +12,7 @@ import '../call/voice_call_screen.dart';
 import '../call/video_call_screen.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:developer';
+import '../../data/models/chat_item.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -42,6 +43,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   MessageModel? _replyTo;
   bool _isTyping = false;
   int _selectedBackgroundIndex = 0;
+  List<ChatItem> _chatItems = [];
 
   static const List<_ChatBackgroundOption> _backgroundOptions = [
     _ChatBackgroundOption(
@@ -93,17 +95,31 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   // 2. Lấy lịch sử tin nhắn từ API
   Future<void> _loadMessages() async {
     try {
-      final msgs = _normalizeMessages(
-        await apiService.getMessages(widget.conversationId),
-      );
+      final results = await Future.wait([
+        apiService.getMessages(widget.conversationId),
+        apiService.getCalls(widget.conversationId),
+      ]);
+
+      final msgs = _normalizeMessages(results[0] as List<MessageModel>);
+      final calls = (results[1] as List<Map<String, dynamic>>)
+          .map((e) => CallModel.fromJson(e))
+          .toList();
+
+      // Merge và sort theo thời gian tăng dần
+      final items = <ChatItem>[
+        ...msgs.map((m) => ChatItem.message(m)),
+        ...calls.map((c) => ChatItem.call(c)),
+      ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
       setState(() {
         _messages = msgs;
+        _chatItems = items;
         _isLoading = false;
       });
       _emitSeenForLatest();
       _scrollToBottom(animated: false);
     } catch (e) {
-      log('❌ Lỗi tải tin nhắn: $e');
+      log('❌ Lỗi tải: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -121,13 +137,20 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         final map = data is Map<String, dynamic>
             ? data
             : Map<String, dynamic>.from(data as Map);
-        final newMessage = MessageModel.fromJson(map);
+        final newMessage = _normalizeMessage(MessageModel.fromJson(map));
         if (newMessage.conversationId == widget.conversationId) {
           setState(() {
-            _messages = _upsertMessage(
-              _messages,
-              _normalizeMessage(newMessage),
+            _messages = _upsertMessage(_messages, newMessage);
+            // Thêm vào chatItems nếu chưa có
+            final exists = _chatItems.any(
+              (i) =>
+                  i.type == ChatItemType.message &&
+                  i.message?.id == newMessage.id,
             );
+            if (!exists) {
+              _chatItems = [..._chatItems, ChatItem.message(newMessage)]
+                ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            }
           });
           _emitSeenForLatest();
           _scrollToBottom();
@@ -626,18 +649,18 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                             horizontal: 16,
                             vertical: 8,
                           ),
-                          itemCount: _messages.length + (_isTyping ? 1 : 0),
+                          itemCount: _chatItems.length + (_isTyping ? 1 : 0),
                           itemBuilder: (_, i) {
-                            if (i == _messages.length)
+                            if (i == _chatItems.length)
                               return _buildTypingIndicator();
-                            final msg = _messages[i];
-                            final prev = i > 0 ? _messages[i - 1] : null;
-                            final senderMember = _getMemberInfo(msg.senderId);
+
+                            final item = _chatItems[i];
+                            final prevItem = i > 0 ? _chatItems[i - 1] : null;
                             final showDate =
-                                prev == null ||
+                                prevItem == null ||
                                 !du.DateUtils.isSameDay(
-                                  prev.createdAt,
-                                  msg.createdAt,
+                                  prevItem.createdAt,
+                                  item.createdAt,
                                 );
 
                             return Column(
@@ -645,36 +668,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                 if (showDate)
                                   ChatDateDivider(
                                     label: du.DateUtils.formatDateSeparator(
-                                      msg.createdAt,
+                                      item.createdAt,
                                     ),
                                   ),
-                                _MessageBubble(
-                                  msg: msg,
-                                  isMe:
-                                      msg.senderId.toString() ==
-                                      authService.userId.toString(),
-                                  senderUser: isGroup
-                                      ? null
-                                      : widget
-                                            .otherUser, // Cần logic lấy user từ members nếu là group
-                                  senderMember: senderMember,
-                                  showSenderName:
-                                      isGroup &&
-                                      msg.senderId != authService.userId,
-                                  showSeenLabel:
-                                      !isGroup &&
-                                      msg.id == lastOutgoingMessageId &&
-                                      _isSeenByPeer(msg),
-                                  replyToMsg: msg.replyToId != null
-                                      ? _messages.firstWhere(
-                                          (m) => m.id == msg.replyToId,
-                                          orElse: () => msg,
-                                        )
-                                      : null,
-                                  onLongPress: () => _showMessageActions(msg),
-                                  onDoubleTap: () => _addReaction(msg, 'LIKE'),
-                                  onReply: () => setState(() => _replyTo = msg),
-                                ),
+                                if (item.type == ChatItemType.call)
+                                  _buildCallBubble(item.call!)
+                                else
+                                  _buildMessageBubble(item.message!, i),
                               ],
                             );
                           },
@@ -686,6 +686,125 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             if (_replyTo != null) _buildReplyPreview(),
             _buildInputBar(),
             if (_showEmoji) _buildEmojiPanel(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(MessageModel msg, int i) {
+    final lastOutgoingMessageId = _lastOutgoingMessageId();
+    final isGroup = widget.conversation.isGroup;
+    final senderMember = _getMemberInfo(msg.senderId);
+
+    return _MessageBubble(
+      msg: msg,
+      isMe: msg.senderId.toString() == authService.userId.toString(),
+      senderUser: isGroup ? null : widget.otherUser,
+      senderMember: senderMember,
+      showSenderName: isGroup && msg.senderId != authService.userId,
+      showSeenLabel:
+          !isGroup && msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
+      replyToMsg: msg.replyToId != null
+          ? _messages.firstWhere(
+              (m) => m.id == msg.replyToId,
+              orElse: () => msg,
+            )
+          : null,
+      onLongPress: () => _showMessageActions(msg),
+      onDoubleTap: () => _addReaction(msg, 'LIKE'),
+      onReply: () => setState(() => _replyTo = msg),
+    );
+  }
+
+  Widget _buildCallBubble(CallModel call) {
+    final isMe = call.callerId == authService.userId;
+    final isVideo = call.isVideo;
+    final isMissed = call.isMissed;
+
+    Color iconColor;
+    Color bgColor;
+    String label;
+    IconData icon;
+
+    if (isMissed) {
+      iconColor = Colors.red;
+      bgColor = Colors.red.withOpacity(0.1);
+      label = isMe ? 'Bạn đã gọi nhưng không nghe' : 'Cuộc gọi nhỡ';
+      icon = isVideo ? Icons.videocam_off : Icons.phone_missed;
+    } else {
+      iconColor = AppColors.primary;
+      bgColor = isMe
+          ? AppColors.primary.withOpacity(0.15)
+          : Colors.grey.withOpacity(0.15);
+      label = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+      icon = isVideo ? Icons.videocam : Icons.phone;
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 6,
+        bottom: 6,
+        left: isMe ? 60 : 34, // 👈 tăng số này
+        right: isMe ? 6 : 60, // 👈 giữ khoảng cách bên phải
+      ),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Column(
+          crossAxisAlignment: isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            /// 🔹 Bubble
+            Container(
+              constraints: const BoxConstraints(maxWidth: 260),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(18),
+                  topRight: const Radius.circular(18),
+                  bottomLeft: isMe ? const Radius.circular(18) : Radius.zero,
+                  bottomRight: isMe ? Radius.zero : const Radius.circular(18),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: iconColor, size: 16),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isMissed ? Colors.red : AppColors.textPrimary,
+                        ),
+                      ),
+                      if (call.isEnded && call.duration > 0)
+                        Text(
+                          call.durationLabel,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 2),
+
+            /// 🔹 Time (đưa ra ngoài giống message)
+            Text(
+              du.DateUtils.formatMessageTime(call.createdAt),
+              style: const TextStyle(
+                fontSize: 10,
+                color: AppColors.textHint,
+                fontFamily: 'Inter',
+              ),
+            ),
           ],
         ),
       ),
@@ -1231,7 +1350,11 @@ class _MessageBubble extends StatelessWidget {
       onLongPress: onLongPress,
       onDoubleTap: onDoubleTap,
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: EdgeInsets.only(
+          bottom: 6,
+          left: isMe ? 50 : 3,
+          right: isMe ? 3 : 50,
+        ),
         child: Row(
           mainAxisAlignment: isMe
               ? MainAxisAlignment.end
