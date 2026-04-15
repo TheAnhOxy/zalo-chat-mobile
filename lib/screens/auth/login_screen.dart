@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
-import '../../services/auth_service.dart';
 import '../../services/fake_auth_flow_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/top_notice.dart';
@@ -209,40 +208,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       onTap: _login,
                       loading: _loading,
                     ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Expanded(child: Divider(color: AppColors.divider)),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Text(
-                            'ĐĂNG NHẬP NHANH',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textHint.withValues(alpha: 0.75),
-                              fontFamily: 'Inter',
-                              letterSpacing: 0.7,
-                            ),
-                          ),
-                        ),
-                        const Expanded(child: Divider(color: AppColors.divider)),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _QuickLoginButton(
-                      onTap: () {
-                        authService.loginAsUser2();
-                        showTopNotice(
-                          context,
-                          message: 'Đã đăng nhập nhanh bằng User 2 (fake).',
-                        );
-                        Navigator.pushNamedAndRemoveUntil(
-                          context,
-                          AppRouter.main,
-                          (route) => false,
-                        );
-                      },
-                    ),
                   ],
                 ),
               ),
@@ -327,40 +292,4 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _QuickLoginButton extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _QuickLoginButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 46,
-        decoration: BoxDecoration(
-          color: AppColors.bgInput,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.bolt_rounded, color: Colors.orange, size: 20),
-            SizedBox(width: 8),
-            Text(
-              'Đăng nhập nhanh với User 2',
-              style: TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                fontFamily: 'Inter',
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 

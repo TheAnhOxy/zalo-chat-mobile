@@ -160,7 +160,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       margin: const EdgeInsets.all(12),
       borderRadius: BorderRadius.circular(14),
       backgroundGradient: const LinearGradient(
-        colors: [Color(0xFF0EA5E9), Color(0xFF22C55E)],
+        colors: [Color(0xFF66BB6A), Color(0xFF22C55E)],
       ),
       flushbarPosition: FlushbarPosition.TOP,
     ).show(context);

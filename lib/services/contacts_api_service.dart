@@ -22,6 +22,19 @@ class ContactsApiService {
 
   final _client = http.Client();
 
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  /// Lấy string ID an toàn từ field MongoDB.
+  /// MongoDB đôi khi trả về ObjectId dưới dạng Map {"$oid": "..."} thay vì string.
+  static String _extractId(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    if (raw is Map) {
+      return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+    }
+    return raw.toString();
+  }
+
   // ── Models ──────────────────────────────────────────────────────────────────
 
   static ApiUserModel _parseUser(Map<String, dynamic> j) {
@@ -31,7 +44,7 @@ class ContactsApiService {
       dob = DateTime.tryParse(dobRaw.toString());
     }
     return ApiUserModel(
-      id: (j['_id'] ?? j['id'] ?? '').toString(),
+      id: _extractId(j['_id'] ?? j['id']),
       fullName: (j['fullName'] ?? '').toString(),
       phone: (j['phone'] ?? '').toString(),
       avatar: (j['avatar'] ?? '').toString(),
@@ -43,14 +56,14 @@ class ContactsApiService {
   static ApiGroupModel _parseGroup(Map<String, dynamic> j) {
     final members = (j['members'] as List? ?? [])
         .map((m) => ApiGroupMember(
-              userId: (m['userId'] ?? '').toString(),
+              userId: _extractId(m['userId'] ?? m['_id']),
               role: (m['role'] ?? 'MEMBER').toString(),
             ))
         .toList();
 
     final lm = j['lastMessage'] as Map<String, dynamic>?;
     return ApiGroupModel(
-      id: (j['_id'] ?? j['id'] ?? '').toString(),
+      id: _extractId(j['_id'] ?? j['id']),
       name: (j['name'] ?? '').toString(),
       avatar: (j['avatar'] ?? '').toString(),
       members: members,
@@ -86,8 +99,8 @@ class ContactsApiService {
       final accepted = fsJson
           .where((f) => f['status'] == 'ACCEPTED')
           .map((f) {
-            final rid = (f['requesterId'] ?? '').toString();
-            final aid = (f['addresseeId'] ?? '').toString();
+            final rid = _extractId(f['requesterId']);
+            final aid = _extractId(f['addresseeId']);
             return rid == userId ? aid : rid;
           })
           .where((id) => id.isNotEmpty)
@@ -186,7 +199,7 @@ class ContactsApiService {
       return list
           .where((f) =>
               f['status'] == 'PENDING' &&
-              (f['addresseeId'] ?? '').toString() == userId)
+              _extractId(f['addresseeId']) == userId)
           .length;
     } catch (_) {
       return 0;
@@ -221,8 +234,8 @@ class ContactsApiService {
       final List<dynamic> list = jsonDecode(fsRes.body) as List;
       final pending = list.where((f) {
         if (f['status'] != 'PENDING') return false;
-        final aid = (f['addresseeId'] ?? '').toString();
-        final rid = (f['requesterId'] ?? '').toString();
+        final aid = _extractId(f['addresseeId']);
+        final rid = _extractId(f['requesterId']);
         return received ? aid == userId : rid == userId;
       }).toList();
 
@@ -231,8 +244,8 @@ class ContactsApiService {
       // Lấy thông tin user đối diện song song
       final futures = pending.map((f) {
         final otherId = received
-            ? (f['requesterId'] ?? '').toString()
-            : (f['addresseeId'] ?? '').toString();
+            ? _extractId(f['requesterId'])
+            : _extractId(f['addresseeId']);
         return _client
             .get(Uri.parse('$baseUrl/users/$otherId'))
             .timeout(const Duration(seconds: 10));
@@ -244,14 +257,34 @@ class ContactsApiService {
       for (int i = 0; i < pending.length; i++) {
         final f = pending[i];
         final res = responses[i];
-        if (res.statusCode != 200) continue;
-        final userData = jsonDecode(res.body) as Map<String, dynamic>;
+        dev.log('[FR] user fetch status=${res.statusCode}');
+
+        final otherId = received
+            ? _extractId(f['requesterId'])
+            : _extractId(f['addresseeId']);
+
+        // Nếu fetch profile thất bại → vẫn hiện request với thông tin fallback
+        final ApiUserModel user;
+        if (res.statusCode == 200) {
+          user = _parseUser(jsonDecode(res.body) as Map<String, dynamic>);
+        } else {
+          dev.log('[FR] profile not found for $otherId (${res.statusCode}), using fallback');
+          user = ApiUserModel(
+            id: otherId,
+            fullName: 'Người dùng',
+            phone: '',
+            avatar: '',
+            isOnline: false,
+          );
+        }
+
         final createdAt = f['createdAt'] != null
             ? DateTime.tryParse(f['createdAt'].toString()) ?? DateTime.now()
             : DateTime.now();
+
         requests.add(ApiFriendRequest(
-          friendshipId: (f['_id'] ?? f['id'] ?? '').toString(),
-          user: _parseUser(userData),
+          friendshipId: _extractId(f['_id'] ?? f['id']),
+          user: user,
           createdAt: createdAt,
         ));
       }
@@ -260,6 +293,34 @@ class ContactsApiService {
       return ContactsResult.success(requests);
     } catch (e) {
       return ContactsResult.error('Không kết nối được backend: $e');
+    }
+  }
+
+  // ── Send Friend Request ──────────────────────────────────────────────────────
+
+  /// Gửi lời mời kết bạn từ [requesterId] đến [receiverId].
+  /// [message] là lời nhắn kèm theo (tùy chọn).
+  /// Trả về true nếu thành công.
+  Future<bool> sendFriendRequest({
+    required String requesterId,
+    required String receiverId,
+    String message = '',
+  }) async {
+    try {
+      final res = await _client
+          .post(
+            Uri.parse('$baseUrl/friendships'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'requesterId': requesterId,
+              'addresseeId': receiverId,   // backend field name
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      dev.log('❌ sendFriendRequest error: $e');
+      return false;
     }
   }
 

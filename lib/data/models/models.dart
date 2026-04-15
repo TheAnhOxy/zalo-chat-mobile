@@ -71,15 +71,23 @@ class ConversationMember {
     required this.joinedAt,
   });
 
+  static String _extractId(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    if (raw is Map) return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+    return raw.toString();
+  }
+
   factory ConversationMember.fromJson(Map<String, dynamic> json) {
     return ConversationMember(
-      userId: json['userId'] ?? '',
+      userId: _extractId(json['userId'] ?? json['_id']),
       role: json['role'] ?? 'MEMBER',
-      nickname: json['nickname'],
+      nickname: json['nickname']?.toString(),
+      name: json['name']?.toString() ?? json['fullName']?.toString(),
       isMuted: json['isMuted'] ?? false,
       isPinned: json['isPinned'] ?? false,
       joinedAt: json['joinedAt'] != null
-          ? DateTime.parse(json['joinedAt'])
+          ? DateTime.tryParse(json['joinedAt'].toString()) ?? DateTime.now()
           : DateTime.now(),
     );
   }

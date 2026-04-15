@@ -960,11 +960,11 @@ class _Avatar extends StatelessWidget {
 
   Widget _fallback() {
     final colors = [
-      const Color(0xFF5C6BC0),
+      const Color(0xFF2E7D32),
       const Color(0xFF26A69A),
       const Color(0xFFEF5350),
       const Color(0xFFAB47BC),
-      const Color(0xFF42A5F5),
+      const Color(0xFF66BB6A),
       const Color(0xFFFF7043),
     ];
     final idx = name.isEmpty ? 0 : name.codeUnitAt(0) % colors.length;

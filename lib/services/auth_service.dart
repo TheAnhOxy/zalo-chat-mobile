@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/models.dart';
 
 typedef AuthListener = void Function();
@@ -68,17 +70,80 @@ class AuthService {
   }
 
 
+  // ── Persistence (SharedPreferences / localStorage on web) ────
+  static const _keyUser         = 'auth_user';
+  static const _keyAccessToken  = 'auth_access_token';
+  static const _keyRefreshToken = 'auth_refresh_token';
+
+  /// Lưu session vào SharedPreferences
+  Future<void> _saveSession() async {
+    if (_currentUser == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyUser, jsonEncode({
+      'id':        _currentUser!.id,
+      'fullName':  _currentUser!.fullName,
+      'phone':     _currentUser!.phone,
+      'email':     _currentUser!.email ?? '',
+      'avatar':    _currentUser!.avatar,
+      'coverImage': _currentUser!.coverImage ?? '',
+      'bio':       _currentUser!.bio ?? '',
+      'gender':    _currentUser!.gender,
+      'isVerified': _currentUser!.isVerified,
+    }));
+    if (_accessToken != null)  await prefs.setString(_keyAccessToken,  _accessToken!);
+    if (_refreshToken != null) await prefs.setString(_keyRefreshToken, _refreshToken!);
+  }
+
+  /// Xóa session khỏi SharedPreferences
+  Future<void> _clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyUser);
+    await prefs.remove(_keyAccessToken);
+    await prefs.remove(_keyRefreshToken);
+  }
+
+  /// Khôi phục session từ SharedPreferences khi app khởi động.
+  /// Trả về `true` nếu đã khôi phục thành công.
+  Future<bool> restoreSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userJson = prefs.getString(_keyUser);
+      if (userJson == null) return false;
+
+      final map = jsonDecode(userJson) as Map<String, dynamic>;
+      _currentUser = UserModel(
+        id:          map['id'] ?? '',
+        fullName:    map['fullName'] ?? '',
+        phone:       map['phone'] ?? '',
+        email:       (map['email'] as String?)?.isNotEmpty == true ? map['email'] : null,
+        avatar:      map['avatar'] ?? '',
+        coverImage:  (map['coverImage'] as String?)?.isNotEmpty == true ? map['coverImage'] : null,
+        bio:         (map['bio'] as String?)?.isNotEmpty == true ? map['bio'] : null,
+        gender:      map['gender'] ?? 'other',
+        isVerified:  map['isVerified'] == true,
+      );
+      _accessToken  = prefs.getString(_keyAccessToken);
+      _refreshToken = prefs.getString(_keyRefreshToken);
+      _notify();
+      return _currentUser!.id.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ── Stub cho NGƯỜI 1 (AUTH) implement sau ─────────────────────
   /// Gọi sau khi decode JWT thành công
   void setUser(UserModel user, {String? token, String? refreshToken}) {
     _currentUser = user;
     if (token != null) _accessToken = token;
     if (refreshToken != null) _refreshToken = refreshToken;
+    _saveSession();
     _notify();
   }
 
   void updateCurrentUser(UserModel user) {
     _currentUser = user;
+    _saveSession();
     _notify();
   }
 
@@ -86,6 +151,7 @@ class AuthService {
     _currentUser = null;
     _accessToken = null;
     _refreshToken = null;
+    _clearSession();
     _notify();
   }
 } 

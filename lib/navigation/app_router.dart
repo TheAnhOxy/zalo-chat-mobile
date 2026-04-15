@@ -20,6 +20,7 @@ import '../screens/contacts/add_friend_screen.dart';
 import '../screens/contacts/found_user_screen.dart';
 import '../screens/contacts/friend_requests_screen.dart';
 import '../screens/contacts/birthday_screen.dart';
+import '../screens/contacts/send_friend_request_screen.dart';
 import '../services/contacts_api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ class AppRouter {
   static const String privacy = '/settings/privacy';
   static const String addFriend = '/contacts/add-friend';
   static const String foundUser = '/contacts/found-user';
+  static const String sendFriendRequest = '/contacts/send-friend-request';
   static const String friendRequests = '/contacts/friend-requests';
   static const String birthday = '/contacts/birthday';
 
@@ -97,6 +99,10 @@ class AppRouter {
       case foundUser:
         final user = settings.arguments as ApiUserModel;
         return _slide(FoundUserScreen(user: user));
+
+      case sendFriendRequest:
+        final user = settings.arguments as ApiUserModel;
+        return _slide(SendFriendRequestScreen(targetUser: user));
 
       case friendRequests:
         return _slide(const FriendRequestsScreen());

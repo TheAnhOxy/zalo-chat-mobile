@@ -50,7 +50,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF0D1B35),
+        backgroundColor: const Color(0xFF1A3A1A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -63,13 +63,13 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
               height: 64,
               decoration: BoxDecoration(
                 color: isVideo
-                    ? Colors.blue.withOpacity(0.15)
+                    ? const Color(0xFF388E3C).withOpacity(0.15)
                     : Colors.green.withOpacity(0.15),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 isVideo ? Icons.videocam_rounded : Icons.call_rounded,
-                color: isVideo ? Colors.blue : Colors.green,
+                color: isVideo ? const Color(0xFF388E3C) : Colors.green,
                 size: 32,
               ),
             ),

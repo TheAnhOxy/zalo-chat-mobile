@@ -157,7 +157,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         context: context,
         barrierDismissible: false,
         builder: (_) => AlertDialog(
-          backgroundColor: const Color(0xFF0D1B35),
+          backgroundColor: const Color(0xFF1A3A1A),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -299,7 +299,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
     // Placeholder khi chưa kết nối
     return Container(
-      color: const Color(0xFF0A0F1E),
+      color: const Color(0xFF0A1A0A),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -383,7 +383,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             borderRadius: BorderRadius.circular(13),
             child: _isCamOff || _localRenderer.srcObject == null
                 ? Container(
-                    color: const Color(0xFF1A2233),
+                    color: const Color(0xFF1A3A1A),
                     child: const Center(
                       child: Icon(
                         Icons.videocam_off_rounded,

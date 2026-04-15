@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../navigation/app_router.dart';
 import '../../services/contacts_api_service.dart';
 
 class FoundUserScreen extends StatelessWidget {
@@ -122,7 +123,11 @@ class FoundUserScreen extends StatelessWidget {
                               // Kết bạn
                               _IconActionButton(
                                 icon: Icons.person_add_alt_1_outlined,
-                                onTap: () {},
+                                onTap: () => Navigator.pushNamed(
+                                  context,
+                                  AppRouter.sendFriendRequest,
+                                  arguments: user,
+                                ),
                               ),
                             ],
                           ),
@@ -176,7 +181,7 @@ class FoundUserScreen extends StatelessWidget {
   Widget _defaultCover() => Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF0068FF), Color(0xFF42A5F5)],
+            colors: [Color(0xFF388E3C), Color(0xFF66BB6A)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),

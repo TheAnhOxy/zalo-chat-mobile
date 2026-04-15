@@ -150,7 +150,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
         context: context,
         barrierDismissible: false,
         builder: (_) => AlertDialog(
-          backgroundColor: const Color(0xFF0D1B35),
+          backgroundColor: const Color(0xFF1A3A1A),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -235,7 +235,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
           gradient: RadialGradient(
             center: Alignment(0, -0.3),
             radius: 1.2,
-            colors: [Color(0xFF1A2744), Color(0xFF080C1A)],
+            colors: [Color(0xFF1A3A1A), Color(0xFF0A1A0A)],
           ),
         ),
         child: SafeArea(
