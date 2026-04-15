@@ -108,6 +108,95 @@ class _ChatListScreenState extends State<ChatListScreen> {
         log('Lỗi parse socket data ở list screen: $e');
       }
     });
+
+    // ✅ Thêm: Cập nhật lastMessage khi có cuộc gọi kết thúc/từ chối
+    socketService.on('conversation_call_updated', (data) {
+      if (!mounted) return;
+      try {
+        final map = data is Map<String, dynamic>
+            ? data
+            : Map<String, dynamic>.from(data as Map);
+
+        final convId = map['conversationId']?.toString();
+        if (convId == null) return;
+
+        final lastMsgRaw = map['lastMessage'];
+        if (lastMsgRaw == null) return;
+
+        final lastMsgMap = lastMsgRaw is Map<String, dynamic>
+            ? lastMsgRaw
+            : Map<String, dynamic>.from(lastMsgRaw as Map);
+
+        setState(() {
+          final index = _conversations.indexWhere((c) => c.id == convId);
+          if (index == -1) return;
+
+          final conv = _conversations[index];
+          final updatedConv = ConversationModel(
+            id: conv.id,
+            type: conv.type,
+            name: conv.name,
+            avatar: conv.avatar,
+            members: conv.members,
+            createdAt: conv.createdAt,
+            updatedAt: DateTime.now(),
+            unreadCount: conv.unreadCount,
+            lastMessage: LastMessagePreview(
+              messageId: '',
+              content: lastMsgMap['content']?.toString() ?? '',
+              senderId: lastMsgMap['senderId']?.toString() ?? '',
+              createdAt:
+                  DateTime.tryParse(
+                    lastMsgMap['createdAt']?.toString() ?? '',
+                  ) ??
+                  DateTime.now(),
+            ),
+          );
+
+          _conversations.removeAt(index);
+          _conversations.insert(0, updatedConv);
+        });
+      } catch (e) {
+        log('❌ conversation_call_updated list error: $e');
+      }
+    });
+
+    socketService.on('message_seen', (data) {
+  if (!mounted) return;
+
+  try {
+    final convId = data['conversationId']?.toString();
+    final userId = data['userId']?.toString();
+
+    if (convId == null) return;
+
+    setState(() {
+      final index = _conversations.indexWhere((c) => c.id == convId);
+      if (index == -1) return;
+
+      final conv = _conversations[index];
+
+      // Nếu chính mình đã đọc → reset unreadCount
+      if (userId == authService.userId) {
+        final updatedConv = ConversationModel(
+          id: conv.id,
+          type: conv.type,
+          name: conv.name,
+          avatar: conv.avatar,
+          members: conv.members,
+          createdAt: conv.createdAt,
+          updatedAt: conv.updatedAt,
+          unreadCount: 0, // 🔥 reset ở đây
+          lastMessage: conv.lastMessage,
+        );
+
+        _conversations[index] = updatedConv;
+      }
+    });
+  } catch (e) {
+    log('❌ message_seen list error: $e');
+  }
+});
   }
 
   @override
@@ -357,6 +446,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     // Sửa chỗ này để tránh lỗi null
     final String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
     final bool isMe = last != null && last.senderId == uid;
+    final bool isMissedCall = lastContent.toLowerCase().contains(
+      'cuộc gọi nhỡ',
+    );
 
     return GestureDetector(
       onTap: () => Navigator.push(
@@ -423,9 +515,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
                             fontSize: 13,
 
                             fontFamily: 'Inter',
-                            color: hasUnread
-                                ? AppColors.textSecondary
-                                : AppColors.textHint,
+                            color: isMissedCall
+                                ? Colors
+                                      .red
+                                      .shade700 // 🔴 đỏ đậm hơn
+                                : (hasUnread
+                                      ? AppColors.textSecondary
+                                      : AppColors.textHint),
                             fontWeight: !isMe
                                 ? FontWeight.w600
                                 : (hasUnread

@@ -131,6 +131,46 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       'conversationId': widget.conversationId,
     });
 
+    // ✅ Tự động đánh dấu đã đọc tất cả messages khi vào chat
+    socketService.emit('seen_conversation', {
+      'conversationId': widget.conversationId,
+      'userId': authService.userId,
+    });
+
+    // Thêm vào _initSocket():
+    socketService.on('conversation_call_updated', (data) {
+      try {
+        final map = data is Map<String, dynamic>
+            ? data
+            : Map<String, dynamic>.from(data as Map);
+
+        if (map['conversationId']?.toString() != widget.conversationId) return;
+
+        // Nếu có callData thì thêm call bubble vào chatItems
+        final callDataRaw = map['callData'];
+        if (callDataRaw != null) {
+          final callMap = callDataRaw is Map<String, dynamic>
+              ? callDataRaw
+              : Map<String, dynamic>.from(callDataRaw as Map);
+          final newCall = CallModel.fromJson(callMap);
+
+          setState(() {
+            // Kiểm tra trùng trước khi thêm
+            final exists = _chatItems.any(
+              (i) => i.type == ChatItemType.call && i.call?.id == newCall.id,
+            );
+            if (!exists) {
+              _chatItems = [..._chatItems, ChatItem.call(newCall)]
+                ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            }
+          });
+          _scrollToBottom();
+        }
+      } catch (e) {
+        log('❌ conversation_call_updated error: $e');
+      }
+    });
+
     // Lắng nghe tin nhắn mới
     socketService.on('new_message', (data) {
       try {
