@@ -81,8 +81,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
             final isMe = newMsg.senderId == authService.userId;
 
             String previewContent = newMsg.content;
-            if (newMsg.type == 'IMAGE') previewContent = '[Hình ảnh]';
-            if (newMsg.type == 'FILE') previewContent = '[Tệp đính kèm]';
+
+            if (newMsg.type == 'IMAGE' || _isImageUrl(newMsg.content)) {
+              previewContent = 'đã gửi 1 ảnh';
+            } else if (newMsg.type == 'FILE') {
+              previewContent = '[Tệp đính kèm]';
+            }
 
             final updatedConv = ConversationModel(
               id: conv.id,
@@ -236,6 +240,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
       }
     }
     return null;
+  }
+
+  bool _isImageUrl(String content) {
+    return content.startsWith('http') &&
+        (content.contains('.jpg') ||
+            content.contains('.jpeg') ||
+            content.contains('.png') ||
+            content.contains('.webp'));
   }
 
   // 2. Các hàm Helper để xử lý logic hiển thị dựa trên Model thật
@@ -544,7 +556,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final otherUserId = _getOtherUserId(c);
     final isOnline = !c.isGroup && (_onlineStates[otherUserId] ?? false);
     final bool hasUnread = c.unreadCount > 0;
-    final String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
+    String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
+
+    if (_isImageUrl(lastContent)) {
+      lastContent = 'đã gửi 1 ảnh';
+    }
     final bool isMe = last != null && last.senderId == uid;
     final bool isMissedCall = lastContent.toLowerCase().contains(
       'cuộc gọi nhỡ',
