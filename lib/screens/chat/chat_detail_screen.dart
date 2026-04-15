@@ -17,6 +17,8 @@ import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
+import '../../data/models/chat_item.dart';
+
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -52,6 +54,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   bool _peerOnline = false;
   DateTime? _peerLastSeen;
   int _selectedBackgroundIndex = 0;
+  List<CallModel> _calls = [];
+  List<ChatItem> _chatItems = [];
 
   static const List<_ChatBackgroundOption> _backgroundOptions = [
     _ChatBackgroundOption(
@@ -96,26 +100,66 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _peerOnline = widget.otherUser?.isOnline ?? false;
     _peerLastSeen = widget.otherUser?.status.lastSeen;
     _restoreBackground();
-    _loadMessages(); // Lấy lịch sử từ MongoDB
+    _loadData(); // Lấy lịch sử từ MongoDB
     _initSocket(); // Kết nối real-time
   }
 
   // 2. Lấy lịch sử tin nhắn từ API
-  Future<void> _loadMessages() async {
+  Future<void> _loadData() async {
     try {
-      final msgs = _normalizeMessages(
-        await apiService.getMessages(widget.conversationId, authService.userId!,),
-      );
+      final results = await Future.wait<dynamic>([
+        apiService.getMessages(widget.conversationId, authService.userId!),
+        apiService.getCalls(widget.conversationId),
+      ]);
+
+      final msgs = _normalizeMessages(results[0] as List<MessageModel>);
+      final calls = (results[1] as List<Map<String, dynamic>>)
+          .map((e) => CallModel.fromJson(e))
+          .toList();
+      final items = <ChatItem>[
+        ...msgs.map(ChatItem.message),
+        ...calls.map(ChatItem.call),
+      ]..sort((a, b) {
+          final cmp = a.createdAt.compareTo(b.createdAt);
+          if (cmp != 0) return cmp;
+          final aKey = a.type == ChatItemType.message
+              ? 'm_${a.message?.id ?? ''}'
+              : 'c_${a.call?.id ?? ''}';
+          final bKey = b.type == ChatItemType.message
+              ? 'm_${b.message?.id ?? ''}'
+              : 'c_${b.call?.id ?? ''}';
+          return aKey.compareTo(bKey);
+        });
+
       setState(() {
         _messages = msgs;
+        _calls = calls;
+        _chatItems = items;
         _isLoading = false;
       });
       _emitSeenForLatest();
       _scrollToBottom(animated: false);
     } catch (e) {
-      log('❌ Lỗi tải tin nhắn: $e');
+      log('❌ Lỗi tải: $e');
       setState(() => _isLoading = false);
     }
+  }
+
+  void _rebuildChatItems() {
+    _chatItems = [
+      ..._messages.map(ChatItem.message),
+      ..._calls.map(ChatItem.call),
+    ]..sort((a, b) {
+        final cmp = a.createdAt.compareTo(b.createdAt);
+        if (cmp != 0) return cmp;
+        final aKey = a.type == ChatItemType.message
+            ? 'm_${a.message?.id ?? ''}'
+            : 'c_${a.call?.id ?? ''}';
+        final bKey = b.type == ChatItemType.message
+            ? 'm_${b.message?.id ?? ''}'
+            : 'c_${b.call?.id ?? ''}';
+        return aKey.compareTo(bKey);
+      });
   }
 
   // 3. Khởi tạo Socket và các sự kiện lắng nghe
@@ -129,13 +173,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         final map = data is Map<String, dynamic>
             ? data
             : Map<String, dynamic>.from(data as Map);
-        final newMessage = MessageModel.fromJson(map);
+        final newMessage = _normalizeMessage(MessageModel.fromJson(map));
         if (newMessage.conversationId == widget.conversationId) {
           setState(() {
-            _messages = _upsertMessage(
-              _messages,
-              _normalizeMessage(newMessage),
-            );
+            _messages = _upsertMessage(_messages, newMessage);
+            _rebuildChatItems();
           });
           _emitSeenForLatest();
           _scrollToBottom();
@@ -177,6 +219,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             createdAt: old.createdAt,
           );
           _messages = _normalizeMessages(_messages);
+          _rebuildChatItems();
         });
       } catch (_) {}
     });
@@ -337,6 +380,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     setState(() {
       _messages[idx] = updater(_messages[idx]);
       _messages = _normalizeMessages(_messages);
+      _rebuildChatItems();
     });
   }
 
@@ -422,6 +466,7 @@ void _handleMessageUpdated(dynamic data) {
       
       // Sắp xếp và chuẩn hóa lại list
       _messages = _normalizeMessages(_messages);
+      _rebuildChatItems();
     }
   });
 }
@@ -944,6 +989,7 @@ void _deleteMessageForMe(MessageModel msg) {
   setState(() {
     // 2. Xóa ngay lập tức khỏi danh sách đang hiển thị
     _messages.removeWhere((m) => m.id == msg.id);
+    _rebuildChatItems();
 
     // 3. Reset các trạng thái liên quan
     if (_replyTo?.id == msg.id) {
@@ -1051,19 +1097,19 @@ void _deleteMessageForMe(MessageModel msg) {
                             horizontal: 16,
                             vertical: 8,
                           ),
-                          itemCount: _messages.length + (_isTyping ? 1 : 0),
+                          itemCount: _chatItems.length + (_isTyping ? 1 : 0),
                           itemBuilder: (_, i) {
-                            if (i == _messages.length) {
+                            if (i == _chatItems.length) {
                               return _buildTypingIndicator();
                             }
-                            final msg = _messages[i];
-                            final prev = i > 0 ? _messages[i - 1] : null;
-                            final senderMember = _getMemberInfo(msg.senderId);
+
+                            final item = _chatItems[i];
+                            final prevItem = i > 0 ? _chatItems[i - 1] : null;
                             final showDate =
-                                prev == null ||
+                                prevItem == null ||
                                 !du.DateUtils.isSameDay(
-                                  prev.createdAt,
-                                  msg.createdAt,
+                                  prevItem.createdAt,
+                                  item.createdAt,
                                 );
 
                             return Column(
@@ -1071,38 +1117,13 @@ void _deleteMessageForMe(MessageModel msg) {
                                 if (showDate)
                                   ChatDateDivider(
                                     label: du.DateUtils.formatDateSeparator(
-                                      msg.createdAt,
+                                      item.createdAt,
                                     ),
                                   ),
-                                _MessageBubble(
-                                  msg: msg,
-                                  isMe:
-                                      msg.senderId.toString() ==
-                                      authService.userId.toString(),
-                                  senderUser: isGroup
-                                      ? null
-                                      : widget
-                                            .otherUser, // Cần logic lấy user từ members nếu là group
-                                  senderMember: senderMember,
-                                  showSenderName:
-                                      isGroup &&
-                                      msg.senderId != authService.userId,
-                                  showSeenLabel:
-                                      !isGroup &&
-                                      msg.id == lastOutgoingMessageId &&
-                                      _isSeenByPeer(msg),
-                                  replyToMsg: msg.replyToId != null
-                                      ? _messages.firstWhere(
-                                          (m) => m.id == msg.replyToId,
-                                          orElse: () => msg,
-                                        )
-                                      : null,
-                                  onLongPress: () => _showMessageActions(msg),
-                                  onDoubleTap: () => _addReaction(msg, 'LIKE'),
-                                  onReply: () => setState(() => _replyTo = msg),
-                                  onImageTap: () => _openImageViewer(msg),
-                                  onFileTap: () => _downloadFile(msg),
-                                ),
+                                if (item.type == ChatItemType.call)
+                                  _buildCallBubble(item.call!)
+                                else
+                                  _buildMessageBubble(item.message!, i),
                               ],
                             );
                           },
@@ -1122,6 +1143,127 @@ void _deleteMessageForMe(MessageModel msg) {
               ),
             _buildInputBar(),
             if (_showEmoji) _buildEmojiPanel(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(MessageModel msg, int i) {
+    final lastOutgoingMessageId = _lastOutgoingMessageId();
+    final isGroup = widget.conversation.isGroup;
+    final senderMember = _getMemberInfo(msg.senderId);
+
+    return _MessageBubble(
+      msg: msg,
+      isMe: msg.senderId.toString() == authService.userId.toString(),
+      senderUser: isGroup ? null : widget.otherUser,
+      senderMember: senderMember,
+      showSenderName: isGroup && msg.senderId != authService.userId,
+      showSeenLabel:
+          !isGroup && msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
+      replyToMsg: msg.replyToId != null
+          ? _messages.firstWhere(
+              (m) => m.id == msg.replyToId,
+              orElse: () => msg,
+            )
+          : null,
+      onLongPress: () => _showMessageActions(msg),
+      onDoubleTap: () => _addReaction(msg, 'LIKE'),
+      onReply: () => setState(() => _replyTo = msg),
+      onImageTap: () => _openImageViewer(msg),
+      onFileTap: () => _downloadFile(msg),
+    );
+  }
+
+  Widget _buildCallBubble(CallModel call) {
+    final isMe = call.callerId == authService.userId;
+    final isVideo = call.isVideo;
+    final isMissed = call.isMissed;
+
+    Color iconColor;
+    Color bgColor;
+    String label;
+    IconData icon;
+
+    if (isMissed) {
+      iconColor = Colors.red;
+      bgColor = Colors.red.withOpacity(0.1);
+      label = isMe ? 'Bạn đã gọi nhưng không nghe' : 'Cuộc gọi nhỡ';
+      icon = isVideo ? Icons.videocam_off : Icons.phone_missed;
+    } else {
+      iconColor = AppColors.primary;
+      bgColor = isMe
+          ? AppColors.primary.withOpacity(0.15)
+          : Colors.grey.withOpacity(0.15);
+      label = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+      icon = isVideo ? Icons.videocam : Icons.phone;
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 6,
+        bottom: 6,
+        left: isMe ? 60 : 34, // 👈 tăng số này
+        right: isMe ? 6 : 60, // 👈 giữ khoảng cách bên phải
+      ),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Column(
+          crossAxisAlignment: isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            /// 🔹 Bubble
+            Container(
+              constraints: const BoxConstraints(maxWidth: 260),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(18),
+                  topRight: const Radius.circular(18),
+                  bottomLeft: isMe ? const Radius.circular(18) : Radius.zero,
+                  bottomRight: isMe ? Radius.zero : const Radius.circular(18),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: iconColor, size: 16),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isMissed ? Colors.red : AppColors.textPrimary,
+                        ),
+                      ),
+                      if (call.isEnded && call.duration > 0)
+                        Text(
+                          call.durationLabel,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 2),
+
+            /// 🔹 Time (đưa ra ngoài giống message)
+            Text(
+              du.DateUtils.formatMessageTime(call.createdAt),
+              style: const TextStyle(
+                fontSize: 10,
+                color: AppColors.textHint,
+                fontFamily: 'Inter',
+              ),
+            ),
           ],
         ),
       ),
@@ -1714,7 +1856,11 @@ class _MessageBubble extends StatelessWidget {
       onLongPress: onLongPress,
       onDoubleTap: onDoubleTap,
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: EdgeInsets.only(
+          bottom: 6,
+          left: isMe ? 50 : 3,
+          right: isMe ? 3 : 50,
+        ),
         child: Row(
           mainAxisAlignment: isMe
               ? MainAxisAlignment.end

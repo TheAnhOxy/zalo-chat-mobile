@@ -76,8 +76,8 @@ class ConversationMember {
       nickname: json['nickname'],
       isMuted: json['isMuted'] ?? false,
       isPinned: json['isPinned'] ?? false,
-      joinedAt: json['joinedAt'] != null 
-          ? DateTime.parse(json['joinedAt']) 
+      joinedAt: json['joinedAt'] != null
+          ? DateTime.parse(json['joinedAt'])
           : DateTime.now(),
     );
   }
@@ -98,10 +98,12 @@ class LastMessagePreview {
 
   factory LastMessagePreview.fromJson(Map<String, dynamic> json) {
     return LastMessagePreview(
-      messageId: json['messageId'] ?? '',
-      content: json['content'] ?? '',
-      senderId: json['senderId'] ?? '',
-      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
+      messageId: json['messageId']?.toString() ?? '',
+      content: json['content']?.toString() ?? '',
+      senderId: json['senderId']?.toString() ?? '',
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'].toString())
+          : DateTime.now(),
     );
   }
 }
@@ -109,11 +111,11 @@ class LastMessagePreview {
 class ConversationModel {
   final String id;
   final String type; // PRIVATE | GROUP
-  final String? name; // null nếu PRIVATE
+  final String? name;
   final String? avatar;
   final List<ConversationMember> members;
   final LastMessagePreview? lastMessage;
-  final int unreadCount;
+  final int unreadCount; // ← Thêm / sửa
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -124,27 +126,36 @@ class ConversationModel {
     this.avatar,
     required this.members,
     this.lastMessage,
-    this.unreadCount = 0,
+    this.unreadCount = 0, // default = 0
     required this.createdAt,
     required this.updatedAt,
   });
 
   factory ConversationModel.fromJson(Map<String, dynamic> json) {
     return ConversationModel(
-      id: json['_id'] ?? '',
-      type: json['type'] ?? 'PRIVATE',
+      id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
+      type: json['type']?.toString() ?? 'PRIVATE',
       name: json['name'],
       avatar: json['avatar'],
-      unreadCount: json['unreadCount'] ?? 0,
-      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
-      updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : DateTime.now(),
-      // Map list members
+
+      // ← Quan trọng: parse unreadCount từ backend
+      unreadCount: (json['unreadCount'] as num?)?.toInt() ?? 0,
+
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'].toString())
+          : DateTime.now(),
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.parse(json['updatedAt'].toString())
+          : DateTime.now(),
+
       members: (json['members'] as List? ?? [])
-          .map((m) => ConversationMember.fromJson(m))
+          .map((m) => ConversationMember.fromJson(m as Map<String, dynamic>))
           .toList(),
-      // Map last message preview nếu có
-      lastMessage: json['lastMessage'] != null 
-          ? LastMessagePreview.fromJson(json['lastMessage']) 
+
+      lastMessage: json['lastMessage'] != null
+          ? LastMessagePreview.fromJson(
+              json['lastMessage'] as Map<String, dynamic>,
+            )
           : null,
     );
   }
@@ -170,8 +181,12 @@ class Reaction {
 
   String get emoji {
     const map = {
-      'LIKE': '👍', 'LOVE': '❤️', 'HAHA': '😂',
-      'WOW': '😮', 'SAD': '😢', 'ANGRY': '😠',
+      'LIKE': '👍',
+      'LOVE': '❤️',
+      'HAHA': '😂',
+      'WOW': '😮',
+      'SAD': '😢',
+      'ANGRY': '😠',
     };
     return map[type] ?? '👍';
   }
@@ -185,8 +200,8 @@ class SeenBy {
   factory SeenBy.fromJson(Map<String, dynamic> json) {
     return SeenBy(
       userId: json['userId'] ?? '',
-      seenAt: json['seenAt'] != null 
-          ? DateTime.parse(json['seenAt']) 
+      seenAt: json['seenAt'] != null
+          ? DateTime.parse(json['seenAt'])
           : DateTime.now(),
     );
   }
@@ -246,7 +261,9 @@ class MessageModel {
       // Map từ messageType (tên thật trong DB) hoặc type (alias)
       type: json['messageType'] ?? json['type'] ?? 'TEXT',
       content: json['content'] ?? '',
-      metadata: json['metadata'] != null ? MessageMetadata.fromJson(json['metadata']) : null,
+      metadata: json['metadata'] != null
+          ? MessageMetadata.fromJson(json['metadata'])
+          : null,
       replyToId: json['replyTo'],
       status: json['status'] ?? 'SENT',
       isRecalled: json['isRecalled'] ?? false,
@@ -257,8 +274,8 @@ class MessageModel {
       seenBy: (json['seenBy'] as List? ?? [])
           .map((s) => SeenBy.fromJson(s))
           .toList(),
-      createdAt: json['createdAt'] != null 
-          ? DateTime.parse(json['createdAt']) 
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'])
           : DateTime.now(),
     );
   }
@@ -279,10 +296,10 @@ class MessageModel {
     required this.createdAt,
   });
 
-  bool get isText     => type == 'TEXT';
-  bool get isImage    => type == 'IMAGE';
-  bool get isVoice    => type == 'VOICE';
-  bool get isFile     => type == 'FILE';
+  bool get isText => type == 'TEXT';
+  bool get isImage => type == 'IMAGE';
+  bool get isVoice => type == 'VOICE';
+  bool get isFile => type == 'FILE';
   bool get isLocation => type == 'LOCATION';
 }
 
@@ -292,11 +309,11 @@ class CallModel {
   final String conversationId;
   final String callerId;
   final List<String> participants;
-  final String type;   // VOICE | VIDEO
-  final String status; // CALLING | ACCEPTED | REJECTED | MISSED | ENDED
+  final String type; // VOICE | VIDEO
+  final String status; // ENDED | MISSED | REJECTED | CALLING
   final DateTime? startedAt;
   final DateTime? endedAt;
-  final int? duration; // seconds
+  final int duration; // giây
   final DateTime createdAt;
 
   const CallModel({
@@ -308,12 +325,50 @@ class CallModel {
     required this.status,
     this.startedAt,
     this.endedAt,
-    this.duration,
+    required this.duration,
     required this.createdAt,
   });
 
+  factory CallModel.fromJson(Map<String, dynamic> json) {
+    String extractId(dynamic val) {
+      if (val is Map) return val['\$oid']?.toString() ?? val.toString();
+      return val?.toString() ?? '';
+    }
+
+    DateTime? parseDate(dynamic val) {
+      if (val == null) return null;
+      if (val is Map) return DateTime.tryParse(val['\$date']?.toString() ?? '');
+      return DateTime.tryParse(val.toString());
+    }
+
+    return CallModel(
+      id: extractId(json['_id']),
+      conversationId: extractId(json['conversationId']),
+      callerId: extractId(json['callerId']),
+      participants: ((json['participants'] as List?) ?? [])
+          .map((e) => extractId(e))
+          .toList(),
+      type: json['type']?.toString() ?? 'VOICE',
+      status: json['status']?.toString() ?? 'ENDED',
+      startedAt: parseDate(json['startedAt']),
+      endedAt: parseDate(json['endedAt']),
+      duration: (json['duration'] as num?)?.toInt() ?? 0,
+      createdAt: parseDate(json['createdAt']) ?? DateTime.now(),
+    );
+  }
+
+  // Format thời lượng
+  String get durationLabel {
+    if (duration <= 0) return '';
+    final m = duration ~/ 60;
+    final s = duration % 60;
+    if (m > 0) return '$m phút $s giây';
+    return '$s giây';
+  }
+
+  bool get isMissed => status == 'MISSED' || status == 'REJECTED';
+  bool get isEnded => status == 'ENDED';
   bool get isVideo => type == 'VIDEO';
-  bool get isMissed => status == 'MISSED';
 }
 
 // ── friendships collection ────────────────────────────────────────────────────

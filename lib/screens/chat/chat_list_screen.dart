@@ -2,13 +2,11 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
 import '../../data/models/models.dart';
-import '../../services/api_service.dart'; // Thêm mới
+import '../../services/api_service.dart'; 
 import '../../services/auth_service.dart';
-import '../../services/socket_service.dart'; // Thêm mới
+import '../../services/socket_service.dart'; 
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
-import '../call/voice_call_screen.dart';
-import '../call/video_call_screen.dart';
 import 'dart:developer';
 
 class ChatListScreen extends StatefulWidget {
@@ -22,11 +20,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final _searchCtrl = TextEditingController();
   String _query = '';
 
-  // 1. Quản lý trạng thái dữ liệu từ API
-  late Future<List<ConversationModel>> _conversationsFuture;
   final Map<String, bool> _onlineStates = {};
   final Map<String, _ActiveUserItem> _knownUsers = {};
   final List<String> _activeUserOrder = [];
+  List<ConversationModel> _conversations = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -35,20 +33,83 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _initSocketListener();
   }
 
-  // Hàm tải dữ liệu từ Server
-  void _loadConversations() {
-    if (authService.userId != null) {
+  // Load dữ liệu
+  Future<void> _loadConversations() async {
+    if (authService.userId == null) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final data = await apiService.getConversations(authService.userId!);
+      _cacheKnownUsers(data);
       setState(() {
-        _conversationsFuture = apiService.getConversations(authService.userId!);
+        _conversations = data;
+        _isLoading = false;
       });
+      log('✅ Đã load ${_conversations.length} cuộc trò chuyện');
+
+      // 🔴 THÊM DÒNG NÀY: Tham gia socket room cho TẤT CẢ cuộc trò chuyện
+      // Để ở màn hình List vẫn nhận được thông báo khi có tin nhắn mới
+      for (var conv in _conversations) {
+        socketService.emit('join_conversation', {'conversationId': conv.id});
+      }
+    } catch (e) {
+      log('❌ Lỗi load conversations: $e');
+      setState(() => _isLoading = false);
     }
   }
 
-  // Lắng nghe Socket để cập nhật danh sách khi có tin nhắn mới
+  // Socket listener - realtime
+
   void _initSocketListener() {
     socketService.on('new_message', (data) {
-      log('📩 Có tin nhắn mới, tự động tải lại danh sách...');
-      _loadConversations();
+      if (!mounted) return;
+
+      try {
+        final map = data is Map ? Map<String, dynamic>.from(data) : null;
+        if (map == null) return;
+
+        final newMsg = MessageModel.fromJson(map);
+
+        setState(() {
+          final index = _conversations.indexWhere(
+            (c) => c.id == newMsg.conversationId,
+          );
+
+          if (index != -1) {
+            final conv = _conversations[index];
+            final isMe = newMsg.senderId == authService.userId;
+
+            String previewContent = newMsg.content;
+            if (newMsg.type == 'IMAGE') previewContent = '[Hình ảnh]';
+            if (newMsg.type == 'FILE') previewContent = '[Tệp đính kèm]';
+
+            final updatedConv = ConversationModel(
+              id: conv.id,
+              type: conv.type,
+              name: conv.name,
+              avatar: conv.avatar,
+              members: conv.members,
+              createdAt: conv.createdAt,
+              updatedAt: newMsg.createdAt, // Cập nhật thời gian mới nhất
+              unreadCount: isMe ? conv.unreadCount : conv.unreadCount + 1,
+              lastMessage: LastMessagePreview(
+                messageId: newMsg.id,
+                content: previewContent,
+                senderId: newMsg.senderId,
+                createdAt: newMsg.createdAt,
+              ),
+            );
+
+            _conversations.removeAt(index);
+            _conversations.insert(0, updatedConv);
+          } else {
+            _loadConversations();
+          }
+        });
+      } catch (e) {
+        log('Lỗi parse socket data ở list screen: $e');
+      }
     });
 
     socketService.on('user_status_changed', (data) {
@@ -90,69 +151,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
         }
       });
     });
-
-    // Lắng nghe tín hiệu cuộc gọi toàn cục
-    socketService.on('incoming_call', (data) {
-      final map = _tryMap(data);
-      if (map == null) return;
-
-      log('📞 Nhận tín hiệu cuộc gọi: $map');
-
-      // Lấy dữ liệu từ server
-      final callType = map['type']?.toString() ?? 'voice'; // 'voice' hoặc 'video'
-      final otherUserId = map['otherUserId']?.toString() ?? '';
-      final otherUserName = map['otherUserName']?.toString() ?? 'Người dùng';
-      final otherUserAvatar = map['otherUserAvatar']?.toString();
-      final conversationId = map['conversationId']?.toString();
-      final callId = map['callId']?.toString();
-      final offer = map['offer'] is Map ? Map<String, dynamic>.from(map['offer'] as Map) : null;
-
-      if (otherUserId.isEmpty) return;
-
-      // Tạo UserModel cho người gọi
-      final otherUser = UserModel(
-        id: otherUserId,
-        fullName: otherUserName,
-        avatar: otherUserAvatar ?? '',
-        phone: '',
-      );
-
-      // Mở màn hình Call tương ứng
-      Widget callScreen;
-      if (callType == 'video') {
-        callScreen = VideoCallScreen(
-          otherUser: otherUser,
-          isIncoming: true,
-          callId: callId,
-          conversationId: conversationId,
-          offer: offer,
-        );
-      } else {
-        callScreen = VoiceCallScreen(
-          otherUser: otherUser,
-          isIncoming: true,
-          callId: callId,
-          conversationId: conversationId,
-          offer: offer,
-        );
-      }
-
-      // Dùng Navigator.push để mở màn hình Call
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => callScreen),
-        );
-      }
-    });
   }
 
   @override
   void dispose() {
     socketService.off('new_message');
     socketService.off('user_status_changed');
-    // 🔴 KHÔNG gọi socketService.off('incoming_call') ở đây
-    // Vì chúng ta muốn nó luôn lắng nghe chừng nào app còn mở
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -173,7 +177,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
   String _getDisplayName(ConversationModel c) {
     if (c.isGroup) return c.name ?? 'Nhóm';
     final uid = authService.userId;
-    final other = c.members.firstWhere((m) => m.userId != uid, orElse: () => c.members.first);
+    final other = c.members.firstWhere(
+      (m) => m.userId != uid,
+      orElse: () => c.members.first,
+    );
     return other.nickname ?? 'Người dùng';
   }
 
@@ -202,14 +209,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   String? _getAvatar(ConversationModel c) {
     if (c.isGroup) return c.avatar;
-    return c.avatar; // Trong DB thật, avatar thường lưu ở cấp Conversation hoặc Member
+    return c
+        .avatar; // Trong DB thật, avatar thường lưu ở cấp Conversation hoặc Member
   }
 
   UserModel? _getOtherUser(ConversationModel c) {
     if (c.isGroup) return null;
     final uid = authService.userId;
-    final other = c.members.firstWhere((m) => m.userId != uid, orElse: () => c.members.first);
-    
+    final other = c.members.firstWhere(
+      (m) => m.userId != uid,
+      orElse: () => c.members.first,
+    );
+
     // Convert từ Member sang UserModel tạm thời để truyền sang màn hình Detail
     return UserModel(
       id: other.userId,
@@ -221,6 +232,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredConversations = _conversations.where((c) {
+      if (_query.isEmpty) return true;
+      return _getDisplayName(c).toLowerCase().contains(_query.toLowerCase());
+    }).toList();
+
     return Scaffold(
       backgroundColor: AppColors.bgDark,
       body: SafeArea(
@@ -231,49 +247,31 @@ class _ChatListScreenState extends State<ChatListScreen> {
             _buildSearch(),
 
             Expanded(
-              child: FutureBuilder<List<ConversationModel>>(
-                future: _conversationsFuture,
-                builder: (context, snapshot) {
-                  // Hiển thị loading
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator(color: AppColors.primary));
-                  }
+              child: _isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _loadConversations,
+                      color: AppColors.primary,
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          _buildAiCard(),
+                          _buildStoryRow(),
 
-                  // Hiển thị lỗi
-                  if (snapshot.hasError) {
-                    return Center(child: Text('Lỗi kết nối Server', style: TextStyle(color: AppColors.textSecondary)));
-                  }
+                          if (filteredConversations.isEmpty)
+                            _buildEmptyState()
+                          else
+                            ...filteredConversations.map(_buildConvTile),
 
-                  final allConvs = snapshot.data ?? [];
-                  _cacheKnownUsers(allConvs);
-                  
-                  // Lọc theo tìm kiếm
-                  final filteredList = allConvs.where((c) {
-                    if (_query.isEmpty) return true;
-                    return _getDisplayName(c).toLowerCase().contains(_query.toLowerCase());
-                  }).toList();
-
-                  return RefreshIndicator(
-                    onRefresh: () async => _loadConversations(),
-                    color: AppColors.primary,
-                    child: ListView(
-                      padding: EdgeInsets.zero,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        _buildAiCard(),
-                        _buildStoryRow(), // Giữ giao diện story (có thể tích hợp API sau)
-
-                        if (filteredList.isEmpty)
-                          _buildEmptyState()
-                        else
-                          ...filteredList.map(_buildConvTile),
-
-                        const SizedBox(height: 16),
-                      ],
+                          const SizedBox(height: 16),
+                        ],
+                      ),
                     ),
-                  );
-                },
-              ),
             ),
           ],
         ),
@@ -285,7 +283,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 40),
       child: Center(
-        child: Text('Chưa có cuộc trò chuyện nào', style: TextStyle(color: AppColors.textHint, fontSize: 13)),
+        child: Text(
+          'Chưa có cuộc trò chuyện nào',
+          style: TextStyle(color: AppColors.textHint, fontSize: 13),
+        ),
       ),
     );
   }
@@ -303,8 +304,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
             size: 36,
           ),
           const SizedBox(width: 12),
-          const Text('Tin nhắn',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary, fontFamily: 'Inter')),
+          const Text(
+            'Tin nhắn',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+              fontFamily: 'Inter',
+            ),
+          ),
           const Spacer(),
           _HeaderIconBtn(icon: Icons.search, onTap: () {}),
           const SizedBox(width: 4),
@@ -320,14 +328,30 @@ class _ChatListScreenState extends State<ChatListScreen> {
       child: TextField(
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _query = v),
-        style: const TextStyle(color: AppColors.textPrimary, fontFamily: 'Inter', fontSize: 14),
+        style: const TextStyle(
+          color: AppColors.textPrimary,
+          fontFamily: 'Inter',
+          fontSize: 14,
+        ),
         decoration: InputDecoration(
           hintText: 'Tìm kiếm cuộc trò chuyện...',
-          prefixIcon: const Icon(Icons.search, color: AppColors.textHint, size: 20),
+          prefixIcon: const Icon(
+            Icons.search,
+            color: AppColors.textHint,
+            size: 20,
+          ),
           suffixIcon: _query.isNotEmpty
               ? IconButton(
-                  icon: const Icon(Icons.clear, color: AppColors.textHint, size: 18),
-                  onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
+                  icon: const Icon(
+                    Icons.clear,
+                    color: AppColors.textHint,
+                    size: 18,
+                  ),
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    setState(() => _query = '');
+                  },
+                )
               : null,
         ),
       ),
@@ -387,7 +411,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF1A1A35), Color(0xFF1E2A4A)],
-          begin: Alignment.topLeft, end: Alignment.bottomRight,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.primary.withOpacity(0.25)),
@@ -395,21 +420,48 @@ class _ChatListScreenState extends State<ChatListScreen> {
       child: Row(
         children: [
           Container(
-            width: 44, height: 44,
-            decoration: BoxDecoration(gradient: AppColors.aiGradient, borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.auto_awesome, color: Colors.white, size: 22),
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              gradient: AppColors.aiGradient,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.auto_awesome,
+              color: Colors.white,
+              size: 22,
+            ),
           ),
           const SizedBox(width: 12),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Trợ lý AI', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white, fontFamily: 'Inter')),
-                Text('Hôm nay tôi có thể giúp gì cho bạn?', style: TextStyle(fontSize: 12, color: Colors.white70, fontFamily: 'Inter')),
+                Text(
+                  'Trợ lý AI',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                Text(
+                  'Hôm nay tôi có thể giúp gì cho bạn?',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white70,
+                    fontFamily: 'Inter',
+                  ),
+                ),
               ],
             ),
           ),
-          const Icon(Icons.chevron_right, color: AppColors.textSecondary, size: 20),
+          const Icon(
+            Icons.chevron_right,
+            color: AppColors.textSecondary,
+            size: 20,
+          ),
         ],
       ),
     );
@@ -424,24 +476,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final avatar = _getAvatar(c);
     final last = c.lastMessage;
     final uid = authService.userId ?? '';
-    final isMe = last?.senderId == uid;
     final otherUserId = _getOtherUserId(c);
     final isOnline = !c.isGroup && (_onlineStates[otherUserId] ?? false);
+    final bool hasUnread = c.unreadCount > 0;
+    final String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
+    final bool isMe = last != null && last.senderId == uid;
 
     return GestureDetector(
-      onTap: () => Navigator.push(context, MaterialPageRoute(
-        builder: (_) => ChatDetailScreen(
-          conversationId: c.id,
-          otherUser: _getOtherUser(c),
-          conversation: c,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatDetailScreen(
+            conversationId: c.id,
+            otherUser: _getOtherUser(c),
+            conversation: c,
+          ),
         ),
-      )),
+      ),
       onLongPress: () => _showContextMenu(c),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: c.unreadCount > 0 ? AppColors.bgCardLight : Colors.transparent,
+          color: hasUnread ? AppColors.bgCardLight : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
@@ -461,17 +518,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(name,
-                            style: TextStyle(
-                              fontSize: 15, fontFamily: 'Inter',
-                              fontWeight: c.unreadCount > 0 ? FontWeight.w700 : FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontFamily: 'Inter',
+                            fontWeight: hasUnread
+                                ? FontWeight.w700
+                                : FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       if (last != null)
-                        Text(du.DateUtils.formatChatTime(last.createdAt),
-                          style: TextStyle(fontSize: 12, color: AppColors.textHint, fontFamily: 'Inter')),
+                        Text(
+                          du.DateUtils.formatChatTime(last.createdAt),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textHint,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 3),
@@ -479,20 +548,42 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          last != null ? (isMe ? 'Bạn: ${last.content}' : last.content) : 'Bắt đầu cuộc trò chuyện',
+                          isMe ? 'Bạn: $lastContent' : lastContent,
                           style: TextStyle(
-                            fontSize: 13, fontFamily: 'Inter',
-                            color: c.unreadCount > 0 ? AppColors.textSecondary : AppColors.textHint,
-                            fontWeight: c.unreadCount > 0 ? FontWeight.w500 : FontWeight.w400,
+                            fontSize: 13,
+
+                            fontFamily: 'Inter',
+                            color: hasUnread
+                                ? AppColors.textSecondary
+                                : AppColors.textHint,
+                            fontWeight: !isMe
+                                ? FontWeight.w600
+                                : (hasUnread
+                                      ? FontWeight.w500
+                                      : FontWeight.w400),
                           ),
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (c.unreadCount > 0)
+                      if (hasUnread)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(10)),
-                          child: Text('${c.unreadCount}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${c.unreadCount}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -509,14 +600,33 @@ class _ChatListScreenState extends State<ChatListScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.bgCard,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (_) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(width: 36, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2))),
-          _MenuTile(Icons.push_pin_outlined, 'Ghim cuộc trò chuyện', AppColors.textPrimary, () => Navigator.pop(context)),
-          _MenuTile(Icons.delete_outline, 'Xoá cuộc trò chuyện', AppColors.error, () => Navigator.pop(context)),
+          Container(
+            width: 36,
+            height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          _MenuTile(
+            Icons.push_pin_outlined,
+            'Ghim cuộc trò chuyện',
+            AppColors.textPrimary,
+            () => Navigator.pop(context),
+          ),
+          _MenuTile(
+            Icons.delete_outline,
+            'Xoá cuộc trò chuyện',
+            AppColors.error,
+            () => Navigator.pop(context),
+          ),
           const SizedBox(height: 16),
         ],
       ),
@@ -528,15 +638,27 @@ class _HeaderIconBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final bool filled;
-  const _HeaderIconBtn({required this.icon, required this.onTap, this.filled = false});
+  const _HeaderIconBtn({
+    required this.icon,
+    required this.onTap,
+    this.filled = false,
+  });
 
   @override
   Widget build(BuildContext context) => GestureDetector(
     onTap: onTap,
     child: Container(
-      width: 36, height: 36,
-      decoration: BoxDecoration(color: filled ? AppColors.primary : AppColors.bgCard, shape: BoxShape.circle),
-      child: Icon(icon, color: filled ? Colors.white : AppColors.textSecondary, size: 20),
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: filled ? AppColors.primary : AppColors.bgCard,
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        icon,
+        color: filled ? Colors.white : AppColors.textSecondary,
+        size: 20,
+      ),
     ),
   );
 }
@@ -551,7 +673,15 @@ class _MenuTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListTile(
     leading: Icon(icon, color: color, size: 22),
-    title: Text(label, style: TextStyle(color: color, fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.w500)),
+    title: Text(
+      label,
+      style: TextStyle(
+        color: color,
+        fontFamily: 'Inter',
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
     onTap: onTap,
   );
 }

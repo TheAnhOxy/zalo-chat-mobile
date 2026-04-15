@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
 import 'auth_service.dart';
-import 'api_service.dart';
 
 enum CallState { idle, calling, incoming, connected, ended }
 
@@ -20,8 +19,11 @@ class CallService {
   MediaStream? _remoteStream;
   bool _hasRemoteDescription = false;
   CallState _state = CallState.idle;
+
   String? _currentCallId;
   String? _currentConversationId;
+
+  bool _isStartingCall = false; // ✅ chống gọi trùng
 
   CallState get state => _state;
   MediaStream? get localStream => _localStream;
@@ -44,9 +46,17 @@ class CallService {
     socketService.off('ice_candidate');
     socketService.off('call_ended');
     socketService.off('call_rejected');
+    socketService.off('call_created'); // ✅ thêm
 
     socketService.on('incoming_call', (data) {
       onIncomingCall?.call(Map<String, dynamic>.from(data as Map));
+    });
+
+    // ✅ nhận callId từ BE
+    socketService.on('call_created', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      _currentCallId = map['callId']?.toString();
+      dev.log('📞 Received callId: $_currentCallId');
     });
 
     socketService.on('call_answered', (data) async {
@@ -58,6 +68,7 @@ class CallService {
         );
         await _pc?.setRemoteDescription(answer);
         _hasRemoteDescription = true;
+
         for (final c in _remoteCandidatesQueue) {
           await _pc?.addCandidate(c);
         }
@@ -75,6 +86,7 @@ class CallService {
           map['sdpMid'],
           map['sdpMLineIndex'],
         );
+
         if (!_hasRemoteDescription) {
           _remoteCandidatesQueue.add(candidate);
         } else {
@@ -101,21 +113,20 @@ class CallService {
     required String calleeId,
     bool isVideo = false,
   }) async {
+    // ✅ chống spam / gọi 2 lần
+    if (_isStartingCall) return null;
+    _isStartingCall = true;
+
     try {
       _currentConversationId = conversationId;
+
       await _createPeerConnection(isVideo: isVideo);
       await _getLocalStream(isVideo: isVideo);
 
-      final callRecord = await apiService.createCall(
-        conversationId: conversationId,
-        callerId: authService.userId!,
-        participants: [calleeId],
-        type: isVideo ? 'VIDEO' : 'VOICE',
-      );
-      _currentCallId = callRecord['_id']?.toString();
-
       final offer = await _pc!.createOffer();
       await _pc!.setLocalDescription(offer);
+
+      // ❌ ĐÃ XOÁ createCall API ở đây
 
       socketService.emit('start_call', {
         'callDto': {
@@ -130,11 +141,13 @@ class CallService {
       });
 
       _setState(CallState.calling);
-      return _currentCallId;
+      return null;
     } catch (e) {
       dev.log('❌ startCall error: $e');
       _cleanUp();
       return null;
+    } finally {
+      _isStartingCall = false;
     }
   }
 
@@ -213,6 +226,7 @@ class CallService {
 
     _pc!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
+
       socketService.emit('ice_candidate', {
         'conversationId': _currentConversationId,
         'candidate': candidate.candidate,
@@ -238,6 +252,7 @@ class CallService {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
         onRemoteStream?.call(_remoteStream!);
+
         if (_state == CallState.calling) {
           _setState(CallState.connected);
         }
@@ -276,12 +291,16 @@ class CallService {
     _localStream?.getTracks().forEach((t) => t.stop());
     _localStream?.dispose();
     _localStream = null;
+
     _remoteStream?.dispose();
     _remoteStream = null;
+
     _pc?.close();
     _pc = null;
+
     _currentCallId = null;
     _currentConversationId = null;
+
     _state = CallState.idle;
     _hasRemoteDescription = false;
     _remoteCandidatesQueue.clear();
@@ -293,6 +312,7 @@ class CallService {
     socketService.off('ice_candidate');
     socketService.off('call_ended');
     socketService.off('call_rejected');
+    socketService.off('call_created');
     _cleanUp();
   }
 }
