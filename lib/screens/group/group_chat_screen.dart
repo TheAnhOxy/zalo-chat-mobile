@@ -39,9 +39,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Future<void> _openOptions() async {
     final updated = await Navigator.push<ApiGroupModel>(
       context,
-      MaterialPageRoute(
-        builder: (_) => GroupOptionsScreen(group: _group),
-      ),
+      MaterialPageRoute(builder: (_) => GroupOptionsScreen(group: _group)),
     );
     if (updated != null && mounted) {
       setState(() => _group = updated);
@@ -53,7 +51,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final memberCount = _group.members.length;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFDDE8F0),
+      backgroundColor: const Color(0xFFDCEDDC),
       body: SafeArea(
         child: Column(
           children: [
@@ -70,7 +68,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 child: ListView(
                   controller: _scrollCtrl,
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 12),
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
                   children: const [
                     // Placeholder — tích hợp socket/API ở đây
                     _EmptyChat(),
@@ -134,20 +134,29 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
           // Video call
           IconButton(
-            icon: const Icon(Icons.videocam_outlined,
-                color: Colors.white, size: 24),
+            icon: const Icon(
+              Icons.videocam_outlined,
+              color: Colors.white,
+              size: 24,
+            ),
             onPressed: () {},
           ),
           // Search
           IconButton(
-            icon: const Icon(Icons.search_rounded,
-                color: Colors.white, size: 22),
+            icon: const Icon(
+              Icons.search_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
             onPressed: () {},
           ),
           // Menu → GroupOptionsScreen
           IconButton(
-            icon: const Icon(Icons.format_list_bulleted_rounded,
-                color: Colors.white, size: 22),
+            icon: const Icon(
+              Icons.format_list_bulleted_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
             onPressed: _openOptions,
           ),
         ],
@@ -197,8 +206,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     color: AppColors.textHint,
                   ),
                   border: InputBorder.none,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 9,
+                  ),
                 ),
                 onChanged: (_) => setState(() {}),
               ),
@@ -210,18 +221,27 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           // More / emoji
           if (_textCtrl.text.isEmpty) ...[
             IconButton(
-              icon: const Icon(Icons.more_horiz_rounded,
-                  color: AppColors.textSecondary, size: 22),
+              icon: const Icon(
+                Icons.more_horiz_rounded,
+                color: AppColors.textSecondary,
+                size: 22,
+              ),
               onPressed: () {},
             ),
             IconButton(
-              icon: const Icon(Icons.mic_none_rounded,
-                  color: AppColors.textSecondary, size: 24),
+              icon: const Icon(
+                Icons.mic_none_rounded,
+                color: AppColors.textSecondary,
+                size: 24,
+              ),
               onPressed: () {},
             ),
             IconButton(
-              icon: const Icon(Icons.sentiment_satisfied_alt_outlined,
-                  color: AppColors.textSecondary, size: 24),
+              icon: const Icon(
+                Icons.sentiment_satisfied_alt_outlined,
+                color: AppColors.textSecondary,
+                size: 24,
+              ),
               onPressed: () {},
             ),
           ] else
@@ -234,8 +254,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   color: AppColors.primary,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.send_rounded,
-                    color: Colors.white, size: 18),
+                child: const Icon(
+                  Icons.send_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
               ),
             ),
         ],
@@ -305,8 +328,11 @@ class _EmptyChat extends StatelessWidget {
                 color: Colors.white.withOpacity(0.7),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.chat_bubble_outline_rounded,
-                  color: AppColors.primary, size: 30),
+              child: const Icon(
+                Icons.chat_bubble_outline_rounded,
+                color: AppColors.primary,
+                size: 30,
+              ),
             ),
             const SizedBox(height: 12),
             const Text(

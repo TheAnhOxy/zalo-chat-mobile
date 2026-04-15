@@ -287,7 +287,7 @@ Widget _buildCoverFallback() {
   return Container(
     decoration: const BoxDecoration(
       gradient: LinearGradient(
-        colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF334155)],
+        colors: [Color(0xFF1A3A1A), Color(0xFF1F4A1F), Color(0xFF2E662E)],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),

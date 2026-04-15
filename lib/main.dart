@@ -6,28 +6,28 @@ import 'services/auth_service.dart';
 import 'services/socket_service.dart'; // Import thêm SocketService
 import 'services/call_service.dart';
 
-void main() {
+Future<void> main() async {
   // 1. Đảm bảo các dịch vụ hệ thống của Flutter được khởi tạo
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 2. Đọc biến USER_TYPE từ lệnh run: --dart-define=USER_TYPE=2
-  const String userType = String.fromEnvironment('USER_TYPE', defaultValue: '1');
-  
-  // 3. Thực hiện đăng nhập giả lập
-  if (userType == '2') {
-    authService.loginAsUser2();
-  } else {
-    authService.loginAsUser1();
-  }
 
-  // 4. KÍCH HOẠT SOCKET REAL-TIME
-  // Ngay khi có userId từ authService, ta phải kết nối socket ngay lập tức
+  // 2. Khôi phục session đã lưu (nếu có) trước khi hiển thị UI
+  await authService.restoreSession();
+
+  // 3. Khi người dùng đăng nhập (mới hoặc khôi phục), kết nối socket & call service
+  authService.subscribe(() {
+    if (authService.isLoggedIn) {
+      socketService.connect(authService.userId!);
+      callService.init();
+    }
+  });
+
+  // Nếu session đã được khôi phục, kết nối ngay
   if (authService.isLoggedIn) {
     socketService.connect(authService.userId!);
     callService.init();
   }
 
-  // 5. Cấu hình giao diện thanh trạng thái (Status Bar)
+  // 4. Cấu hình giao diện thanh trạng thái (Status Bar)
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -48,7 +48,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       
-      // 6. Điều hướng dựa trên trạng thái đăng nhập
+      // 5. Vào thẳng main nếu session còn hợp lệ, ngược lại về login
       initialRoute: authService.isLoggedIn ? AppRouter.main : AppRouter.login,
       
       onGenerateRoute: AppRouter.generateRoute,

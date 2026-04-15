@@ -24,6 +24,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final Map<String, _ActiveUserItem> _knownUsers = {};
   final List<String> _activeUserOrder = [];
   List<ConversationModel> _conversations = [];
+  // cache profile (tên + avatar) của các user trong chat 1-1
+  final Map<String, UserModel> _userProfiles = {};
   bool _isLoading = true;
 
   @override
@@ -48,15 +50,45 @@ class _ChatListScreenState extends State<ChatListScreen> {
       });
       log('✅ Đã load ${_conversations.length} cuộc trò chuyện');
 
-      // 🔴 THÊM DÒNG NÀY: Tham gia socket room cho TẤT CẢ cuộc trò chuyện
-      // Để ở màn hình List vẫn nhận được thông báo khi có tin nhắn mới
       for (var conv in _conversations) {
         socketService.emit('join_conversation', {'conversationId': conv.id});
       }
+
+      // Fetch profile của user kia trong mỗi chat 1-1
+      _fetchUserProfiles(data);
     } catch (e) {
       log('❌ Lỗi load conversations: $e');
       setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _fetchUserProfiles(List<ConversationModel> convs) async {
+    final myId = authService.userId ?? '';
+    final ids = convs
+        .where((c) => !c.isGroup)
+        .map((c) {
+          final other = c.members.firstWhere(
+            (m) => m.userId != myId,
+            orElse: () => c.members.first,
+          );
+          return other.userId;
+        })
+        .where((id) => id.isNotEmpty && id != myId && !_userProfiles.containsKey(id))
+        .toSet()
+        .toList();
+
+    if (ids.isEmpty) return;
+
+    final futures = ids.map((id) => apiService.getUserById(id)).toList();
+    final results = await Future.wait(futures, eagerError: false);
+
+    final updated = <String, UserModel>{};
+    for (final u in results) {
+      if (u != null && u.id.isNotEmpty) updated[u.id] = u;
+    }
+
+    if (updated.isEmpty || !mounted) return;
+    setState(() => _userProfiles.addAll(updated));
   }
 
   // Socket listener - realtime
@@ -251,16 +283,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   // 2. Các hàm Helper để xử lý logic hiển thị dựa trên Model thật
-  String _getDisplayName(ConversationModel c) {
-    if (c.isGroup) return c.name ?? 'Nhóm';
-    final uid = authService.userId;
-    final other = c.members.firstWhere(
-      (m) => m.userId != uid,
-      orElse: () => c.members.first,
-    );
-    return other.nickname ?? other.name ?? 'Người dùng';
-  }
-
   String _getOtherUserId(ConversationModel c) {
     if (c.isGroup) return '';
     final uid = authService.userId;
@@ -269,6 +291,32 @@ class _ChatListScreenState extends State<ChatListScreen> {
       orElse: () => c.members.first,
     );
     return other.userId;
+  }
+
+  String _getDisplayName(ConversationModel c) {
+    if (c.isGroup) return c.name?.isNotEmpty == true ? c.name! : 'Nhóm';
+    final otherId = _getOtherUserId(c);
+    // Ưu tiên: profile đã fetch > nickname trong member > 'Người dùng'
+    final profile = _userProfiles[otherId];
+    if (profile != null && profile.fullName.isNotEmpty) return profile.fullName;
+    final uid = authService.userId;
+    final other = c.members.firstWhere(
+      (m) => m.userId != uid,
+      orElse: () => c.members.first,
+    );
+    return other.nickname?.isNotEmpty == true
+        ? other.nickname!
+        : other.name?.isNotEmpty == true
+            ? other.name!
+            : 'Người dùng';
+  }
+
+  String? _getAvatar(ConversationModel c) {
+    if (c.isGroup) return c.avatar?.isNotEmpty == true ? c.avatar : null;
+    final otherId = _getOtherUserId(c);
+    final profile = _userProfiles[otherId];
+    if (profile != null && profile.avatar.isNotEmpty) return profile.avatar;
+    return c.avatar?.isNotEmpty == true ? c.avatar : null;
   }
 
   void _cacheKnownUsers(List<ConversationModel> conversations) {
@@ -284,25 +332,26 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  String? _getAvatar(ConversationModel c) {
-    if (c.isGroup) return c.avatar;
-    return c
-        .avatar; // Trong DB thật, avatar thường lưu ở cấp Conversation hoặc Member
-  }
-
   UserModel? _getOtherUser(ConversationModel c) {
     if (c.isGroup) return null;
+    final otherId = _getOtherUserId(c);
+    final profile = _userProfiles[otherId];
+    if (profile != null) return profile;
+
     final uid = authService.userId;
     final other = c.members.firstWhere(
       (m) => m.userId != uid,
       orElse: () => c.members.first,
     );
-
-    // Convert từ Member sang UserModel tạm thời để truyền sang màn hình Detail
+    final name = other.nickname?.isNotEmpty == true
+        ? other.nickname!
+        : other.name?.isNotEmpty == true
+            ? other.name!
+            : 'Người dùng';
     return UserModel(
       id: other.userId,
-      fullName: other.nickname ?? 'Người dùng',
-      avatar: c.avatar ?? '',
+      fullName: name,
+      avatar: c.avatar?.isNotEmpty == true ? c.avatar! : '',
       phone: '',
     );
   }
@@ -487,7 +536,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF1A1A35), Color(0xFF1E2A4A)],
+          colors: [Color(0xFF1A3A1A), Color(0xFF1F4A1F)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

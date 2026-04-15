@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/image_utils.dart';
+import '../../data/models/models.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../navigation/app_router.dart';
@@ -205,6 +207,57 @@ class _FriendsTabState extends State<_FriendsTab> {
     });
   }
 
+  Future<void> _openChat(_ContactItem item) async {
+    final currentUserId = authService.userId ?? '';
+    if (currentUserId.isEmpty || item.id.isEmpty) return;
+
+    // Hiển thị loading nhẹ
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+
+    final conv = await ApiService().findOrCreateDirectConversation(
+      currentUserId: currentUserId,
+      targetUserId: item.id,
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context); // đóng loading
+
+    if (conv == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không thể mở cuộc trò chuyện')),
+      );
+      return;
+    }
+
+    final otherUser = UserModel(
+      id: item.id,
+      fullName: item.name.isNotEmpty ? item.name : 'Người dùng',
+      phone: item.phone,
+      avatar: item.avatarUrl ?? '',
+      gender: '',
+      status: const UserStatus(isOnline: false),
+      privacy: const UserPrivacy(),
+      isVerified: false,
+    );
+
+    Navigator.pushNamed(
+      context,
+      AppRouter.chatDetail,
+      arguments: {
+        'conversationId': conv.id,
+        'otherUser': otherUser,
+        'conversation': conv,
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_friends == null && _error == null) {
@@ -236,7 +289,7 @@ class _FriendsTabState extends State<_FriendsTab> {
           const SizedBox(height: 8),
           _QuickActionTile(
             icon: Icons.person_add_alt_rounded,
-            iconBg: const Color(0xFFE8F0FF),
+            iconBg: const Color(0xFFE8F5E9),
             iconColor: AppColors.primary,
             title: _pendingCount > 0
                 ? 'Lời mời kết bạn ($_pendingCount)'
@@ -292,6 +345,7 @@ class _FriendsTabState extends State<_FriendsTab> {
                     name: item.name,
                     avatarUrl: item.avatarUrl,
                     highlightQuery: q,
+                    onTap: () => _openChat(item),
                     onCall: () {},
                     onVideo: () {},
                     showDivider: i != section.items.length - 1,
@@ -471,7 +525,7 @@ class _GroupsTabState extends State<_GroupsTab> {
           const SizedBox(height: 8),
           _QuickActionTile(
             icon: Icons.group_add_rounded,
-            iconBg: const Color(0xFFE8F0FF),
+            iconBg: const Color(0xFFE8F5E9),
             iconColor: AppColors.primary,
             title: 'Tạo nhóm mới',
             onTap: () async {
@@ -663,7 +717,7 @@ class _ChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = active ? const Color(0xFFE8F0FF) : const Color(0xFFF3F4F6);
+    final bg = active ? const Color(0xFFE8F5E9) : const Color(0xFFF3F4F6);
     final fg = active ? AppColors.primary : AppColors.textSecondary;
     return InkWell(
       onTap: onTap,
@@ -983,6 +1037,7 @@ class _ContactRow extends StatelessWidget {
   final String name;
   final String? avatarUrl;
   final String highlightQuery;
+  final VoidCallback onTap;
   final VoidCallback onCall;
   final VoidCallback onVideo;
   final bool showDivider;
@@ -991,6 +1046,7 @@ class _ContactRow extends StatelessWidget {
     required this.name,
     required this.avatarUrl,
     this.highlightQuery = '',
+    required this.onTap,
     required this.onCall,
     required this.onVideo,
     required this.showDivider,
@@ -998,7 +1054,9 @@ class _ContactRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return InkWell(
+      onTap: onTap,
+      child: Container(
       color: AppColors.bgCard,
       child: Column(
         children: [
@@ -1040,6 +1098,7 @@ class _ContactRow extends StatelessWidget {
             ),
         ],
       ),
+    ),
     );
   }
 }
@@ -1137,7 +1196,7 @@ List<_ContactSection> _buildSections(List<ApiUserModel> users) {
   for (final u in users) {
     final letter = _groupLetter(u.fullName);
     (grouped[letter] ??= [])
-        .add(_ContactItem(name: u.fullName, avatarUrl: u.avatar, phone: u.phone));
+        .add(_ContactItem(id: u.id, name: u.fullName, avatarUrl: u.avatar, phone: u.phone));
   }
   final letters = grouped.keys.toList()..sort();
   return letters
@@ -1185,10 +1244,16 @@ class _ContactSection {
 }
 
 class _ContactItem {
+  final String id;
   final String name;
   final String? avatarUrl;
   final String phone;
-  const _ContactItem({required this.name, required this.avatarUrl, required this.phone});
+  const _ContactItem({
+    required this.id,
+    required this.name,
+    required this.avatarUrl,
+    required this.phone,
+  });
 }
 
 // ── ErrorView ─────────────────────────────────────────────────────────────────
