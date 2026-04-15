@@ -14,8 +14,8 @@ class ApiService {
     if (kIsWeb) {
       return 'http://localhost:8081'; // Web
     } else if (Platform.isAndroid) {
-      return 'http://192.168.1.218:8081';
-      // return 'http://10.0.2.2:8081'; // Android Emulator
+      // return 'http://192.168.1.218:8081'; 
+      return 'http://10.0.2.2:8081'; // Android Emulator
     } else {
       return 'http://localhost:8081'; // iOS / Desktop / Real Device (nếu dùng chung mạng)
     }

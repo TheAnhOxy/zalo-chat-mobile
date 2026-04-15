@@ -56,6 +56,7 @@ class ConversationMember {
   final String userId;
   final String role; // ADMIN | MODERATOR | MEMBER
   final String? nickname;
+  final String? name;
   final bool isMuted;
   final bool isPinned;
   final DateTime joinedAt;
@@ -64,6 +65,7 @@ class ConversationMember {
     required this.userId,
     this.role = 'MEMBER',
     this.nickname,
+    this.name,
     this.isMuted = false,
     this.isPinned = false,
     required this.joinedAt,

@@ -17,8 +17,8 @@ class SocketService {
     if (kIsWeb) {
       return 'http://localhost:8081';
     } else if (Platform.isAndroid) {
-      return 'http://10.82.187.187:8081'; // Thay bằng IP của máy host khi chạy trên Real máy
-      // return 'http://10.0.2.2:8081';
+      // return 'http://10.82.187.187:8081'; // Thay bằng IP của máy host khi chạy trên Real máy
+      return 'http://10.0.2.2:8081';
     } else {
       return 'http://localhost:8081';
     }

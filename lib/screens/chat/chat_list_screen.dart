@@ -258,7 +258,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       (m) => m.userId != uid,
       orElse: () => c.members.first,
     );
-    return other.nickname ?? 'Người dùng';
+    return other.nickname ?? other.name ?? 'Người dùng';
   }
 
   String _getOtherUserId(ConversationModel c) {

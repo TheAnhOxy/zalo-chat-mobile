@@ -10,7 +10,6 @@ class AuthService {
 
   // ── State ─────────────────────────────────────────────────────
   UserModel? _currentUser;
-
   String? _accessToken;
   String? _refreshToken;
   final List<AuthListener> _listeners = [];
