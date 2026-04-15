@@ -1,7 +1,6 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:flutter/foundation.dart';
 import 'dart:developer';
-import 'dart:io';
+import '../core/config/app_config.dart';
 
 class SocketService {
   static final SocketService _instance = SocketService._internal();
@@ -12,17 +11,7 @@ class SocketService {
 
   bool get isConnected => _socket?.connected ?? false;
 
-  // Lấy URL phù hợp với môi trường chạy
-  String get socketUrl {
-    if (kIsWeb) {
-      return 'http://localhost:8081';
-    } else if (Platform.isAndroid) {
-      // return 'http://10.82.187.187:8081'; // Thay bằng IP của máy host khi chạy trên Real máy
-      return 'http://172.20.10.13:8081';
-    } else {
-      return 'http://localhost:8081';
-    }
-  }
+  String get socketUrl => AppConfig.baseUrl;
 
   /// Khởi tạo kết nối với Server
   void connect(String userId) {

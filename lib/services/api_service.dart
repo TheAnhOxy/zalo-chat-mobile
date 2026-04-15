@@ -1,25 +1,15 @@
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import '../data/models/models.dart';
+import '../core/config/app_config.dart';
 import 'dart:developer';
-import 'package:flutter/foundation.dart';
-import 'dart:io';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
   ApiService._internal();
 
-  // Getter cho baseUrl động tùy theo nền tảng
-  String get baseUrl {
-    if (kIsWeb) {
-      return 'http://localhost:8081'; // Web
-    } else if (Platform.isAndroid) {
-      return 'http://172.20.10.13:8081'; 
-      // return 'http://10.0.2.2:8081'; // Android Emulator
-    } else {
-      return 'http://localhost:8081'; // iOS / Desktop / Real Device (nếu dùng chung mạng)
-    }
-  }
+  String get baseUrl => AppConfig.baseUrl;
 
   // Khởi tạo Dio với cấu hình cơ bản
   final Dio _dio = Dio(
@@ -57,7 +47,8 @@ class ApiService {
   static String _extractId(dynamic raw) {
     if (raw == null) return '';
     if (raw is String) return raw;
-    if (raw is Map) return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+    if (raw is Map)
+      return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
     return raw.toString();
   }
 
@@ -112,7 +103,8 @@ class ApiService {
         },
       );
       return ConversationModel.fromJson(
-          Map<String, dynamic>.from(response.data as Map));
+        Map<String, dynamic>.from(response.data as Map),
+      );
     } catch (e) {
       log('❌ findOrCreateDirectConversation: $e');
       return null;
@@ -123,17 +115,21 @@ class ApiService {
 
   /// Lấy lịch sử tin nhắn của một cuộc hội thoại
   /// [userId] là tham số bắt buộc để Backend lọc bỏ các tin nhắn người dùng đã nhấn "Xóa phía tôi"
-  Future<List<MessageModel>> getMessages(String conversationId, String userId) async {
+  Future<List<MessageModel>> getMessages(
+    String conversationId,
+    String userId,
+  ) async {
     try {
       final response = await _dio.get(
         '$baseUrl/messages/conversation/$conversationId',
         queryParameters: {
-          'userId': userId, // Truyền userId lên để Backend thực hiện lọc deletedBy
+          'userId':
+              userId, // Truyền userId lên để Backend thực hiện lọc deletedBy
           'limit': 50,
           'skip': 0,
         },
       );
-      
+
       final List data = response.data;
       return data.map((json) => MessageModel.fromJson(json)).toList();
     } catch (e) {
@@ -183,6 +179,7 @@ class ApiService {
       rethrow;
     }
   }
+
   /// Lấy presigned URL để upload trực tiếp lên S3
   /// Trả về map có key chuẩn hóa: `uploadUrl`, `fileUrl`
   Future<Map<String, dynamic>?> getPresignedUrl(
@@ -193,10 +190,7 @@ class ApiService {
       // ĐỔI THÀNH .get VÀ DÙNG queryParameters
       final response = await _dio.get(
         '$baseUrl/upload/presigned-url',
-        queryParameters: {
-          'fileName': fileName,
-          'contentType': contentType,
-        },
+        queryParameters: {'fileName': fileName, 'contentType': contentType},
       );
 
       final raw = response.data is Map<String, dynamic>
@@ -209,10 +203,7 @@ class ApiService {
 
       if (uploadUrl == null) return null;
 
-      return {
-        'uploadUrl': uploadUrl,
-        'fileUrl': fileUrl,
-      };
+      return {'uploadUrl': uploadUrl, 'fileUrl': fileUrl};
     } catch (e) {
       log('❌ Lỗi lấy Presigned URL: $e');
       return null;
@@ -240,7 +231,9 @@ class ApiService {
         ),
         onSendProgress: onSendProgress,
       );
-      return response.statusCode != null && response.statusCode! >= 200 && response.statusCode! < 300;
+      return response.statusCode != null &&
+          response.statusCode! >= 200 &&
+          response.statusCode! < 300;
     } catch (e) {
       log('❌ Lỗi PUT S3: $e');
       return false;

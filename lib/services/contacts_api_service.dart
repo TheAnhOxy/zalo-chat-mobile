@@ -2,19 +2,14 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import '../core/config/app_config.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ContactsApiService — Gọi backend tại http://localhost:8081
-//
-// Endpoints sử dụng:
-//   GET /friendships/user/:userId → danh sách friendship (filter ACCEPTED)
-//   GET /users/:id                → lấy thông tin từng user
-//   GET /conversations/member/:userId → filter type=GROUP → danh sách nhóm
+// ContactsApiService — URL lấy từ AppConfig.baseUrl (tự động theo platform)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ContactsApiService {
-  // static const String baseUrl = 'http://localhost:8081';
-  static const String baseUrl = 'http://172.20.10.13:8081';
+  static String get baseUrl => AppConfig.baseUrl;
   static ContactsApiService? _instance;
   static ContactsApiService get instance =>
       _instance ??= ContactsApiService._();
@@ -55,10 +50,12 @@ class ContactsApiService {
 
   static ApiGroupModel _parseGroup(Map<String, dynamic> j) {
     final members = (j['members'] as List? ?? [])
-        .map((m) => ApiGroupMember(
-              userId: _extractId(m['userId'] ?? m['_id']),
-              role: (m['role'] ?? 'MEMBER').toString(),
-            ))
+        .map(
+          (m) => ApiGroupMember(
+            userId: _extractId(m['userId'] ?? m['_id']),
+            role: (m['role'] ?? 'MEMBER').toString(),
+          ),
+        )
         .toList();
 
     final lm = j['lastMessage'] as Map<String, dynamic>?;
@@ -80,8 +77,7 @@ class ContactsApiService {
   // ── Fetch Friends ────────────────────────────────────────────────────────────
 
   /// Trả về danh sách User là bạn bè ACCEPTED của [userId].
-  Future<ContactsResult<List<ApiUserModel>>> fetchFriends(
-      String userId) async {
+  Future<ContactsResult<List<ApiUserModel>>> fetchFriends(String userId) async {
     try {
       // Bước 1: lấy danh sách friendship
       final fsRes = await _client
@@ -90,7 +86,8 @@ class ContactsApiService {
 
       if (fsRes.statusCode != 200) {
         return ContactsResult.error(
-            'Lỗi ${fsRes.statusCode}: Không thể tải danh sách bạn bè');
+          'Lỗi ${fsRes.statusCode}: Không thể tải danh sách bạn bè',
+        );
       }
 
       final List<dynamic> fsJson = jsonDecode(fsRes.body) as List;
@@ -110,9 +107,11 @@ class ContactsApiService {
 
       // Bước 3: lấy thông tin từng user song song
       final futures = accepted
-          .map((id) => _client
-              .get(Uri.parse('$baseUrl/users/$id'))
-              .timeout(const Duration(seconds: 10)))
+          .map(
+            (id) => _client
+                .get(Uri.parse('$baseUrl/users/$id'))
+                .timeout(const Duration(seconds: 10)),
+          )
           .toList();
 
       final responses = await Future.wait(futures, eagerError: false);
@@ -135,8 +134,7 @@ class ContactsApiService {
   // ── Fetch Groups ─────────────────────────────────────────────────────────────
 
   /// Trả về danh sách nhóm (type=GROUP) mà [userId] là thành viên.
-  Future<ContactsResult<List<ApiGroupModel>>> fetchGroups(
-      String userId) async {
+  Future<ContactsResult<List<ApiGroupModel>>> fetchGroups(String userId) async {
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/conversations/member/$userId'))
@@ -144,7 +142,8 @@ class ContactsApiService {
 
       if (res.statusCode != 200) {
         return ContactsResult.error(
-            'Lỗi ${res.statusCode}: Không thể tải danh sách nhóm');
+          'Lỗi ${res.statusCode}: Không thể tải danh sách nhóm',
+        );
       }
 
       final List<dynamic> json = jsonDecode(res.body) as List;
@@ -170,7 +169,9 @@ class ContactsApiService {
           .get(Uri.parse('$baseUrl/users/phone/$normalized'))
           .timeout(const Duration(seconds: 10));
 
-      if (res.statusCode == 404 || res.body == 'null' || res.body.trim() == 'null') {
+      if (res.statusCode == 404 ||
+          res.body == 'null' ||
+          res.body.trim() == 'null') {
         return const ContactsResult.success(null);
       }
 
@@ -197,9 +198,11 @@ class ContactsApiService {
       if (res.statusCode != 200) return 0;
       final List<dynamic> list = jsonDecode(res.body) as List;
       return list
-          .where((f) =>
-              f['status'] == 'PENDING' &&
-              _extractId(f['addresseeId']) == userId)
+          .where(
+            (f) =>
+                f['status'] == 'PENDING' &&
+                _extractId(f['addresseeId']) == userId,
+          )
           .length;
     } catch (_) {
       return 0;
@@ -210,18 +213,22 @@ class ContactsApiService {
 
   /// Lời mời kết bạn ĐÃ NHẬN (PENDING, addresseeId == userId).
   Future<ContactsResult<List<ApiFriendRequest>>> fetchReceivedRequests(
-      String userId) async {
+    String userId,
+  ) async {
     return _fetchRequests(userId, received: true);
   }
 
   /// Lời mời kết bạn ĐÃ GỬI (PENDING, requesterId == userId).
   Future<ContactsResult<List<ApiFriendRequest>>> fetchSentRequests(
-      String userId) async {
+    String userId,
+  ) async {
     return _fetchRequests(userId, received: false);
   }
 
   Future<ContactsResult<List<ApiFriendRequest>>> _fetchRequests(
-      String userId, {required bool received}) async {
+    String userId, {
+    required bool received,
+  }) async {
     try {
       final fsRes = await _client
           .get(Uri.parse('$baseUrl/friendships/user/$userId'))
@@ -268,7 +275,9 @@ class ContactsApiService {
         if (res.statusCode == 200) {
           user = _parseUser(jsonDecode(res.body) as Map<String, dynamic>);
         } else {
-          dev.log('[FR] profile not found for $otherId (${res.statusCode}), using fallback');
+          dev.log(
+            '[FR] profile not found for $otherId (${res.statusCode}), using fallback',
+          );
           user = ApiUserModel(
             id: otherId,
             fullName: 'Người dùng',
@@ -282,11 +291,13 @@ class ContactsApiService {
             ? DateTime.tryParse(f['createdAt'].toString()) ?? DateTime.now()
             : DateTime.now();
 
-        requests.add(ApiFriendRequest(
-          friendshipId: _extractId(f['_id'] ?? f['id']),
-          user: user,
-          createdAt: createdAt,
-        ));
+        requests.add(
+          ApiFriendRequest(
+            friendshipId: _extractId(f['_id'] ?? f['id']),
+            user: user,
+            createdAt: createdAt,
+          ),
+        );
       }
 
       requests.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -313,7 +324,7 @@ class ContactsApiService {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'requesterId': requesterId,
-              'addresseeId': receiverId,   // backend field name
+              'addresseeId': receiverId, // backend field name
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -352,7 +363,8 @@ class ContactsApiService {
     }
   }
 
-  Future<bool> cancelSentRequest(String friendshipId) => rejectFriendRequest(friendshipId);
+  Future<bool> cancelSentRequest(String friendshipId) =>
+      rejectFriendRequest(friendshipId);
 
   // ── Privacy: findByPhone ──────────────────────────────────────────────────────
 
@@ -393,7 +405,8 @@ class ContactsApiService {
 
   /// Lấy danh sách người dùng gần đây (từ conversation PRIVATE), sắp xếp theo thời gian.
   Future<ContactsResult<List<RecentContact>>> fetchRecentContacts(
-      String userId) async {
+    String userId,
+  ) async {
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/conversations/member/$userId'))
@@ -406,9 +419,11 @@ class ContactsApiService {
       final List<dynamic> json = jsonDecode(res.body) as List;
       final privates = json.where((c) => c['type'] == 'PRIVATE').toList();
       privates.sort((a, b) {
-        final ta = DateTime.tryParse((a['updatedAt'] ?? '').toString()) ??
+        final ta =
+            DateTime.tryParse((a['updatedAt'] ?? '').toString()) ??
             DateTime(2000);
-        final tb = DateTime.tryParse((b['updatedAt'] ?? '').toString()) ??
+        final tb =
+            DateTime.tryParse((b['updatedAt'] ?? '').toString()) ??
             DateTime(2000);
         return tb.compareTo(ta);
       });
@@ -429,8 +444,7 @@ class ContactsApiService {
             .timeout(const Duration(seconds: 8));
         if (uRes.statusCode != 200) continue;
 
-        final user =
-            _parseUser(jsonDecode(uRes.body) as Map<String, dynamic>);
+        final user = _parseUser(jsonDecode(uRes.body) as Map<String, dynamic>);
         final lastAt = c['updatedAt'] != null
             ? DateTime.tryParse(c['updatedAt'].toString())
             : null;
@@ -456,17 +470,23 @@ class ContactsApiService {
   }) async {
     dev.log('[Upload] Gửi $fileName (${bytes.length} bytes) lên backend...');
 
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/conversations/avatar/upload'),
-    )..files.add(http.MultipartFile.fromBytes(
-        'file',
-        bytes,
-        filename: fileName,
-        contentType: MediaType.parse(mimeType),
-      ));
+    final request =
+        http.MultipartRequest(
+            'POST',
+            Uri.parse('$baseUrl/conversations/avatar/upload'),
+          )
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              bytes,
+              filename: fileName,
+              contentType: MediaType.parse(mimeType),
+            ),
+          );
 
-    final streamedRes = await request.send().timeout(const Duration(seconds: 30));
+    final streamedRes = await request.send().timeout(
+      const Duration(seconds: 30),
+    );
     final res = await http.Response.fromStream(streamedRes);
 
     dev.log('[Upload] Response: ${res.statusCode} ${res.body}');
@@ -494,10 +514,12 @@ class ContactsApiService {
   }) async {
     try {
       final members = memberIds
-          .map((id) => {
-                'userId': id,
-                'role': id == creatorId ? 'ADMIN' : 'MEMBER',
-              })
+          .map(
+            (id) => {
+              'userId': id,
+              'role': id == creatorId ? 'ADMIN' : 'MEMBER',
+            },
+          )
           .toList();
 
       final payload = <String, dynamic>{
@@ -521,8 +543,7 @@ class ContactsApiService {
         return ContactsResult.success(_parseGroup(data));
       }
 
-      return ContactsResult.error(
-          'Lỗi ${res.statusCode}: Không thể tạo nhóm');
+      return ContactsResult.error('Lỗi ${res.statusCode}: Không thể tạo nhóm');
     } catch (e) {
       return ContactsResult.error('Không kết nối được backend: $e');
     }
@@ -532,7 +553,8 @@ class ContactsApiService {
 
   /// Lấy tất cả user (trừ mình) có dob, dùng cho màn hình Sinh nhật.
   Future<ContactsResult<List<ApiUserModel>>> fetchBirthdayContacts(
-      String currentUserId) async {
+    String currentUserId,
+  ) async {
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/users'))
@@ -562,12 +584,8 @@ class ContactsResult<T> {
   final String? error;
   bool get isSuccess => error == null;
 
-  const ContactsResult.success(T d)
-      : data = d,
-        error = null;
-  const ContactsResult.error(String e)
-      : error = e,
-        data = null;
+  const ContactsResult.success(T d) : data = d, error = null;
+  const ContactsResult.error(String e) : error = e, data = null;
 }
 
 // ── Data models ───────────────────────────────────────────────────────────────

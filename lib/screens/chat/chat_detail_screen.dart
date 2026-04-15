@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/utils/thumbnail_helper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
@@ -837,14 +838,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     return fileName.substring(dot + 1).toLowerCase();
   }
 
-  Future<Uint8List?> _loadDefaultVideoThumbnailBytes() async {
-    try {
-      final data = await rootBundle.load('lib/widgets/thumbnail/thumbnail.jpg');
-      return data.buffer.asUint8List();
-    } catch (e) {
-      log('❌ Không đọc được thumbnail mặc định: $e');
-      return null;
+  /// Tạo thumbnail từ video thực.
+  /// Web  → dart:html canvas (thumbnail_helper_web.dart)
+  /// Mobile → video_thumbnail package (thumbnail_helper_io.dart)
+  Future<Uint8List?> _generateVideoThumbnail(
+    String videoPath,
+    Uint8List videoBytes,
+  ) async {
+    log('🎞 [Thumbnail] Generating... path=$videoPath');
+    final bytes = await generateVideoThumbnail(videoPath, videoBytes);
+    if (bytes != null) {
+      log('✅ [Thumbnail] OK (${bytes.length} bytes)');
+    } else {
+      log('⚠️ [Thumbnail] null – sẽ gửi video không có thumbnail');
     }
+    return bytes;
   }
 
   Future<void> _pickAndSendVideo() async {
@@ -863,39 +871,43 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         _uploadProgress = 0;
       });
 
-      final thumbnailBytes = await _loadDefaultVideoThumbnailBytes();
-      if (thumbnailBytes == null || thumbnailBytes.isEmpty) {
-        throw Exception('Không tải được thumbnail mặc định');
-      }
-
       final now = DateTime.now().millisecondsSinceEpoch;
-      final thumbnailFileName = 'video_thumb_$now.png';
       final videoExt = _safeFileExtension(picked.name, fallback: 'mp4');
       final videoFileName = picked.name.isNotEmpty
           ? picked.name
           : 'video_$now.$videoExt';
 
-      final thumbnailUrl = await apiService.uploadFileAndGetUrl(
-        fileName: thumbnailFileName,
-        bytes: thumbnailBytes,
-        contentType: 'image/png',
-        onSendProgress: (sent, total) {
-          if (!mounted || total <= 0) return;
-          setState(() => _uploadProgress = (sent / total) * 0.35);
-        },
-      );
-      if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
-        throw Exception('Upload thumbnail mặc định thất bại');
+      // Tạo thumbnail từ video thực (web dùng canvas, mobile dùng video_thumbnail)
+      final thumbnailBytes = await _generateVideoThumbnail(picked.path, videoBytes);
+
+      // Upload thumbnail nếu có
+      String? thumbnailUrl;
+      if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+        final thumbnailFileName = 'video_thumb_$now.jpg';
+        thumbnailUrl = await apiService.uploadFileAndGetUrl(
+          fileName: thumbnailFileName,
+          bytes: thumbnailBytes,
+          contentType: 'image/jpeg',
+          onSendProgress: (sent, total) {
+            if (!mounted || total <= 0) return;
+            setState(() => _uploadProgress = (sent / total) * 0.3);
+          },
+        );
+        log('📸 Thumbnail URL: $thumbnailUrl');
+      } else {
+        log('ℹ️ Không có thumbnail, tiếp tục upload video...');
       }
 
+      // Upload video (chiếm 70% progress nếu có thumbnail, 100% nếu không)
+      final videoProgressStart = thumbnailUrl != null ? 0.3 : 0.0;
       final videoUrl = await apiService.uploadFileAndGetUrl(
         fileName: videoFileName,
         bytes: videoBytes,
         contentType: 'video/mp4',
         onSendProgress: (sent, total) {
           if (!mounted || total <= 0) return;
-          final pct = sent / total;
-          setState(() => _uploadProgress = 0.35 + (pct * 0.65));
+          setState(() =>
+              _uploadProgress = videoProgressStart + (sent / total) * (1 - videoProgressStart));
         },
       );
       if (videoUrl == null || videoUrl.isEmpty) {
@@ -911,8 +923,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         'metadata': {
           'fileName': videoFileName,
           'fileSize': videoBytes.length,
-          'thumbnailUrl': thumbnailUrl,
-          'thumbnail': thumbnailUrl,
+          if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+          if (thumbnailUrl != null) 'thumbnail': thumbnailUrl,
         },
       });
 
@@ -2186,7 +2198,8 @@ class _MessageBubble extends StatelessWidget {
         child: Hero(tag: 'image_${msg.id}', child: imageContent),
       );
     } else if (msg.type == 'VIDEO') {
-      final thumbnailUrl = msg.metadata?.thumbnailUrl ?? msg.metadata?.thumbnail;
+      final thumbnailUrl =
+          msg.metadata?.thumbnailUrl ?? msg.metadata?.thumbnail;
       final title = msg.metadata?.fileName ?? 'Video';
       final videoContent = Stack(
         alignment: Alignment.center,
@@ -2247,12 +2260,7 @@ class _MessageBubble extends StatelessWidget {
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 fontFamily: 'Inter',
-                shadows: [
-                  Shadow(
-                    color: Colors.black54,
-                    blurRadius: 6,
-                  ),
-                ],
+                shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -2260,10 +2268,7 @@ class _MessageBubble extends StatelessWidget {
           ),
         ],
       );
-      content = GestureDetector(
-        onTap: onVideoTap,
-        child: videoContent,
-      );
+      content = GestureDetector(onTap: onVideoTap, child: videoContent);
     } else if (msg.type == 'FILE') {
       final fileName =
           msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
@@ -2330,7 +2335,7 @@ class _MessageBubble extends StatelessWidget {
     }
 
     return Container(
-        padding: msg.isImage || msg.type == 'VIDEO'
+      padding: msg.isImage || msg.type == 'VIDEO'
           ? EdgeInsets.zero
           : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
