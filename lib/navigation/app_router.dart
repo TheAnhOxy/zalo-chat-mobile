@@ -8,12 +8,19 @@ import '../data/models/models.dart';
 import '../navigation/main_navigator.dart';
 import '../screens/auth/register_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
+import '../widgets/call/incoming_call_overlay.dart';
+
 import '../screens/auth/otp_verify_screen.dart';
 import '../screens/auth/post_login_security_screen.dart';
 import '../screens/setting/account_security_screen.dart';
 import '../screens/setting/device_sessions_screen.dart';
 import '../screens/setting/edit_profile_screen.dart';
 import '../screens/setting/privacy_screen.dart';
+import '../screens/contacts/add_friend_screen.dart';
+import '../screens/contacts/found_user_screen.dart';
+import '../screens/contacts/friend_requests_screen.dart';
+import '../screens/contacts/birthday_screen.dart';
+import '../services/contacts_api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppRouter — Tập trung tất cả route vào 1 chỗ
@@ -46,6 +53,10 @@ class AppRouter {
   static const String deviceSessions = '/settings/device-sessions';
   static const String editProfile = '/settings/edit-profile';
   static const String privacy = '/settings/privacy';
+  static const String addFriend = '/contacts/add-friend';
+  static const String foundUser = '/contacts/found-user';
+  static const String friendRequests = '/contacts/friend-requests';
+  static const String birthday = '/contacts/birthday';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -80,9 +91,22 @@ class AppRouter {
       case privacy:
         return _fade(const PrivacyScreen());
 
+      case addFriend:
+        return _slide(const AddFriendScreen());
+
+      case foundUser:
+        final user = settings.arguments as ApiUserModel;
+        return _slide(FoundUserScreen(user: user));
+
+      case friendRequests:
+        return _slide(const FriendRequestsScreen());
+
+      case birthday:
+        return _slide(const BirthdayScreen());
+
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:
-        return _fade(const MainNavigator());
+        return _fade(IncomingCallListener(child: const MainNavigator()));
 
       // ── Chat 1-1 ──────────────────────────────────────────────
       case chatDetail:
