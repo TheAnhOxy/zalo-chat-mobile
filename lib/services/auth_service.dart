@@ -43,8 +43,10 @@ class AuthService {
       avatar: 'https://i.pravatar.cc/150?img=11',
       status: UserStatus(isOnline: true),
     );
-    _accessToken = 'fake-jwt-user1';
-    _refreshToken = 'fake-refresh-user1';
+    // Quick login only sets local user (no real JWT).
+    // Social features (Add Friend v1) require a real token from backend login.
+    _accessToken = null;
+    _refreshToken = null;
     _notify();
   }
 
@@ -56,8 +58,8 @@ class AuthService {
       avatar: 'https://i.pravatar.cc/150?img=5',
       status: UserStatus(isOnline: true),
     );
-    _accessToken = 'fake-jwt-user2';
-    _refreshToken = 'fake-refresh-user2';
+    _accessToken = null;
+    _refreshToken = null;
     _notify();
   }
 

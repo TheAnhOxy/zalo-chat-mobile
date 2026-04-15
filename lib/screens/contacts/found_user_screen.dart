@@ -1,15 +1,121 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../services/social_api_service.dart';
 
-class FoundUserScreen extends StatelessWidget {
+class FoundUserScreen extends StatefulWidget {
   final ApiUserModel user;
 
   const FoundUserScreen({super.key, required this.user});
 
   @override
+  State<FoundUserScreen> createState() => _FoundUserScreenState();
+}
+
+class _FoundUserScreenState extends State<FoundUserScreen> {
+  bool _loadingRelationship = true;
+  bool _processing = false;
+  String _status = 'none';
+  String? _friendshipId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRelationship();
+  }
+
+  Future<void> _loadRelationship() async {
+    setState(() => _loadingRelationship = true);
+    try {
+      final rel = await SocialApiService.instance.getRelationship(widget.user.id);
+      if (!mounted) return;
+      setState(() {
+        _status = rel['status']?.toString() ?? 'none';
+        _friendshipId = rel['friendshipId']?.toString();
+        _loadingRelationship = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _status = 'none';
+        _friendshipId = null;
+        _loadingRelationship = false;
+      });
+    }
+  }
+
+  Future<void> _sendRequest() async {
+    if (widget.user.id == authService.userId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không thể gửi lời mời cho chính bạn'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    setState(() => _processing = true);
+    final ok = await SocialApiService.instance.sendFriendRequest(widget.user.id);
+    if (!mounted) return;
+    setState(() => _processing = false);
+    if (ok) {
+      await _loadRelationship();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đã gửi lời mời kết bạn'), duration: Duration(seconds: 2)),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            SocialApiService.instance.lastError ?? 'Không thể gửi lời mời',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _cancelRequest() async {
+    final id = _friendshipId;
+    if (id == null || id.isEmpty) return;
+    setState(() => _processing = true);
+    final ok = await SocialApiService.instance.cancelRequest(id);
+    if (!mounted) return;
+    setState(() => _processing = false);
+    if (ok) {
+      await _loadRelationship();
+    }
+  }
+
+  Future<void> _acceptRequest() async {
+    final id = _friendshipId;
+    if (id == null || id.isEmpty) return;
+    setState(() => _processing = true);
+    final ok = await SocialApiService.instance.acceptRequest(id);
+    if (!mounted) return;
+    setState(() => _processing = false);
+    if (ok) {
+      await _loadRelationship();
+    }
+  }
+
+  Future<void> _declineRequest() async {
+    final id = _friendshipId;
+    if (id == null || id.isEmpty) return;
+    setState(() => _processing = true);
+    final ok = await SocialApiService.instance.declineRequest(id);
+    if (!mounted) return;
+    setState(() => _processing = false);
+    if (ok) {
+      await _loadRelationship();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final user = widget.user;
     return Scaffold(
       backgroundColor: AppColors.bgDark,
       body: Stack(
@@ -121,19 +227,7 @@ class FoundUserScreen extends StatelessWidget {
                               ),
                               const SizedBox(width: 12),
                               // Kết bạn
-                              _IconActionButton(
-                                icon: Icons.person_add_alt_1_outlined,
-                                onTap: () async {
-                                  final ok = await SocialApiService.instance.sendFriendRequest(user.id);
-                                  // ignore: use_build_context_synchronously
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(ok ? 'Đã gửi lời mời kết bạn' : 'Không thể gửi lời mời'),
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                },
-                              ),
+                              _buildRightAction(),
                             ],
                           ),
                         ),
@@ -197,7 +291,7 @@ class FoundUserScreen extends StatelessWidget {
         color: AppColors.primaryLight,
         child: Center(
           child: Text(
-            _initials(user.fullName),
+            _initials(widget.user.fullName),
             style: const TextStyle(
               fontFamily: 'Inter',
               fontSize: 28,
@@ -213,6 +307,64 @@ class FoundUserScreen extends StatelessWidget {
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+
+  Widget _buildRightAction() {
+    if (_loadingRelationship || _processing) {
+      return const SizedBox(
+        width: 44,
+        height: 44,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (_status == 'friends') {
+      return _IconActionButton(
+        icon: Icons.check_circle_outline,
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Hai bạn đã là bạn bè'), duration: Duration(seconds: 2)),
+          );
+        },
+      );
+    }
+
+    if (_status == 'pending_out') {
+      return _IconActionButton(
+        icon: Icons.hourglass_top_rounded,
+        onTap: _cancelRequest,
+      );
+    }
+
+    if (_status == 'pending_in') {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _IconActionButton(icon: Icons.close_rounded, onTap: _declineRequest),
+          const SizedBox(width: 8),
+          _IconActionButton(icon: Icons.check_rounded, onTap: _acceptRequest),
+        ],
+      );
+    }
+
+    if (_status == 'blocked' || _status == 'blocked_by_other') {
+      return _IconActionButton(
+        icon: Icons.block,
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Không thể kết bạn do bị chặn'), duration: Duration(seconds: 2)),
+          );
+        },
+      );
+    }
+
+    return _IconActionButton(icon: Icons.person_add_alt_1_outlined, onTap: _sendRequest);
   }
 }
 

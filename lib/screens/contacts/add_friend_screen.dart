@@ -363,11 +363,26 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                               ),
                               trailing: TextButton(
                                 onPressed: () async {
+                                  if (u.id == authService.userId) {
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Không thể gửi lời mời cho chính bạn'),
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   final ok = await SocialApiService.instance.sendFriendRequest(u.id);
                                   if (!mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text(ok ? 'Đã gửi lời mời' : 'Gửi lời mời thất bại'),
+                                      content: Text(
+                                        ok
+                                            ? 'Đã gửi lời mời'
+                                            : (SocialApiService.instance.lastError ??
+                                                'Gửi lời mời thất bại'),
+                                      ),
                                       duration: const Duration(seconds: 2),
                                     ),
                                   );

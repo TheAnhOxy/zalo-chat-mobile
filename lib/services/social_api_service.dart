@@ -8,6 +8,8 @@ import 'api_service.dart';
 class SocialApiService {
   SocialApiService._();
   static final SocialApiService instance = SocialApiService._();
+  String? _lastError;
+  String? get lastError => _lastError;
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -47,11 +49,21 @@ class SocialApiService {
     }
   }
 
-  Future<List<ApiUserModel>> searchUsers(String q, {int limit = 20, String? cursor}) async {
+  Future<List<ApiUserModel>> searchUsers(
+    String q, {
+    int limit = 20,
+    String? cursor,
+    bool includeRelated = false,
+  }) async {
     try {
       final res = await _dio.get(
         '$_baseUrl/v1/search/users',
-        queryParameters: {'q': q, 'limit': limit, if (cursor != null) 'cursor': cursor},
+        queryParameters: {
+          'q': q,
+          'limit': limit,
+          if (cursor != null) 'cursor': cursor,
+          if (includeRelated) 'includeRelated': true,
+        },
         options: _authOptions(),
       );
       final items = (res.data as Map)['items'] as List? ?? [];
@@ -65,6 +77,7 @@ class SocialApiService {
   }
 
   Future<bool> sendFriendRequest(String targetUserId) async {
+    _lastError = null;
     try {
       await _dio.post(
         '$_baseUrl/v1/friend-requests',
@@ -73,6 +86,25 @@ class SocialApiService {
       );
       return true;
     } catch (e) {
+      if (e is DioException) {
+        final data = e.response?.data;
+        if (data is Map) {
+          final message = data['message']?.toString();
+          if (message != null && message.trim().isNotEmpty) {
+            _lastError = message.trim();
+          } else if (data['error'] is Map) {
+            final nestedMessage =
+                (data['error'] as Map)['message']?.toString();
+            if (nestedMessage != null && nestedMessage.trim().isNotEmpty) {
+              _lastError = nestedMessage.trim();
+            }
+          }
+        }
+        _lastError ??=
+            'Lỗi ${e.response?.statusCode ?? ''}: không gửi được lời mời';
+      } else {
+        _lastError = e.toString();
+      }
       dev.log('❌ sendFriendRequest: $e');
       return false;
     }
@@ -172,6 +204,14 @@ class SocialApiService {
       dev.log('❌ relationship: $e');
       return 'none';
     }
+  }
+
+  Future<Map<String, dynamic>> getRelationship(String otherUserId) async {
+    final res = await _dio.get(
+      '$_baseUrl/v1/relationships/$otherUserId',
+      options: _authOptions(),
+    );
+    return Map<String, dynamic>.from(res.data as Map);
   }
 
   Future<List<ApiUserModel>> getMutualFriends(String otherUserId, {int limit = 20, String? cursor}) async {

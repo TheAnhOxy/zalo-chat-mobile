@@ -17,6 +17,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const bool _showFakeLogin =
+      bool.fromEnvironment('USE_FAKE_LOGIN', defaultValue: false);
   final _phoneCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _obscure = true;
@@ -209,40 +211,42 @@ class _LoginScreenState extends State<LoginScreen> {
                       onTap: _login,
                       loading: _loading,
                     ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Expanded(child: Divider(color: AppColors.divider)),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Text(
-                            'ĐĂNG NHẬP NHANH',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textHint.withValues(alpha: 0.75),
-                              fontFamily: 'Inter',
-                              letterSpacing: 0.7,
+                    if (_showFakeLogin) ...[
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          const Expanded(child: Divider(color: AppColors.divider)),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            child: Text(
+                              'ĐĂNG NHẬP NHANH (DEV)',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textHint.withValues(alpha: 0.75),
+                                fontFamily: 'Inter',
+                                letterSpacing: 0.7,
+                              ),
                             ),
                           ),
-                        ),
-                        const Expanded(child: Divider(color: AppColors.divider)),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _QuickLoginButton(
-                      onTap: () {
-                        authService.loginAsUser2();
-                        showTopNotice(
-                          context,
-                          message: 'Đã đăng nhập nhanh bằng User 2 (fake).',
-                        );
-                        Navigator.pushNamedAndRemoveUntil(
-                          context,
-                          AppRouter.main,
-                          (route) => false,
-                        );
-                      },
-                    ),
+                          const Expanded(child: Divider(color: AppColors.divider)),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      _QuickLoginButton(
+                        onTap: () {
+                          authService.loginAsUser2();
+                          showTopNotice(
+                            context,
+                            message: 'Đã đăng nhập nhanh bằng User 2 (fake).',
+                          );
+                          Navigator.pushNamedAndRemoveUntil(
+                            context,
+                            AppRouter.main,
+                            (route) => false,
+                          );
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),

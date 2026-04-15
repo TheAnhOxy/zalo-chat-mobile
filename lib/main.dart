@@ -9,20 +9,25 @@ import 'services/call_service.dart';
 void main() {
   // 1. Đảm bảo các dịch vụ hệ thống của Flutter được khởi tạo
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 2. Đọc biến USER_TYPE từ lệnh run: --dart-define=USER_TYPE=2
-  const String userType = String.fromEnvironment('USER_TYPE', defaultValue: '1');
-  
-  // 3. Thực hiện đăng nhập giả lập
-  if (userType == '2') {
-    authService.loginAsUser2();
-  } else {
-    authService.loginAsUser1();
+
+  // 2. Chỉ bật fake login khi chủ động dùng cờ dev.
+  const bool useFakeLogin =
+      bool.fromEnvironment('USE_FAKE_LOGIN', defaultValue: false);
+  if (useFakeLogin) {
+    const String userType = String.fromEnvironment(
+      'USER_TYPE',
+      defaultValue: '1',
+    );
+    if (userType == '2') {
+      authService.loginAsUser2();
+    } else {
+      authService.loginAsUser1();
+    }
   }
 
   // 4. KÍCH HOẠT SOCKET REAL-TIME
   // Ngay khi có userId từ authService, ta phải kết nối socket ngay lập tức
-  if (authService.isLoggedIn) {
+  if (authService.isLoggedIn && authService.accessToken != null) {
     socketService.connect(authService.userId!);
     callService.init();
   }

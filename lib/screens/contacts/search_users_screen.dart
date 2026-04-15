@@ -26,12 +26,27 @@ class _SearchUsersScreenState extends State<SearchUsersScreen> {
     final q = _controller.text.trim();
     if (q.isEmpty) return;
     setState(() => _loading = true);
-    final items = await SocialApiService.instance.searchUsers(q, limit: 20);
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _loading = false;
-    });
+    try {
+      final items = await SocialApiService.instance.searchUsers(
+        q,
+        limit: 20,
+        includeRelated: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bạn cần đăng nhập (token thật) để tìm kiếm theo tên.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
