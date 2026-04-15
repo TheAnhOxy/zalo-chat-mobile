@@ -9,23 +9,17 @@ class AuthService {
   AuthService._internal();
 
   // ── State ─────────────────────────────────────────────────────
-  UserModel? _currentUser = const UserModel(
-    id: '69da71a2431bb5f06428519b',
-    fullName: 'Nguyễn Văn An',
-    phone: '0901234567',
-    email: 'an@azureconnect.vn',
-    avatar: 'https://i.pravatar.cc/150?img=11',
-    status: UserStatus(isOnline: true),
-    isVerified: true,
-  );
+  UserModel? _currentUser;
 
-  String? _accessToken = 'fake-jwt-token-for-dev';
+  String? _accessToken;
+  String? _refreshToken;
   final List<AuthListener> _listeners = [];
 
   // ── Public Getters ────────────────────────────────────────────
   UserModel? get currentUser => _currentUser;
   String?    get userId      => _currentUser?.id;
   String?    get accessToken => _accessToken;
+  String?    get refreshToken => _refreshToken;
   bool       get isLoggedIn  => _currentUser != null;
 
   // ── Subscribe / Unsubscribe ───────────────────────────────────
@@ -51,6 +45,7 @@ class AuthService {
       status: UserStatus(isOnline: true),
     );
     _accessToken = 'fake-jwt-user1';
+    _refreshToken = 'fake-refresh-user1';
     _notify();
   }
 
@@ -63,6 +58,7 @@ class AuthService {
       status: UserStatus(isOnline: true),
     );
     _accessToken = 'fake-jwt-user2';
+    _refreshToken = 'fake-refresh-user2';
     _notify();
   }
 
@@ -72,15 +68,25 @@ class AuthService {
     _notify();
   }
 
-  void setUser(UserModel user, {String? token}) {
+
+  // ── Stub cho NGƯỜI 1 (AUTH) implement sau ─────────────────────
+  /// Gọi sau khi decode JWT thành công
+  void setUser(UserModel user, {String? token, String? refreshToken}) {
     _currentUser = user;
     if (token != null) _accessToken = token;
+    if (refreshToken != null) _refreshToken = refreshToken;
+    _notify();
+  }
+
+  void updateCurrentUser(UserModel user) {
+    _currentUser = user;
     _notify();
   }
 
   void logout() {
     _currentUser = null;
     _accessToken = null;
+    _refreshToken = null;
     _notify();
   }
 } 

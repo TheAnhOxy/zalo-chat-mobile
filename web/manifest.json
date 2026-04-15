@@ -1,11 +1,11 @@
 {
-    "name": "ott_chat_app",
-    "short_name": "ott_chat_app",
+    "name": "QuickChat",
+    "short_name": "QuickChat",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0068FF",
+    "theme_color": "#0068FF",
+    "description": "QuickChat - Ứng dụng nhắn tin nhanh",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
