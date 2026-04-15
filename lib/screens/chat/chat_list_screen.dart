@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
 import '../../data/models/models.dart';
-import '../../services/api_service.dart'; // Thêm mới
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
-import '../../services/socket_service.dart'; // Thêm mới
+import '../../services/socket_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
 import 'dart:developer';
@@ -20,7 +20,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final _searchCtrl = TextEditingController();
   String _query = '';
 
-  // Thay vì Future, dùng List trực tiếp
+  final Map<String, bool> _onlineStates = {};
+  final Map<String, _ActiveUserItem> _knownUsers = {};
+  final List<String> _activeUserOrder = [];
   List<ConversationModel> _conversations = [];
   bool _isLoading = true;
 
@@ -39,6 +41,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     try {
       final data = await apiService.getConversations(authService.userId!);
+      _cacheKnownUsers(data);
       setState(() {
         _conversations = data;
         _isLoading = false;
@@ -109,7 +112,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       }
     });
 
-    // ✅ Thêm: Cập nhật lastMessage khi có cuộc gọi kết thúc/từ chối
+    // ✅ Cập nhật lastMessage khi có cuộc gọi
     socketService.on('conversation_call_updated', (data) {
       if (!mounted) return;
       try {
@@ -161,49 +164,78 @@ class _ChatListScreenState extends State<ChatListScreen> {
       }
     });
 
+    // ✅ message_seen
     socketService.on('message_seen', (data) {
-  if (!mounted) return;
+      if (!mounted) return;
 
-  try {
-    final convId = data['conversationId']?.toString();
-    final userId = data['userId']?.toString();
+      try {
+        final map = _tryMap(data);
+        if (map == null) return;
 
-    if (convId == null) return;
+        final convId = map['conversationId']?.toString();
+        final userId = map['userId']?.toString();
 
-    setState(() {
-      final index = _conversations.indexWhere((c) => c.id == convId);
-      if (index == -1) return;
+        if (convId == null) return;
 
-      final conv = _conversations[index];
+        setState(() {
+          final index = _conversations.indexWhere((c) => c.id == convId);
+          if (index == -1) return;
 
-      // Nếu chính mình đã đọc → reset unreadCount
-      if (userId == authService.userId) {
-        final updatedConv = ConversationModel(
-          id: conv.id,
-          type: conv.type,
-          name: conv.name,
-          avatar: conv.avatar,
-          members: conv.members,
-          createdAt: conv.createdAt,
-          updatedAt: conv.updatedAt,
-          unreadCount: 0, // 🔥 reset ở đây
-          lastMessage: conv.lastMessage,
-        );
+          final conv = _conversations[index];
 
-        _conversations[index] = updatedConv;
+          if (userId == authService.userId) {
+            _conversations[index] = ConversationModel(
+              id: conv.id,
+              type: conv.type,
+              name: conv.name,
+              avatar: conv.avatar,
+              members: conv.members,
+              createdAt: conv.createdAt,
+              updatedAt: conv.updatedAt,
+              unreadCount: 0,
+              lastMessage: conv.lastMessage,
+            );
+          }
+        });
+      } catch (e) {
+        log('❌ message_seen list error: $e');
       }
     });
-  } catch (e) {
-    log('❌ message_seen list error: $e');
-  }
-});
+
+    // ✅ user_status_changed
+    socketService.on('user_status_changed', (data) {
+      final map = _tryMap(data);
+      if (map == null) return;
+
+      final userId = map['userId']?.toString();
+      if (userId == null || userId.isEmpty) return;
+
+      final isOnline = map['isOnline'] == true;
+
+      setState(() {
+        _onlineStates[userId] = isOnline;
+      });
+    });
   }
 
   @override
   void dispose() {
     socketService.off('new_message');
+    socketService.off('user_status_changed');
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic>? _tryMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) {
+      try {
+        return Map<String, dynamic>.from(data);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
   }
 
   // 2. Các hàm Helper để xử lý logic hiển thị dựa trên Model thật
@@ -215,6 +247,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
       orElse: () => c.members.first,
     );
     return other.nickname ?? 'Người dùng';
+  }
+
+  String _getOtherUserId(ConversationModel c) {
+    if (c.isGroup) return '';
+    final uid = authService.userId;
+    final other = c.members.firstWhere(
+      (m) => m.userId != uid,
+      orElse: () => c.members.first,
+    );
+    return other.userId;
+  }
+
+  void _cacheKnownUsers(List<ConversationModel> conversations) {
+    for (final c in conversations) {
+      if (c.isGroup) continue;
+      final otherId = _getOtherUserId(c);
+      if (otherId.isEmpty || otherId == authService.userId) continue;
+      _knownUsers[otherId] = _ActiveUserItem(
+        userId: otherId,
+        name: _getDisplayName(c),
+        avatar: _getAvatar(c),
+      );
+    }
   }
 
   String? _getAvatar(ConversationModel c) {
@@ -242,12 +297,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredConversations = _conversations.where((c) {
+      if (_query.isEmpty) return true;
+      return _getDisplayName(c).toLowerCase().contains(_query.toLowerCase());
+    }).toList();
+
     return Scaffold(
       backgroundColor: AppColors.bgDark,
       body: SafeArea(
         child: Column(
           children: [
             _buildHeader(),
+            _buildActiveBar(),
             _buildSearch(),
 
             Expanded(
@@ -261,22 +322,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       onRefresh: _loadConversations,
                       color: AppColors.primary,
                       child: ListView(
+                        padding: EdgeInsets.zero,
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: [
                           _buildAiCard(),
                           _buildStoryRow(),
 
-                          if (_conversations.isEmpty)
+                          if (filteredConversations.isEmpty)
                             _buildEmptyState()
                           else
-                            ..._conversations
-                                .where((c) {
-                                  if (_query.isEmpty) return true;
-                                  return _getDisplayName(c)
-                                      .toLowerCase()
-                                      .contains(_query.toLowerCase());
-                                })
-                                .map(_buildConvTile),
+                            ...filteredConversations.map(_buildConvTile),
 
                           const SizedBox(height: 16),
                         ],
@@ -368,6 +423,52 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  Widget _buildActiveBar() {
+    return SizedBox(
+      height: 108,
+      child: _activeUserOrder.isEmpty
+          ? const SizedBox.shrink()
+          : ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              itemCount: _activeUserOrder.length,
+              itemBuilder: (_, index) {
+                final userId = _activeUserOrder[index];
+                final user = _knownUsers[userId];
+                if (user == null) return const SizedBox.shrink();
+
+                return Container(
+                  width: 78,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Column(
+                    children: [
+                      AvatarWidget(
+                        url: user.avatar,
+                        name: user.name,
+                        size: 60,
+                        showOnline: true,
+                        isOnline: _onlineStates[userId] ?? false,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        user.name,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'Inter',
+                          color: AppColors.textSecondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
   Widget _buildAiCard() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -440,10 +541,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final avatar = _getAvatar(c);
     final last = c.lastMessage;
     final uid = authService.userId ?? '';
-
+    final otherUserId = _getOtherUserId(c);
+    final isOnline = !c.isGroup && (_onlineStates[otherUserId] ?? false);
     final bool hasUnread = c.unreadCount > 0;
-
-    // Sửa chỗ này để tránh lỗi null
     final String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
     final bool isMe = last != null && last.senderId == uid;
     final bool isMissedCall = lastContent.toLowerCase().contains(
@@ -471,7 +571,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
         child: Row(
           children: [
-            AvatarWidget(url: avatar, name: name, size: 52),
+            AvatarWidget(
+              url: avatar,
+              name: name,
+              size: 52,
+              showOnline: !c.isGroup,
+              isOnline: isOnline,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -650,4 +756,16 @@ class _MenuTile extends StatelessWidget {
     ),
     onTap: onTap,
   );
+}
+
+class _ActiveUserItem {
+  final String userId;
+  final String name;
+  final String? avatar;
+
+  const _ActiveUserItem({
+    required this.userId,
+    required this.name,
+    this.avatar,
+  });
 }
