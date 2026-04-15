@@ -298,7 +298,7 @@ class _QrCard extends StatelessWidget {
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF0068FF), Color(0xFF1E88E5)],
+          colors: [Color(0xFF388E3C), Color(0xFF81C784)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

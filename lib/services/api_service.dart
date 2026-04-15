@@ -29,6 +29,38 @@ class ApiService {
     ),
   );
 
+  // --- USERS ---
+
+  /// Lấy profile của một user theo ID. Trả về null nếu không tìm thấy.
+  Future<UserModel?> getUserById(String userId) async {
+    if (userId.isEmpty) return null;
+    try {
+      final response = await _dio.get('$baseUrl/users/$userId');
+      final data = Map<String, dynamic>.from(response.data as Map);
+      return UserModel(
+        id: _extractId(data['_id'] ?? data['id']),
+        fullName: (data['fullName'] ?? data['name'] ?? '').toString(),
+        phone: (data['phone'] ?? '').toString(),
+        email: data['email']?.toString(),
+        avatar: (data['avatar'] ?? '').toString(),
+        coverImage: data['coverImage']?.toString(),
+        bio: data['bio']?.toString(),
+        gender: (data['gender'] ?? 'other').toString(),
+        isVerified: data['isVerified'] == true,
+      );
+    } catch (e) {
+      log('❌ getUserById($userId): $e');
+      return null;
+    }
+  }
+
+  static String _extractId(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    if (raw is Map) return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+    return raw.toString();
+  }
+
   // --- CONVERSATIONS ---
 
   /// Lấy danh sách cuộc hội thoại của một người dùng
@@ -40,6 +72,50 @@ class ApiService {
     } catch (e) {
       log('❌ Lỗi getConversations: $e');
       return [];
+    }
+  }
+
+  /// Tìm cuộc trò chuyện 1-1 đã tồn tại giữa 2 user, hoặc tạo mới nếu chưa có.
+  Future<ConversationModel?> findOrCreateDirectConversation({
+    required String currentUserId,
+    required String targetUserId,
+  }) async {
+    try {
+      // 1. Tìm trong danh sách hội thoại hiện có
+      final existing = await getConversations(currentUserId);
+      final found = existing.firstWhere(
+        (c) =>
+            c.type == 'PRIVATE' &&
+            c.members.any((m) => m.userId == targetUserId),
+        orElse: () => ConversationModel(
+          id: '',
+          type: '',
+          name: '',
+          avatar: '',
+          members: [],
+          lastMessage: null,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        ),
+      );
+      if (found.id.isNotEmpty) return found;
+
+      // 2. Nếu chưa có, tạo cuộc trò chuyện PRIVATE mới
+      final response = await _dio.post(
+        '$baseUrl/conversations',
+        data: {
+          'type': 'PRIVATE',
+          'members': [
+            {'userId': currentUserId},
+            {'userId': targetUserId},
+          ],
+        },
+      );
+      return ConversationModel.fromJson(
+          Map<String, dynamic>.from(response.data as Map));
+    } catch (e) {
+      log('❌ findOrCreateDirectConversation: $e');
+      return null;
     }
   }
 

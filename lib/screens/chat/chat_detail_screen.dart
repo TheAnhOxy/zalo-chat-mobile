@@ -21,7 +21,6 @@ import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import '../../data/models/chat_item.dart';
 
-
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
   final UserModel? otherUser;
@@ -63,7 +62,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _ChatBackgroundOption(
       label: 'Mặc định',
       gradient: LinearGradient(
-        colors: [Color(0xFFEEF1F6), Color(0xFFE3E8EF)],
+        colors: [Color(0xFFEDF2ED), Color(0xFFE3EBE3)],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
@@ -71,7 +70,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _ChatBackgroundOption(
       label: 'Sky',
       gradient: LinearGradient(
-        colors: [Color(0xFFEAF6FF), Color(0xFFD4ECFF)],
+        colors: [Color(0xFFE8F5E9), Color(0xFFC8E6C9)],
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
       ),
@@ -118,20 +117,19 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       final calls = (results[1] as List<Map<String, dynamic>>)
           .map((e) => CallModel.fromJson(e))
           .toList();
-      final items = <ChatItem>[
-        ...msgs.map(ChatItem.message),
-        ...calls.map(ChatItem.call),
-      ]..sort((a, b) {
-          final cmp = a.createdAt.compareTo(b.createdAt);
-          if (cmp != 0) return cmp;
-          final aKey = a.type == ChatItemType.message
-              ? 'm_${a.message?.id ?? ''}'
-              : 'c_${a.call?.id ?? ''}';
-          final bKey = b.type == ChatItemType.message
-              ? 'm_${b.message?.id ?? ''}'
-              : 'c_${b.call?.id ?? ''}';
-          return aKey.compareTo(bKey);
-        });
+      final items =
+          <ChatItem>[...msgs.map(ChatItem.message), ...calls.map(ChatItem.call)]
+            ..sort((a, b) {
+              final cmp = a.createdAt.compareTo(b.createdAt);
+              if (cmp != 0) return cmp;
+              final aKey = a.type == ChatItemType.message
+                  ? 'm_${a.message?.id ?? ''}'
+                  : 'c_${a.call?.id ?? ''}';
+              final bKey = b.type == ChatItemType.message
+                  ? 'm_${b.message?.id ?? ''}'
+                  : 'c_${b.call?.id ?? ''}';
+              return aKey.compareTo(bKey);
+            });
 
       setState(() {
         _messages = msgs;
@@ -148,20 +146,19 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _rebuildChatItems() {
-    _chatItems = [
-      ..._messages.map(ChatItem.message),
-      ..._calls.map(ChatItem.call),
-    ]..sort((a, b) {
-        final cmp = a.createdAt.compareTo(b.createdAt);
-        if (cmp != 0) return cmp;
-        final aKey = a.type == ChatItemType.message
-            ? 'm_${a.message?.id ?? ''}'
-            : 'c_${a.call?.id ?? ''}';
-        final bKey = b.type == ChatItemType.message
-            ? 'm_${b.message?.id ?? ''}'
-            : 'c_${b.call?.id ?? ''}';
-        return aKey.compareTo(bKey);
-      });
+    _chatItems =
+        [..._messages.map(ChatItem.message), ..._calls.map(ChatItem.call)]
+          ..sort((a, b) {
+            final cmp = a.createdAt.compareTo(b.createdAt);
+            if (cmp != 0) return cmp;
+            final aKey = a.type == ChatItemType.message
+                ? 'm_${a.message?.id ?? ''}'
+                : 'c_${a.call?.id ?? ''}';
+            final bKey = b.type == ChatItemType.message
+                ? 'm_${b.message?.id ?? ''}'
+                : 'c_${b.call?.id ?? ''}';
+            return aKey.compareTo(bKey);
+          });
   }
 
   // 3. Khởi tạo Socket và các sự kiện lắng nghe
@@ -456,7 +453,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       id: old.id,
       conversationId: data['conversationId']?.toString() ?? old.conversationId,
       senderId: data['senderId']?.toString() ?? old.senderId,
-      type: data['messageType']?.toString() ?? data['type']?.toString() ?? old.type,
+      type:
+          data['messageType']?.toString() ??
+          data['type']?.toString() ??
+          old.type,
       content: data['content']?.toString() ?? old.content,
       metadata: metadata,
       replyToId: data.containsKey('replyTo')
@@ -467,51 +467,56 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       deletedBy: data['deletedBy'] is List
           ? List<String>.from(data['deletedBy'] as List)
           : old.deletedBy,
-      reactions: reactions ?? () {
-        final parsedReactions = _parseReactions(data['reactions']);
-        return parsedReactions.isNotEmpty ? parsedReactions : old.reactions;
-      }(),
+      reactions:
+          reactions ??
+          () {
+            final parsedReactions = _parseReactions(data['reactions']);
+            return parsedReactions.isNotEmpty ? parsedReactions : old.reactions;
+          }(),
       seenBy: seenBy.isNotEmpty ? seenBy : old.seenBy,
       createdAt: old.createdAt,
     );
   }
 
-void _handleMessageUpdated(dynamic data) {
-  final map = _tryMap(data);
-  if (map == null) return;
+  void _handleMessageUpdated(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
 
-  // Kiểm tra nếu dữ liệu là nguyên object tin nhắn (thường xảy ra khi dùng toPlainDoc từ NestJS)
-  final String? messageId = map['id']?.toString() ?? map['_id']?.toString() ?? map['messageId']?.toString();
-  final String? convId = map['conversationId']?.toString();
+    // Kiểm tra nếu dữ liệu là nguyên object tin nhắn (thường xảy ra khi dùng toPlainDoc từ NestJS)
+    final String? messageId =
+        map['id']?.toString() ??
+        map['_id']?.toString() ??
+        map['messageId']?.toString();
+    final String? convId = map['conversationId']?.toString();
 
-  if (convId != null && convId != widget.conversationId) return;
-  if (messageId == null || messageId.isEmpty) return;
+    if (convId != null && convId != widget.conversationId) return;
+    if (messageId == null || messageId.isEmpty) return;
 
-  setState(() {
-    final idx = _messages.indexWhere((m) => m.id == messageId);
-    if (idx != -1) {
-      // TRƯỜNG HỢP 1: Dữ liệu trả về là object tin nhắn đầy đủ (ưu tiên)
-      // Kiểm tra các trường bắt buộc để xác định đây là full object
-      if (map.containsKey('senderId') || map.containsKey('content')) {
-        _messages[idx] = _normalizeMessage(MessageModel.fromJson(map));
-      } 
-      // TRƯỜNG HỢP 2: Dữ liệu chỉ là phần update (dùng hàm merge có sẵn của bạn)
-      else {
-        _messages[idx] = _mergeMessageData(_messages[idx], map);
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == messageId);
+      if (idx != -1) {
+        // TRƯỜNG HỢP 1: Dữ liệu trả về là object tin nhắn đầy đủ (ưu tiên)
+        // Kiểm tra các trường bắt buộc để xác định đây là full object
+        if (map.containsKey('senderId') || map.containsKey('content')) {
+          _messages[idx] = _normalizeMessage(MessageModel.fromJson(map));
+        }
+        // TRƯỜNG HỢP 2: Dữ liệu chỉ là phần update (dùng hàm merge có sẵn của bạn)
+        else {
+          _messages[idx] = _mergeMessageData(_messages[idx], map);
+        }
+
+        // Xóa trạng thái đang sửa nếu tin nhắn đó vừa được cập nhật thành công
+        if (_editingMessage?.id == messageId) {
+          _editingMessage = null;
+          _textCtrl.clear(); // Xóa text trên input sau khi sửa xong
+        }
+
+        // Sắp xếp và chuẩn hóa lại list
+        _messages = _normalizeMessages(_messages);
+        _rebuildChatItems();
       }
-
-      // Xóa trạng thái đang sửa nếu tin nhắn đó vừa được cập nhật thành công
-      if (_editingMessage?.id == messageId) {
-        _editingMessage = null;
-        _textCtrl.clear(); // Xóa text trên input sau khi sửa xong
-      }
-      
-      // Sắp xếp và chuẩn hóa lại list
-      _messages = _normalizeMessages(_messages);
-      _rebuildChatItems();
-    }
-  });
-}
+    });
+  }
 
   void _handleMessageEdited(dynamic data) {
     _handleMessageUpdated(data);
@@ -536,21 +541,24 @@ void _handleMessageUpdated(dynamic data) {
 
     final messageId = map['messageId']?.toString();
     if (messageId == null || messageId.isEmpty) return;
-    _updateMessageById(messageId, (old) => MessageModel(
-          id: old.id,
-          conversationId: old.conversationId,
-          senderId: old.senderId,
-          type: old.type,
-          content: old.content,
-          metadata: old.metadata,
-          replyToId: old.replyToId,
-          status: old.status,
-          isRecalled: true,
-          deletedBy: old.deletedBy,
-          reactions: old.reactions,
-          seenBy: old.seenBy,
-          createdAt: old.createdAt,
-        ));
+    _updateMessageById(
+      messageId,
+      (old) => MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: true,
+        deletedBy: old.deletedBy,
+        reactions: old.reactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      ),
+    );
     if (_editingMessage?.id == messageId) {
       setState(() => _editingMessage = null);
     }
@@ -641,11 +649,7 @@ void _handleMessageUpdated(dynamic data) {
 
     final editingMessage = _editingMessage;
     if (editingMessage != null) {
-      socketService.editMessage(
-        editingMessage.id,
-        text,
-        widget.conversationId,
-      );
+      socketService.editMessage(editingMessage.id, text, widget.conversationId);
       _updateMessageById(
         editingMessage.id,
         (old) => MessageModel(
@@ -725,10 +729,7 @@ void _handleMessageUpdated(dynamic data) {
     });
 
     try {
-      final signed = await apiService.getPresignedUrl(
-        fileName,
-        contentType,
-      );
+      final signed = await apiService.getPresignedUrl(fileName, contentType);
       if (signed == null) {
         throw Exception('Không lấy được presigned URL');
       }
@@ -761,10 +762,7 @@ void _handleMessageUpdated(dynamic data) {
         'type': type,
         'content': fileUrl,
         if (_replyTo != null) 'replyToId': _replyTo!.id,
-        'metadata': {
-          'fileName': fileName,
-          'fileSize': fileSize,
-        },
+        'metadata': {'fileName': fileName, 'fileSize': fileSize},
       });
 
       setState(() {
@@ -1144,28 +1142,30 @@ void _handleMessageUpdated(dynamic data) {
     }
   }
 
-void _deleteMessageForMe(MessageModel msg) {
-  // 1. Gửi lệnh xóa lên server để lưu vào Database (Tránh hiện lại khi load lại chat)
-  socketService.deleteMessageMe(msg.id, authService.userId ?? '');
-  
-  log('🗑️ Requesting delete message ${msg.id} for user ${authService.userId}');
+  void _deleteMessageForMe(MessageModel msg) {
+    // 1. Gửi lệnh xóa lên server để lưu vào Database (Tránh hiện lại khi load lại chat)
+    socketService.deleteMessageMe(msg.id, authService.userId ?? '');
 
-  setState(() {
-    // 2. Xóa ngay lập tức khỏi danh sách đang hiển thị
-    _messages.removeWhere((m) => m.id == msg.id);
-    _rebuildChatItems();
+    log(
+      '🗑️ Requesting delete message ${msg.id} for user ${authService.userId}',
+    );
 
-    // 3. Reset các trạng thái liên quan
-    if (_replyTo?.id == msg.id) {
-      _replyTo = null;
-    }
-    if (_editingMessage?.id == msg.id) {
-      _editingMessage = null;
-      _textCtrl.clear();
-      _focusNode.unfocus();
-    }
-  });
-}
+    setState(() {
+      // 2. Xóa ngay lập tức khỏi danh sách đang hiển thị
+      _messages.removeWhere((m) => m.id == msg.id);
+      _rebuildChatItems();
+
+      // 3. Reset các trạng thái liên quan
+      if (_replyTo?.id == msg.id) {
+        _replyTo = null;
+      }
+      if (_editingMessage?.id == msg.id) {
+        _editingMessage = null;
+        _textCtrl.clear();
+        _focusNode.unfocus();
+      }
+    });
+  }
 
   void _openImageViewer(MessageModel msg) {
     if (!msg.isImage) return;
@@ -1182,7 +1182,7 @@ void _deleteMessageForMe(MessageModel msg) {
 
   Future<void> _downloadFile(MessageModel msg) async {
     if (msg.type != 'FILE') return;
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Đang bắt đầu tải xuống...'),
@@ -1193,29 +1193,22 @@ void _deleteMessageForMe(MessageModel msg) {
     try {
       final url = msg.content;
       if (await canLaunchUrl(Uri.parse(url))) {
-        await launchUrl(
-          Uri.parse(url),
-          mode: LaunchMode.externalApplication,
-        );
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
         log('✅ Tải file thành công: $url');
       } else {
         log('❌ Không thể mở URL: $url');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Không thể tải xuống file'),
-            ),
+            const SnackBar(content: Text('Không thể tải xuống file')),
           );
         }
       }
     } catch (e) {
       log('❌ Lỗi tải file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Lỗi khi tải xuống file'),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Lỗi khi tải xuống file')));
       }
     }
   }
@@ -1224,9 +1217,14 @@ void _deleteMessageForMe(MessageModel msg) {
   Widget build(BuildContext context) {
     final isGroup = widget.conversation.isGroup;
     final lastOutgoingMessageId = _lastOutgoingMessageId();
-    final title = isGroup
-        ? widget.conversation.name ?? 'Nhóm'
-        : widget.otherUser?.fullName ?? 'Chat';
+    final String title;
+    if (isGroup) {
+      final n = widget.conversation.name;
+      title = (n != null && n.isNotEmpty) ? n : 'Nhóm';
+    } else {
+      final n = widget.otherUser?.fullName;
+      title = (n != null && n.isNotEmpty) ? n : 'Người dùng';
+    }
 
     return Scaffold(
       backgroundColor: AppColors.bgDark,
@@ -1896,10 +1894,7 @@ void _deleteMessageForMe(MessageModel msg) {
                     radius: 28,
                     child: Padding(
                       padding: const EdgeInsets.all(6),
-                      child: Text(
-                        emoji,
-                        style: const TextStyle(fontSize: 30),
-                      ),
+                      child: Text(emoji, style: const TextStyle(fontSize: 30)),
                     ),
                   );
                 }).toList(),
@@ -2119,7 +2114,9 @@ class _MessageBubble extends StatelessWidget {
   Widget _buildBubble(BuildContext context) {
     Widget content;
     if (msg.isImage) {
-      log('🖼️ IMAGE MESSAGE: type=${msg.type}, content=${msg.content.substring(0, msg.content.length > 50 ? 50 : msg.content.length)}..., isImage=${msg.isImage}');
+      log(
+        '🖼️ IMAGE MESSAGE: type=${msg.type}, content=${msg.content.substring(0, msg.content.length > 50 ? 50 : msg.content.length)}..., isImage=${msg.isImage}',
+      );
       final imageContent = ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Image.network(
@@ -2136,7 +2133,8 @@ class _MessageBubble extends StatelessWidget {
                 color: AppColors.bgCardLight,
                 child: Center(
                   child: CircularProgressIndicator(
-                    value: progress.cumulativeBytesLoaded /
+                    value:
+                        progress.cumulativeBytesLoaded /
                         (progress.expectedTotalBytes ?? 1),
                     strokeWidth: 2,
                     valueColor: const AlwaysStoppedAnimation<Color>(
@@ -2185,10 +2183,7 @@ class _MessageBubble extends StatelessWidget {
       );
       content = GestureDetector(
         onTap: onImageTap,
-        child: Hero(
-          tag: 'image_${msg.id}',
-          child: imageContent,
-        ),
+        child: Hero(tag: 'image_${msg.id}', child: imageContent),
       );
     } else if (msg.type == 'VIDEO') {
       final thumbnailUrl = msg.metadata?.thumbnailUrl ?? msg.metadata?.thumbnail;
@@ -2270,7 +2265,8 @@ class _MessageBubble extends StatelessWidget {
         child: videoContent,
       );
     } else if (msg.type == 'FILE') {
-      final fileName = msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
+      final fileName =
+          msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
       final fileContent = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2278,7 +2274,9 @@ class _MessageBubble extends StatelessWidget {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: (isMe ? Colors.white : AppColors.primary).withOpacity(0.15),
+              color: (isMe ? Colors.white : AppColors.primary).withOpacity(
+                0.15,
+              ),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
@@ -2296,9 +2294,7 @@ class _MessageBubble extends StatelessWidget {
                   fileName,
                   style: TextStyle(
                     fontSize: 13,
-                    color: isMe
-                        ? Colors.white
-                        : AppColors.bubbleOtherText,
+                    color: isMe ? Colors.white : AppColors.bubbleOtherText,
                     fontWeight: FontWeight.w500,
                     fontFamily: 'Inter',
                   ),
@@ -2320,10 +2316,7 @@ class _MessageBubble extends StatelessWidget {
           ),
         ],
       );
-      content = GestureDetector(
-        onTap: onFileTap,
-        child: fileContent,
-      );
+      content = GestureDetector(onTap: onFileTap, child: fileContent);
     } else {
       content = Text(
         msg.content,
@@ -2522,7 +2515,8 @@ class ImageViewerScreen extends StatelessWidget {
   final String imageUrl;
   final String heroTag;
 
-  const ImageViewerScreen({super.key, 
+  const ImageViewerScreen({
+    super.key,
     required this.imageUrl,
     required this.heroTag,
   });
@@ -2549,7 +2543,7 @@ class ImageViewerScreen extends StatelessWidget {
                 value: event == null
                     ? 0
                     : event.cumulativeBytesLoaded /
-                        (event.expectedTotalBytes ?? 1),
+                          (event.expectedTotalBytes ?? 1),
                 valueColor: const AlwaysStoppedAnimation<Color>(
                   AppColors.primary,
                 ),

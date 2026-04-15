@@ -441,7 +441,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F0FF),
+                color: const Color(0xFFE8F5E9),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.info_outline_rounded,
@@ -506,7 +506,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               child: Row(
                 children: [
                   _mediaThumbnail(Icons.image_outlined,
-                      const Color(0xFFE3F2FD)),
+                      const Color(0xFFE8F5E9)),
                   const SizedBox(width: 6),
                   _mediaThumbnail(Icons.code_rounded,
                       const Color(0xFFE8F5E9)),
@@ -574,7 +574,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F0FF),
+                color: const Color(0xFFE8F5E9),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.link_rounded,

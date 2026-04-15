@@ -4,10 +4,10 @@ class AppColors {
   AppColors._();
 
   // ── Brand ──────────────────────────────────────────────────────
-  static const Color primary      = Color(0xFF0068FF);
-  static const Color primaryDark  = Color(0xFF0052CC);
-  static const Color primaryLight = Color(0xFFE8F0FF);
-  static const Color accent       = Color(0xFF00B4FF);
+  static const Color primary      = Color(0xFF388E3C);
+  static const Color primaryDark  = Color(0xFF1B5E20);
+  static const Color primaryLight = Color(0xFFE8F5E9);
+  static const Color accent       = Color(0xFF66BB6A);
 
   // ── Background (Light theme) ──────────────────────────────────
   static const Color bgDark       = Color(0xFFF0F2F5); // Nền chính — xám nhạt
@@ -28,7 +28,7 @@ class AppColors {
   static const Color textDisabled  = Color(0xFFBCC0C4);
 
   // ── Chat Bubbles ──────────────────────────────────────────────
-  static const Color bubbleMe        = Color(0xFF0068FF);
+  static const Color bubbleMe        = Color(0xFF388E3C);
   static const Color bubbleMeText    = Color(0xFFFFFFFF);
   static const Color bubbleOther     = Color(0xFFFFFFFF);
   static const Color bubbleOtherText = Color(0xFF111111);
@@ -42,19 +42,19 @@ class AppColors {
   static const Color warning   = Color(0xFFFFB300);
 
   // ── Call Screen ───────────────────────────────────────────────
-  static const Color callBg      = Color(0xFF1C2B4A);
+  static const Color callBg      = Color(0xFF1A3A1A);
   static const Color callAccept  = Color(0xFF31A24C);
   static const Color callReject  = Color(0xFFE41E3F);
-  static const Color callMuted   = Color(0xFF3A4A6B);
+  static const Color callMuted   = Color(0xFF2E4A2E);
 
   // ── AI Bot ────────────────────────────────────────────────────
-  static const Color aiBubble    = Color(0xFFE8F0FF);
-  static const Color aiGradient1 = Color(0xFF4A00E0);
-  static const Color aiGradient2 = Color(0xFF0068FF);
+  static const Color aiBubble    = Color(0xFFE8F5E9);
+  static const Color aiGradient1 = Color(0xFF1B5E20);
+  static const Color aiGradient2 = Color(0xFF388E3C);
 
   // ── Gradients ─────────────────────────────────────────────────
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [primary, Color(0xFF3D9BFF)],
+    colors: [primary, Color(0xFF81C784)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
