@@ -13,8 +13,8 @@ import 'package:http_parser/http_parser.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ContactsApiService {
-  static const String baseUrl = 'http://localhost:8081';
-
+  // static const String baseUrl = 'http://localhost:8081';
+  static const String baseUrl = 'http://172.20.10.13:8081';
   static ContactsApiService? _instance;
   static ContactsApiService get instance =>
       _instance ??= ContactsApiService._();

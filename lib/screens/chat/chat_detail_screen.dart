@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,6 +13,7 @@ import '../../services/socket_service.dart'; // Import SocketService
 import '../../widgets/common/common_widgets.dart';
 import '../call/voice_call_screen.dart';
 import '../call/video_call_screen.dart';
+import 'video_player_screen.dart';
 import 'dart:developer';
 import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
@@ -829,6 +831,128 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     }
   }
 
+  String _safeFileExtension(String fileName, {String fallback = 'bin'}) {
+    final dot = fileName.lastIndexOf('.');
+    if (dot < 0 || dot == fileName.length - 1) return fallback;
+    return fileName.substring(dot + 1).toLowerCase();
+  }
+
+  Future<Uint8List?> _loadDefaultVideoThumbnailBytes() async {
+    try {
+      final data = await rootBundle.load('lib/widgets/thumbnail/thumbnail.jpg');
+      return data.buffer.asUint8List();
+    } catch (e) {
+      log('❌ Không đọc được thumbnail mặc định: $e');
+      return null;
+    }
+  }
+
+  Future<void> _pickAndSendVideo() async {
+    if (_isUploading) return;
+    try {
+      final picked = await _imagePicker.pickVideo(source: ImageSource.gallery);
+      if (picked == null) return;
+
+      final videoBytes = await picked.readAsBytes();
+      if (videoBytes.isEmpty) {
+        throw Exception('Video rỗng hoặc không đọc được dữ liệu');
+      }
+
+      setState(() {
+        _isUploading = true;
+        _uploadProgress = 0;
+      });
+
+      final thumbnailBytes = await _loadDefaultVideoThumbnailBytes();
+      if (thumbnailBytes == null || thumbnailBytes.isEmpty) {
+        throw Exception('Không tải được thumbnail mặc định');
+      }
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final thumbnailFileName = 'video_thumb_$now.png';
+      final videoExt = _safeFileExtension(picked.name, fallback: 'mp4');
+      final videoFileName = picked.name.isNotEmpty
+          ? picked.name
+          : 'video_$now.$videoExt';
+
+      final thumbnailUrl = await apiService.uploadFileAndGetUrl(
+        fileName: thumbnailFileName,
+        bytes: thumbnailBytes,
+        contentType: 'image/png',
+        onSendProgress: (sent, total) {
+          if (!mounted || total <= 0) return;
+          setState(() => _uploadProgress = (sent / total) * 0.35);
+        },
+      );
+      if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+        throw Exception('Upload thumbnail mặc định thất bại');
+      }
+
+      final videoUrl = await apiService.uploadFileAndGetUrl(
+        fileName: videoFileName,
+        bytes: videoBytes,
+        contentType: 'video/mp4',
+        onSendProgress: (sent, total) {
+          if (!mounted || total <= 0) return;
+          final pct = sent / total;
+          setState(() => _uploadProgress = 0.35 + (pct * 0.65));
+        },
+      );
+      if (videoUrl == null || videoUrl.isEmpty) {
+        throw Exception('Upload video thất bại');
+      }
+
+      socketService.sendMessage({
+        'conversationId': widget.conversationId,
+        'senderId': authService.userId!,
+        'type': 'VIDEO',
+        'content': videoUrl,
+        if (_replyTo != null) 'replyToId': _replyTo!.id,
+        'metadata': {
+          'fileName': videoFileName,
+          'fileSize': videoBytes.length,
+          'thumbnailUrl': thumbnailUrl,
+          'thumbnail': thumbnailUrl,
+        },
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _replyTo = null;
+        _uploadProgress = 1;
+      });
+    } catch (e) {
+      log('❌ Gửi video thất bại: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Gửi video thất bại, vui lòng thử lại.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+          _uploadProgress = 0;
+        });
+      }
+    }
+  }
+
+  void _openVideoPlayer(MessageModel msg) {
+    if (msg.type != 'VIDEO' || msg.content.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(
+          videoUrl: msg.content,
+          title: msg.metadata?.fileName ?? 'Video',
+        ),
+      ),
+    );
+  }
+
   void _emitSeenForLatest() {
     final unread = _messages.where(
       (m) =>
@@ -1211,6 +1335,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       onReply: () => setState(() => _replyTo = msg),
       onImageTap: () => _openImageViewer(msg),
       onFileTap: () => _downloadFile(msg),
+      onVideoTap: () => _openVideoPlayer(msg),
     );
   }
 
@@ -1598,6 +1723,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               size: 26,
             ),
           ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: _isUploading ? null : _pickAndSendVideo,
+            child: const Icon(
+              Icons.videocam_outlined,
+              color: AppColors.textSecondary,
+              size: 26,
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -1841,6 +1975,7 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback onReply;
   final VoidCallback? onImageTap;
   final VoidCallback? onFileTap;
+  final VoidCallback? onVideoTap;
 
   const _MessageBubble({
     required this.msg,
@@ -1855,6 +1990,7 @@ class _MessageBubble extends StatelessWidget {
     required this.onReply,
     this.onImageTap,
     this.onFileTap,
+    this.onVideoTap,
   });
 
   String _extractFileNameFromUrl(String url) {
@@ -2049,6 +2185,85 @@ class _MessageBubble extends StatelessWidget {
         onTap: onImageTap,
         child: Hero(tag: 'image_${msg.id}', child: imageContent),
       );
+    } else if (msg.type == 'VIDEO') {
+      final thumbnailUrl = msg.metadata?.thumbnailUrl ?? msg.metadata?.thumbnail;
+      final title = msg.metadata?.fileName ?? 'Video';
+      final videoContent = Stack(
+        alignment: Alignment.center,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
+                ? Image.network(
+                    thumbnailUrl,
+                    width: 220,
+                    height: 160,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 220,
+                      height: 160,
+                      color: AppColors.bgCardLight,
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.videocam,
+                        color: AppColors.textHint,
+                        size: 34,
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 220,
+                    height: 160,
+                    color: AppColors.bgCardLight,
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.videocam,
+                      color: AppColors.textHint,
+                      size: 34,
+                    ),
+                  ),
+          ),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.35),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 30,
+            ),
+          ),
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 8,
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Inter',
+                shadows: [
+                  Shadow(
+                    color: Colors.black54,
+                    blurRadius: 6,
+                  ),
+                ],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      );
+      content = GestureDetector(
+        onTap: onVideoTap,
+        child: videoContent,
+      );
     } else if (msg.type == 'FILE') {
       final fileName =
           msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
@@ -2115,7 +2330,7 @@ class _MessageBubble extends StatelessWidget {
     }
 
     return Container(
-      padding: msg.isImage
+        padding: msg.isImage || msg.type == 'VIDEO'
           ? EdgeInsets.zero
           : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(

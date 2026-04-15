@@ -14,8 +14,8 @@ class ApiService {
     if (kIsWeb) {
       return 'http://localhost:8081'; // Web
     } else if (Platform.isAndroid) {
-      // return 'http://192.168.1.218:8081'; 
-      return 'http://10.0.2.2:8081'; // Android Emulator
+      return 'http://172.20.10.13:8081'; 
+      // return 'http://10.0.2.2:8081'; // Android Emulator
     } else {
       return 'http://localhost:8081'; // iOS / Desktop / Real Device (nếu dùng chung mạng)
     }
@@ -244,6 +244,37 @@ class ApiService {
     } catch (e) {
       log('❌ Lỗi PUT S3: $e');
       return false;
+    }
+  }
+
+  /// Helper upload trọn gói: lấy presigned URL -> PUT lên S3 -> trả về fileUrl.
+  Future<String?> uploadFileAndGetUrl({
+    required String fileName,
+    required Uint8List bytes,
+    required String contentType,
+    void Function(int sent, int total)? onSendProgress,
+  }) async {
+    try {
+      final signed = await getPresignedUrl(fileName, contentType);
+      if (signed == null) return null;
+
+      final uploadUrl = signed['uploadUrl']?.toString();
+      final fileUrl = signed['fileUrl']?.toString();
+      if (uploadUrl == null || uploadUrl.isEmpty) return null;
+      if (fileUrl == null || fileUrl.isEmpty) return null;
+
+      final uploaded = await uploadFileToS3(
+        uploadUrl,
+        bytes,
+        contentType,
+        onSendProgress: onSendProgress,
+      );
+      if (!uploaded) return null;
+
+      return fileUrl;
+    } catch (e) {
+      log('❌ Lỗi uploadFileAndGetUrl: $e');
+      return null;
     }
   }
 
