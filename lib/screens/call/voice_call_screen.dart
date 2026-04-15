@@ -459,17 +459,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
             ),
           ],
         ),
-        if (widget.otherUser.phone.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(
-            widget.otherUser.phone,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.white.withOpacity(0.4),
-              fontFamily: 'Inter',
-            ),
-          ),
-        ],
       ],
     );
   }
