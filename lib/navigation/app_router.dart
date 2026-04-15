@@ -20,6 +20,8 @@ import '../screens/contacts/add_friend_screen.dart';
 import '../screens/contacts/found_user_screen.dart';
 import '../screens/contacts/friend_requests_screen.dart';
 import '../screens/contacts/birthday_screen.dart';
+import '../screens/contacts/search_users_screen.dart';
+import '../screens/contacts/block_list_screen.dart';
 import '../services/contacts_api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,6 +59,8 @@ class AppRouter {
   static const String foundUser = '/contacts/found-user';
   static const String friendRequests = '/contacts/friend-requests';
   static const String birthday = '/contacts/birthday';
+  static const String searchUsers = '/contacts/search-users';
+  static const String blockList = '/contacts/block-list';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -103,6 +107,10 @@ class AppRouter {
 
       case birthday:
         return _slide(const BirthdayScreen());
+      case searchUsers:
+        return _slide(const SearchUsersScreen());
+      case blockList:
+        return _slide(const BlockListScreen());
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:

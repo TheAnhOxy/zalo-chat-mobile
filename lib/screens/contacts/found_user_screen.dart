@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/social_api_service.dart';
 
 class FoundUserScreen extends StatelessWidget {
   final ApiUserModel user;
@@ -122,7 +123,16 @@ class FoundUserScreen extends StatelessWidget {
                               // Kết bạn
                               _IconActionButton(
                                 icon: Icons.person_add_alt_1_outlined,
-                                onTap: () {},
+                                onTap: () async {
+                                  final ok = await SocialApiService.instance.sendFriendRequest(user.id);
+                                  // ignore: use_build_context_synchronously
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(ok ? 'Đã gửi lời mời kết bạn' : 'Không thể gửi lời mời'),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
                               ),
                             ],
                           ),

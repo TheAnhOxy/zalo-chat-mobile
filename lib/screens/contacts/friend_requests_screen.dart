@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/social_api_service.dart';
 import 'friend_request_settings_screen.dart';
 
 class FriendRequestsScreen extends StatefulWidget {
@@ -37,23 +38,22 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
   }
 
   Future<void> _loadAll() async {
-    final userId = authService.userId ?? '';
     final results = await Future.wait([
-      ContactsApiService.instance.fetchReceivedRequests(userId),
-      ContactsApiService.instance.fetchSentRequests(userId),
+      SocialApiService.instance.getInboundRequests(),
+      SocialApiService.instance.getOutboundRequests(),
     ]);
     if (!mounted) return;
     setState(() {
-      _received = results[0].data ?? [];
-      _errorReceived = results[0].error;
-      _sent = results[1].data ?? [];
-      _errorSent = results[1].error;
+      _received = results[0];
+      _errorReceived = null;
+      _sent = results[1];
+      _errorSent = null;
     });
   }
 
   Future<void> _accept(ApiFriendRequest req) async {
     setState(() => _processing.add(req.friendshipId));
-    final ok = await ContactsApiService.instance.acceptFriendRequest(req.friendshipId);
+    final ok = await SocialApiService.instance.acceptRequest(req.friendshipId);
     if (!mounted) return;
     setState(() {
       _processing.remove(req.friendshipId);
@@ -68,7 +68,7 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
 
   Future<void> _reject(ApiFriendRequest req) async {
     setState(() => _processing.add(req.friendshipId));
-    final ok = await ContactsApiService.instance.rejectFriendRequest(req.friendshipId);
+    final ok = await SocialApiService.instance.declineRequest(req.friendshipId);
     if (!mounted) return;
     setState(() {
       _processing.remove(req.friendshipId);
@@ -88,7 +88,7 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
     if (!confirm) return;
 
     setState(() => _processing.add(req.friendshipId));
-    final ok = await ContactsApiService.instance.cancelSentRequest(req.friendshipId);
+    final ok = await SocialApiService.instance.cancelRequest(req.friendshipId);
     if (!mounted) return;
     setState(() {
       _processing.remove(req.friendshipId);

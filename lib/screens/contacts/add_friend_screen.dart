@@ -3,6 +3,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/social_api_service.dart';
 import '../../navigation/app_router.dart';
 
 class AddFriendScreen extends StatefulWidget {
@@ -16,6 +17,28 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   final TextEditingController _phoneController = TextEditingController();
   String _countryCode = '+84';
   bool _isSearching = false;
+  List<ApiUserModel>? _suggested;
+  bool _loadingSuggested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggested();
+  }
+
+  Future<void> _loadSuggested() async {
+    if (authService.accessToken == null) {
+      setState(() => _suggested = []);
+      return;
+    }
+    setState(() => _loadingSuggested = true);
+    final list = await SocialApiService.instance.getSuggestedFriends(limit: 20);
+    if (!mounted) return;
+    setState(() {
+      _suggested = list;
+      _loadingSuggested = false;
+    });
+  }
 
   @override
   void dispose() {
@@ -201,7 +224,29 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                     iconColor: const Color(0xFF9C27B0),
                     iconBg: const Color(0xFFF3E5F5),
                     title: 'Bạn bè có thể quen',
-                    onTap: () {},
+                    onTap: () {
+                      if ((_suggested ?? []).isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Chưa có gợi ý hoặc bạn cần đăng nhập'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                        return;
+                      }
+                      _showSuggestedSheet();
+                    },
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(left: 58),
+                    child: Divider(height: 1, thickness: 1, color: AppColors.divider),
+                  ),
+                  _ActionTile(
+                    icon: Icons.search_rounded,
+                    iconColor: const Color(0xFF009688),
+                    iconBg: const Color(0xFFE0F2F1),
+                    title: 'Tìm kiếm người dùng',
+                    onTap: () => Navigator.pushNamed(context, AppRouter.searchUsers),
                   ),
                 ],
               ),
@@ -253,6 +298,93 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     }
 
     Navigator.pushNamed(context, AppRouter.foundUser, arguments: user);
+  }
+
+  void _showSuggestedSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) {
+        final items = _suggested ?? [];
+        return SafeArea(
+          child: SizedBox(
+            height: 520,
+            child: Column(
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Gợi ý kết bạn',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: _loadingSuggested
+                      ? const Center(
+                          child: CircularProgressIndicator(color: AppColors.primary),
+                        )
+                      : ListView.separated(
+                          itemCount: items.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.divider),
+                          itemBuilder: (_, i) {
+                            final u = items[i];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: AppColors.primaryLight,
+                                foregroundImage: u.avatar.isNotEmpty ? NetworkImage(u.avatar) : null,
+                                child: Text(
+                                  u.fullName.isNotEmpty ? u.fullName[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                              title: Text(
+                                u.fullName,
+                                style: const TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(
+                                u.phone,
+                                style: const TextStyle(fontFamily: 'Inter', fontSize: 12, color: AppColors.textSecondary),
+                              ),
+                              trailing: TextButton(
+                                onPressed: () async {
+                                  final ok = await SocialApiService.instance.sendFriendRequest(u.id);
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(ok ? 'Đã gửi lời mời' : 'Gửi lời mời thất bại'),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                                child: const Text('Kết bạn'),
+                              ),
+                              onTap: () => Navigator.pushNamed(context, AppRouter.foundUser, arguments: u),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showNotFoundToast(BuildContext context) {

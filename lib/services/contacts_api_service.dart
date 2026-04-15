@@ -24,13 +24,13 @@ class ContactsApiService {
 
   // ── Models ──────────────────────────────────────────────────────────────────
 
-  static ApiUserModel _parseUser(Map<String, dynamic> j) {
+  static ApiUserModel parseUser(Map<String, dynamic> j) {
     DateTime? dob;
     final dobRaw = j['dob'];
     if (dobRaw != null && dobRaw.toString().isNotEmpty) {
       dob = DateTime.tryParse(dobRaw.toString());
     }
-    return ApiUserModel(
+      return ApiUserModel(
       id: (j['_id'] ?? j['id'] ?? '').toString(),
       fullName: (j['fullName'] ?? '').toString(),
       phone: (j['phone'] ?? '').toString(),
@@ -108,7 +108,7 @@ class ContactsApiService {
       for (final res in responses) {
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body) as Map<String, dynamic>;
-          users.add(_parseUser(data));
+          users.add(parseUser(data));
         }
       }
 
@@ -167,7 +167,7 @@ class ContactsApiService {
 
       final data = jsonDecode(res.body);
       if (data == null) return const ContactsResult.success(null);
-      return ContactsResult.success(_parseUser(data as Map<String, dynamic>));
+      return ContactsResult.success(parseUser(data as Map<String, dynamic>));
     } catch (e) {
       return ContactsResult.error('Không kết nối được backend: $e');
     }
@@ -249,9 +249,9 @@ class ContactsApiService {
         final createdAt = f['createdAt'] != null
             ? DateTime.tryParse(f['createdAt'].toString()) ?? DateTime.now()
             : DateTime.now();
-        requests.add(ApiFriendRequest(
+          requests.add(ApiFriendRequest(
           friendshipId: (f['_id'] ?? f['id'] ?? '').toString(),
-          user: _parseUser(userData),
+          user: parseUser(userData),
           createdAt: createdAt,
         ));
       }
@@ -369,7 +369,7 @@ class ContactsApiService {
         if (uRes.statusCode != 200) continue;
 
         final user =
-            _parseUser(jsonDecode(uRes.body) as Map<String, dynamic>);
+            parseUser(jsonDecode(uRes.body) as Map<String, dynamic>);
         final lastAt = c['updatedAt'] != null
             ? DateTime.tryParse(c['updatedAt'].toString())
             : null;
@@ -483,7 +483,7 @@ class ContactsApiService {
 
       final List<dynamic> json = jsonDecode(res.body) as List;
       final users = json
-          .map((u) => _parseUser(u as Map<String, dynamic>))
+          .map((u) => parseUser(u as Map<String, dynamic>))
           .where((u) => u.id != currentUserId && u.dob != null)
           .toList();
 
