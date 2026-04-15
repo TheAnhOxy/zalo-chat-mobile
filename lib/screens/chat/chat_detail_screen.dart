@@ -878,7 +878,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           : 'video_$now.$videoExt';
 
       // Tạo thumbnail từ video thực (web dùng canvas, mobile dùng video_thumbnail)
-      final thumbnailBytes = await _generateVideoThumbnail(picked.path, videoBytes);
+      final thumbnailBytes = await _generateVideoThumbnail(
+        picked.path,
+        videoBytes,
+      );
 
       // Upload thumbnail nếu có
       String? thumbnailUrl;
@@ -906,8 +909,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         contentType: 'video/mp4',
         onSendProgress: (sent, total) {
           if (!mounted || total <= 0) return;
-          setState(() =>
-              _uploadProgress = videoProgressStart + (sent / total) * (1 - videoProgressStart));
+          setState(
+            () => _uploadProgress =
+                videoProgressStart + (sent / total) * (1 - videoProgressStart),
+          );
         },
       );
       if (videoUrl == null || videoUrl.isEmpty) {

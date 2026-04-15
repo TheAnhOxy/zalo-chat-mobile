@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/image_utils.dart';
+import '../../data/models/models.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../widgets/common/common_widgets.dart';
 
 class GroupOptionsScreen extends StatefulWidget {
   final ApiGroupModel group;
@@ -24,8 +27,17 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
   bool get _isAdmin {
     final myId = authService.userId ?? '';
     return _group.members.any(
-      (m) => m.userId == myId && (m.role == 'ADMIN' || m.role == 'MODERATOR'),
+      (m) => m.userId == myId && m.role == 'ADMIN',
     );
+  }
+
+  /// Chỉ còn một admin và đó là mình — không cho rời (cần thêm QTV khác trước).
+  bool get _isSoleAdmin {
+    final myId = authService.userId ?? '';
+    final adminCount = _group.members.where((m) => m.role == 'ADMIN').length;
+    if (adminCount != 1) return false;
+    return _group.members
+        .any((m) => m.userId == myId && m.role == 'ADMIN');
   }
 
   @override
@@ -97,9 +109,32 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
     );
   }
 
-  // ── Xác nhận rời nhóm ─────────────────────────────────────────
-  void _confirmLeave() {
-    showDialog(
+  // ── Rời nhóm (API) ────────────────────────────────────────────
+  void _showLeaveSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontFamily: 'Inter')),
+        backgroundColor: isError ? AppColors.error : AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  void _showLeaveLoading() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+  }
+
+  Future<void> _confirmLeave() async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: AppColors.bgCard,
@@ -117,17 +152,12 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text('Huỷ',
                 style: TextStyle(color: AppColors.textSecondary)),
           ),
           TextButton(
-            onPressed: () {
-              // Đóng dialog → đóng Options → đóng Chat
-              Navigator.pop(context);
-              Navigator.pop(context, null); // null = thoát khỏi nhóm
-              Navigator.pop(context);
-            },
+            onPressed: () => Navigator.pop(context, true),
             child: const Text('Rời nhóm',
                 style: TextStyle(
                     color: AppColors.error,
@@ -136,6 +166,36 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+
+    if (_isSoleAdmin) {
+      _showLeaveSnack(
+        'Bạn là quản trị viên duy nhất. Hãy thêm quản trị viên khác trước khi rời nhóm.',
+        isError: true,
+      );
+      return;
+    }
+
+    final myId = authService.userId;
+    if (myId == null || myId.isEmpty) {
+      _showLeaveSnack('Chưa đăng nhập', isError: true);
+      return;
+    }
+
+    _showLeaveLoading();
+    final result = await ContactsApiService.instance.leaveGroup(
+      conversationId: _group.id,
+      myUserId: myId,
+      currentMembers: _group.members,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+    if (!mounted) return;
+    if (result.isSuccess) {
+      Navigator.pop(context, true);
+    } else {
+      _showLeaveSnack(result.error ?? 'Không thể rời nhóm', isError: true);
+    }
   }
 
   // ── Xác nhận xoá lịch sử ──────────────────────────────────────
@@ -616,7 +676,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
     );
   }
 
-  // ── Xem thành viên sheet ──────────────────────────────────────
+  // ── Xem thành viên sheet (tải tên qua API) ─────────────────────
   void _showMembersSheet() {
     showModalBottomSheet(
       context: context,
@@ -625,105 +685,24 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.55,
-        maxChildSize: 0.9,
-        builder: (_, ctrl) => Column(
-          children: [
-            Container(
-              width: 36,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  Text(
-                    'Thành viên (${_group.members.length})',
-                    style: const TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: AppColors.divider),
-            Expanded(
-              child: ListView.builder(
-                controller: ctrl,
-                itemCount: _group.members.length,
-                itemBuilder: (_, i) {
-                  final m = _group.members[i];
-                  final isAdmin =
-                      m.role == 'ADMIN' || m.role == 'MODERATOR';
-                  return ListTile(
-                    leading: CircleAvatar(
-                      radius: 20,
-                      backgroundColor: AppColors.bgDark,
-                      child: Text(
-                        m.userId.substring(0, 1).toUpperCase(),
-                        style: const TextStyle(
-                          fontFamily: 'Inter',
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ),
-                    title: Text(
-                      m.userId,
-                      style: const TextStyle(
-                        fontFamily: 'Inter',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    subtitle: isAdmin
-                        ? Text(
-                            m.role == 'ADMIN'
-                                ? 'Quản trị viên'
-                                : 'Điều hành viên',
-                            style: const TextStyle(
-                              fontFamily: 'Inter',
-                              fontSize: 12,
-                              color: AppColors.primary,
-                            ),
-                          )
-                        : null,
-                    trailing: isAdmin
-                        ? Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryLight,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              m.role == 'ADMIN' ? 'Admin' : 'Mod',
-                              style: const TextStyle(
-                                fontFamily: 'Inter',
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          )
-                        : null,
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+      builder: (sheetCtx) => _GroupMembersSheetBody(
+        conversationId: _group.id,
+        members: _group.members,
+        canManage: _isAdmin,
+        myUserId: authService.userId,
+        onMembersUpdated: (updated) {
+          setState(() {
+            _group = ApiGroupModel(
+              id: _group.id,
+              name: _group.name,
+              avatar: _group.avatar,
+              members: updated,
+              lastMessageContent: _group.lastMessageContent,
+              lastMessageAt: _group.lastMessageAt,
+              updatedAt: _group.updatedAt,
+            );
+          });
+        },
       ),
     );
   }
@@ -830,6 +809,503 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
       ),
       child: Icon(Icons.group,
           color: AppColors.textSecondary, size: size * 0.5),
+    );
+  }
+}
+
+/// Sheet "Thành viên": tên/avatar + quản trị viên có thể thêm/hủy QTV (giống màn quản lý).
+class _GroupMembersSheetBody extends StatefulWidget {
+  final String conversationId;
+  final List<ApiGroupMember> members;
+  final bool canManage;
+  final String? myUserId;
+  final ValueChanged<List<ApiGroupMember>>? onMembersUpdated;
+
+  const _GroupMembersSheetBody({
+    required this.conversationId,
+    required this.members,
+    required this.canManage,
+    required this.myUserId,
+    this.onMembersUpdated,
+  });
+
+  @override
+  State<_GroupMembersSheetBody> createState() => _GroupMembersSheetBodyState();
+}
+
+class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
+  late List<ApiGroupMember> _members;
+  Map<String, UserModel> _userMap = {};
+  bool _loading = true;
+  String? _error;
+
+  int get _adminCount =>
+      _members.where((m) => m.role == 'ADMIN').length;
+
+  @override
+  void initState() {
+    super.initState();
+    _members = List<ApiGroupMember>.from(widget.members);
+    _loadUsers();
+  }
+
+  Future<void> _loadUsers() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final ids = _members.map((m) => m.userId).toList();
+      final Map<String, UserModel> map = {};
+      await Future.wait(ids.map((id) async {
+        final user = await apiService.getUserById(id);
+        if (user != null) map[id] = user;
+      }));
+      if (mounted) {
+        setState(() {
+          _userMap = map;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Không thể tải danh sách thành viên';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  String _displayName(ApiGroupMember m) {
+    final u = _userMap[m.userId];
+    final n = u?.fullName.trim();
+    if (n != null && n.isNotEmpty) return n;
+    return m.userId;
+  }
+
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontFamily: 'Inter')),
+        backgroundColor: isError ? AppColors.error : AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  void _showLoading() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+  }
+
+  Future<bool> _showConfirmDialog({
+    required String title,
+    required String message,
+    required String confirmText,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          title,
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            color: AppColors.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Hủy',
+              style: TextStyle(fontFamily: 'Inter', color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              confirmText,
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _changeRole(ApiGroupMember member, String newRole) async {
+    final user = _userMap[member.userId];
+    final name = user?.fullName ?? 'thành viên này';
+
+    if (newRole == 'MEMBER' && member.role == 'ADMIN') {
+      if (_adminCount <= 1) {
+        _showSnack('Nhóm phải có ít nhất một quản trị viên', isError: true);
+        return;
+      }
+    }
+
+    final isPromote = newRole == 'ADMIN';
+    final ok = await _showConfirmDialog(
+      title: isPromote ? 'Thêm quản trị viên' : 'Hủy quản trị viên',
+      message: isPromote
+          ? 'Phân quyền quản trị viên cho $name? Người này có thể quản lý thành viên và cài đặt nhóm.'
+          : 'Thu hồi quyền quản trị viên của $name? Họ chỉ còn là thành viên thường.',
+      confirmText: 'Xác nhận',
+    );
+    if (!ok) return;
+
+    _showLoading();
+    final result = await ContactsApiService.instance.updateMemberRole(
+      conversationId: widget.conversationId,
+      targetUserId: member.userId,
+      newRole: newRole,
+      currentMembers: _members,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+    if (result.isSuccess) {
+      setState(() {
+        _members = _members
+            .map((m) => m.userId == member.userId
+                ? ApiGroupMember(userId: m.userId, role: newRole)
+                : m)
+            .toList();
+      });
+      widget.onMembersUpdated?.call(_members);
+      _showSnack(
+        isPromote
+            ? 'Đã thêm quản trị viên: $name'
+            : 'Đã hủy quyền quản trị viên: $name',
+      );
+    } else {
+      _showSnack(result.error ?? 'Không thể cập nhật vai trò', isError: true);
+    }
+  }
+
+  Future<void> _kickMember(ApiGroupMember member) async {
+    final user = _userMap[member.userId];
+    final name = user?.fullName ?? 'thành viên này';
+    final confirmed = await _showConfirmDialog(
+      title: 'Xóa khỏi nhóm',
+      message: 'Xóa $name khỏi nhóm?',
+      confirmText: 'Xóa',
+    );
+    if (!confirmed) return;
+
+    _showLoading();
+    final result = await ContactsApiService.instance.kickMember(
+      conversationId: widget.conversationId,
+      targetUserId: member.userId,
+      currentMembers: _members,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+    if (result.isSuccess) {
+      setState(() {
+        _members =
+            _members.where((m) => m.userId != member.userId).toList();
+      });
+      widget.onMembersUpdated?.call(_members);
+      _showSnack('Đã xóa $name khỏi nhóm');
+    } else {
+      _showSnack(result.error ?? 'Không thể xóa thành viên', isError: true);
+    }
+  }
+
+  void _showMemberActions(ApiGroupMember member) {
+    if (!widget.canManage) return;
+    if (member.userId == (widget.myUserId ?? '')) return;
+
+    final user = _userMap[member.userId];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      useRootNavigator: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: Row(
+                    children: [
+                      AvatarWidget(
+                        url: user?.avatar,
+                        name: user?.fullName ?? '?',
+                        size: 40,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              user?.fullName ?? member.userId,
+                              style: const TextStyle(
+                                fontFamily: 'Inter',
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Text(
+                              member.role == 'ADMIN'
+                                  ? 'Quản trị viên'
+                                  : 'Thành viên',
+                              style: const TextStyle(
+                                fontFamily: 'Inter',
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: AppColors.divider),
+                if (member.role != 'ADMIN')
+                  _MembersSheetActionTile(
+                    icon: Icons.star_rounded,
+                    color: AppColors.primary,
+                    label: 'Thêm quản trị viên',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _changeRole(member, 'ADMIN');
+                    },
+                  ),
+                if (member.role == 'ADMIN')
+                  _MembersSheetActionTile(
+                    icon: Icons.person_rounded,
+                    color: AppColors.textSecondary,
+                    label: 'Hủy quản trị viên',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _changeRole(member, 'MEMBER');
+                    },
+                  ),
+                _MembersSheetActionTile(
+                  icon: Icons.person_remove_rounded,
+                  color: AppColors.error,
+                  label: 'Xóa khỏi nhóm',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _kickMember(member);
+                  },
+                ),
+                _MembersSheetActionTile(
+                  icon: Icons.close_rounded,
+                  color: AppColors.textHint,
+                  label: 'Đóng',
+                  onTap: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.55,
+      maxChildSize: 0.9,
+      builder: (_, ctrl) => Column(
+        children: [
+          Container(
+            width: 36,
+            height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Row(
+              children: [
+                Text(
+                  'Thành viên (${_members.length})',
+                  style: const TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.divider),
+          Expanded(
+            child: _loading
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary),
+                  )
+                : _error != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(
+                              fontFamily: 'Inter',
+                              color: AppColors.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: ctrl,
+                        itemCount: _members.length,
+                        itemBuilder: (_, i) {
+                          final m = _members[i];
+                          final user = _userMap[m.userId];
+                          final name = _displayName(m);
+                          final isAdmin = m.role == 'ADMIN';
+                          final canTap = widget.canManage &&
+                              m.userId != (widget.myUserId ?? '');
+                          return ListTile(
+                            onTap: canTap ? () => _showMemberActions(m) : null,
+                            leading: AvatarWidget(
+                              url: user?.avatar,
+                              name: name,
+                              size: 40,
+                            ),
+                            title: Text(
+                              name,
+                              style: const TextStyle(
+                                fontFamily: 'Inter',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            subtitle: isAdmin
+                                ? const Text(
+                                    'Quản trị viên',
+                                    style: TextStyle(
+                                      fontFamily: 'Inter',
+                                      fontSize: 12,
+                                      color: AppColors.primary,
+                                    ),
+                                  )
+                                : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isAdmin)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryLight,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Text(
+                                      'Admin',
+                                      style: TextStyle(
+                                        fontFamily: 'Inter',
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                if (canTap) ...[
+                                  const SizedBox(width: 4),
+                                  const Icon(
+                                    Icons.more_vert_rounded,
+                                    size: 20,
+                                    color: AppColors.textHint,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MembersSheetActionTile extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final VoidCallback onTap;
+
+  const _MembersSheetActionTile({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: color, size: 18),
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: color == AppColors.textHint
+              ? AppColors.textSecondary
+              : AppColors.textPrimary,
+        ),
+      ),
     );
   }
 }

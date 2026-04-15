@@ -7,6 +7,7 @@ import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../navigation/app_router.dart';
 import '../group/group_chat_screen.dart';
+import '../group/group_members_screen.dart';
 import 'create_group_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
@@ -432,8 +433,7 @@ class _GroupsTabState extends State<_GroupsTab> {
         // Chỉ hiển thị nhóm user là ADMIN hoặc MODERATOR
         list = list.where((g) {
           return g.members.any((m) =>
-              m.userId == myId &&
-              (m.role == 'ADMIN' || m.role == 'MODERATOR'));
+              m.userId == myId && m.role == 'ADMIN');
         }).toList();
         list.sort((a, b) {
           final ta = a.lastMessageAt ?? a.updatedAt;
@@ -566,6 +566,11 @@ class _GroupsTabState extends State<_GroupsTab> {
           else
             ...List.generate(filtered.length, (i) {
               final g = filtered[i];
+              final myId = authService.userId ?? '';
+              final myMember = g.members
+                  .where((m) => m.userId == myId)
+                  .firstOrNull;
+              final canManage = myMember?.role == 'ADMIN';
               final avatarUrls = g.avatar.isNotEmpty ? [g.avatar] : <String>[];
               return _GroupRow(
                 name: g.name.isEmpty ? 'Nhóm' : g.name,
@@ -575,12 +580,25 @@ class _GroupsTabState extends State<_GroupsTab> {
                     : _formatRelative(g.updatedAt),
                 avatarUrls: avatarUrls,
                 showDivider: i != filtered.length - 1,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => GroupChatScreen(group: g),
-                  ),
-                ),
+                canManage: canManage,
+                onTap: () async {
+                  final left = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => GroupChatScreen(group: g),
+                    ),
+                  );
+                  if (left == true && mounted) _load();
+                },
+                onManage: () async {
+                  final left = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => GroupMembersScreen(group: g),
+                    ),
+                  );
+                  if (left == true) _load(); // reload nếu vừa rời nhóm
+                },
               );
             }),
           const SizedBox(height: 12),
@@ -856,7 +874,9 @@ class _GroupRow extends StatelessWidget {
   final String trailing;
   final List<String> avatarUrls;
   final bool showDivider;
+  final bool canManage;
   final VoidCallback onTap;
+  final VoidCallback? onManage;
 
   const _GroupRow({
     required this.name,
@@ -864,7 +884,9 @@ class _GroupRow extends StatelessWidget {
     required this.trailing,
     required this.avatarUrls,
     required this.showDivider,
+    this.canManage = false,
     required this.onTap,
+    this.onManage,
   });
 
   @override
@@ -912,15 +934,54 @@ class _GroupRow extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    trailing,
-                    style: const TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textHint,
-                    ),
+                  const SizedBox(width: 6),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        trailing,
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textHint,
+                        ),
+                      ),
+                      if (canManage) ...[
+                        const SizedBox(height: 4),
+                        GestureDetector(
+                          onTap: onManage,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.manage_accounts_rounded,
+                                  size: 13,
+                                  color: AppColors.primary,
+                                ),
+                                SizedBox(width: 3),
+                                Text(
+                                  'Quản lý',
+                                  style: TextStyle(
+                                    fontFamily: 'Inter',
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),

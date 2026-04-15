@@ -35,14 +35,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     super.dispose();
   }
 
-  // Mở GroupOptionsScreen và nhận lại group đã cập nhật
+  // Mở GroupOptionsScreen: cập nhật nhóm hoặc rời nhóm (pop về danh sách)
   Future<void> _openOptions() async {
-    final updated = await Navigator.push<ApiGroupModel>(
+    // `true` = đã rời nhóm; [ApiGroupModel] = nhóm đã chỉnh từ tùy chọn
+    final result = await Navigator.push<Object?>(
       context,
       MaterialPageRoute(builder: (_) => GroupOptionsScreen(group: _group)),
     );
-    if (updated != null && mounted) {
-      setState(() => _group = updated);
+    if (!mounted) return;
+    if (result == true) {
+      Navigator.pop(context, true);
+    } else if (result is ApiGroupModel) {
+      setState(() => _group = result);
     }
   }
 
