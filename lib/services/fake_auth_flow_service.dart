@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../core/config/app_config.dart';
 import '../data/models/models.dart';
 
 class FakeAuthException implements Exception {
@@ -66,14 +67,9 @@ class FakeAuthFlowService {
   static const String emailOtpPurposeForgotPassword = 'forgot_password';
   static const String phoneOtpPurposeLogin = 'phone_login';
 
-  static const String _defaultBaseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:8081',
-  );
-
   final http.Client _client = http.Client();
 
-  String get _baseUrl => _defaultBaseUrl;
+  String get _baseUrl => AppConfig.baseUrl;
 
   bool isValidEmail(String email) {
     final regex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
@@ -198,9 +194,7 @@ class FakeAuthFlowService {
   }
 
   Future<OtpSession> resendOtp(String sessionId) async {
-    final data = await _post('/auth/otp/resend', {
-      'sessionId': sessionId,
-    });
+    final data = await _post('/auth/otp/resend', {'sessionId': sessionId});
 
     return _parseOtpSession(data, defaultEmail: '');
   }
@@ -244,9 +238,7 @@ class FakeAuthFlowService {
   }
 
   Future<void> logoutAllDevices(String userId) async {
-    await _post('/auth/logout-all-devices', {
-      'userId': userId,
-    });
+    await _post('/auth/logout-all-devices', {'userId': userId});
   }
 
   Future<OtpSession> requestPhoneLoginOtp({required String phone}) async {
@@ -288,12 +280,11 @@ class FakeAuthFlowService {
     String? dob,
     bool? isBlocked,
   }) async {
-    final body = <String, dynamic>{
-      'fullName': fullName.trim(),
-    };
+    final body = <String, dynamic>{'fullName': fullName.trim()};
 
     if (bio != null && bio.trim().isNotEmpty) body['bio'] = bio.trim();
-    if (gender != null && gender.trim().isNotEmpty) body['gender'] = gender.trim();
+    if (gender != null && gender.trim().isNotEmpty)
+      body['gender'] = gender.trim();
     if (dob != null && dob.trim().isNotEmpty) body['dob'] = dob.trim();
     if (isBlocked != null) {
       body['isBlocked'] = isBlocked;
@@ -312,7 +303,9 @@ class FakeAuthFlowService {
     required bool findByPhone,
   }) async {
     if (!isValidShowPhone(showPhone)) {
-      throw const FakeAuthException('showPhone chi nhan ALL | FRIEND | PRIVATE.');
+      throw const FakeAuthException(
+        'showPhone chi nhan ALL | FRIEND | PRIVATE.',
+      );
     }
 
     final data = await _patch('/users/$userId/privacy', {
@@ -328,9 +321,7 @@ class FakeAuthFlowService {
     required String userId,
     required bool isOnline,
   }) async {
-    final data = await _patch('/users/$userId/status', {
-      'isOnline': isOnline,
-    });
+    final data = await _patch('/users/$userId/status', {'isOnline': isOnline});
     return data;
   }
 
@@ -374,10 +365,10 @@ class FakeAuthFlowService {
       throw const FakeAuthException('contentType phai la image/*');
     }
 
-    final presign = await _post(presignPath ?? '/users/$userId/avatar/presign', {
-      'fileName': file.name,
-      'contentType': contentType,
-    });
+    final presign = await _post(
+      presignPath ?? '/users/$userId/avatar/presign',
+      {'fileName': file.name, 'contentType': contentType},
+    );
 
     final uploadUrl = (presign['uploadUrl'] ?? '').toString();
     final fileUrl = (presign['fileUrl'] ?? '').toString();
@@ -389,9 +380,7 @@ class FakeAuthFlowService {
     final bytes = await file.readAsBytes();
     final putRes = await _client.put(
       Uri.parse(uploadUrl),
-      headers: {
-        'Content-Type': contentType,
-      },
+      headers: {'Content-Type': contentType},
       body: bytes,
     );
 
@@ -499,8 +488,9 @@ class FakeAuthFlowService {
     Map<String, dynamic> data, {
     required String defaultEmail,
   }) {
-    final sessionId =
-        (data['sessionId'] ?? data['otpSessionId'] ?? '').toString().trim();
+    final sessionId = (data['sessionId'] ?? data['otpSessionId'] ?? '')
+        .toString()
+        .trim();
     if (sessionId.isEmpty) {
       throw const FakeAuthException('Khong nhan duoc sessionId tu backend.');
     }
@@ -508,7 +498,8 @@ class FakeAuthFlowService {
     final rawEmail = (data['email'] ?? defaultEmail).toString();
     final rawExpired = data['otpExpiredAt'] ?? data['expiredAt'];
 
-    final expiredAt = _parseDateTime(rawExpired) ??
+    final expiredAt =
+        _parseDateTime(rawExpired) ??
         DateTime.now().add(const Duration(minutes: 2));
 
     return OtpSession(
@@ -526,9 +517,8 @@ class FakeAuthFlowService {
       throw const FakeAuthException('Backend chua tra day du token.');
     }
 
-    final accessExpiredAt = _parseDateTime(
-          map['accessExpiredAt'] ?? map['accessTokenExpiredAt'],
-        ) ??
+    final accessExpiredAt =
+        _parseDateTime(map['accessExpiredAt'] ?? map['accessTokenExpiredAt']) ??
         DateTime.now().add(const Duration(minutes: 30));
 
     return AuthTokens(
@@ -543,19 +533,18 @@ class FakeAuthFlowService {
     final fullName = _pickString(map, ['fullName', 'name'], fallback: 'User');
     final phone = _pickString(map, ['phone'], fallback: '');
     final email = _pickString(map, ['email'], fallback: '');
-    final avatar = _pickString(
-      map,
-      ['avatar', 'avatarUrl'],
-      fallback: 'https://i.pravatar.cc/150?u=${id.isEmpty ? email : id}',
-    );
+    final avatar = _pickString(map, [
+      'avatar',
+      'avatarUrl',
+    ], fallback: 'https://i.pravatar.cc/150?u=${id.isEmpty ? email : id}');
 
     final statusMap = map['status'] is Map<String, dynamic>
         ? map['status'] as Map<String, dynamic>
         : <String, dynamic>{};
 
     final privacyMap = map['privacy'] is Map<String, dynamic>
-      ? map['privacy'] as Map<String, dynamic>
-      : <String, dynamic>{};
+        ? map['privacy'] as Map<String, dynamic>
+        : <String, dynamic>{};
 
     final isOnline = statusMap['isOnline'] == true;
     final lastSeen = _parseDateTime(statusMap['lastSeen']);
