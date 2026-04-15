@@ -213,6 +213,7 @@ class MessageMetadata {
   final String? fileName;
   final int? fileSize;
   final String? thumbnail;
+  final String? thumbnailUrl;
   final double? lat;
   final double? lng;
   final int? duration; // seconds (voice)
@@ -221,7 +222,8 @@ class MessageMetadata {
     return MessageMetadata(
       fileName: json['fileName'],
       fileSize: json['fileSize'],
-      thumbnail: json['thumbnail'],
+      thumbnail: json['thumbnail'] ?? json['thumbnailUrl'],
+      thumbnailUrl: json['thumbnailUrl'] ?? json['thumbnail'],
       lat: (json['lat'] as num?)?.toDouble(),
       lng: (json['lng'] as num?)?.toDouble(),
       duration: json['duration'],
@@ -232,6 +234,7 @@ class MessageMetadata {
     this.fileName,
     this.fileSize,
     this.thumbnail,
+    this.thumbnailUrl,
     this.lat,
     this.lng,
     this.duration,
