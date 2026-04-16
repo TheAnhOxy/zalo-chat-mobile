@@ -124,6 +124,7 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
           name: _group.name,
           avatar: _group.avatar,
           members: _group.members.where((m) => m.userId != member.userId).toList(),
+          description: _group.description,
           lastMessageContent: _group.lastMessageContent,
           lastMessageAt: _group.lastMessageAt,
           updatedAt: _group.updatedAt,
@@ -179,6 +180,7 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
                   ? ApiGroupMember(userId: m.userId, role: newRole)
                   : m)
               .toList(),
+          description: _group.description,
           lastMessageContent: _group.lastMessageContent,
           lastMessageAt: _group.lastMessageAt,
           updatedAt: _group.updatedAt,
@@ -435,7 +437,7 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, _group),
         ),
         actions: [
           if (_canManage)

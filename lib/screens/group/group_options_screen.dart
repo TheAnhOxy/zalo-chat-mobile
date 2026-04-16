@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/image_utils.dart';
 import '../../data/models/models.dart';
@@ -7,6 +10,10 @@ import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../widgets/common/common_widgets.dart';
+import 'group_chat_backgrounds.dart';
+import 'group_members_screen.dart';
+import 'group_message_search_screen.dart';
+import 'group_pinned_messages_screen.dart';
 
 class GroupOptionsScreen extends StatefulWidget {
   final ApiGroupModel group;
@@ -19,16 +26,14 @@ class GroupOptionsScreen extends StatefulWidget {
 
 class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
   bool _isPinned = false;
-  bool _isHidden = false;
   bool _isMuted = false;
+  DateTime? _muteUntil;
 
   late ApiGroupModel _group;
 
   bool get _isAdmin {
     final myId = authService.userId ?? '';
-    return _group.members.any(
-      (m) => m.userId == myId && m.role == 'ADMIN',
-    );
+    return _group.members.any((m) => m.userId == myId && m.role == 'ADMIN');
   }
 
   /// Chỉ còn một admin và đó là mình — không cho rời (cần thêm QTV khác trước).
@@ -36,14 +41,493 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
     final myId = authService.userId ?? '';
     final adminCount = _group.members.where((m) => m.role == 'ADMIN').length;
     if (adminCount != 1) return false;
-    return _group.members
-        .any((m) => m.userId == myId && m.role == 'ADMIN');
+    return _group.members.any((m) => m.userId == myId && m.role == 'ADMIN');
   }
+
+  String get _mutePrefKey => 'group_mute_${_group.id}';
+  String get _muteUntilPrefKey => 'group_mute_until_${_group.id}';
+  String get _bgPrefKey => 'group_chat_bg_${_group.id}';
+  String get _bgCustomPrefKey => 'group_chat_bg_custom_${_group.id}';
+  String get _bgOverridePrefKey => 'group_chat_bg_override_${_group.id}';
+  String get _descPrefKey => 'group_description_${_group.id}';
+  String get _pinPrefKey =>
+      'conv_pin_${authService.userId ?? 'me'}_${_group.id}';
 
   @override
   void initState() {
     super.initState();
     _group = widget.group;
+    _loadMutePref();
+    _loadDescriptionPref();
+    _loadPinPref();
+  }
+
+  void _loadPinPref() {
+    SharedPreferences.getInstance().then((p) {
+      if (!mounted) return;
+      setState(() => _isPinned = p.getBool(_pinPrefKey) ?? false);
+    });
+  }
+
+  Future<void> _setPinned(bool v) async {
+    setState(() => _isPinned = v);
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_pinPrefKey, v);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(v ? 'Đã ghim trò chuyện' : 'Đã bỏ ghim trò chuyện'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _loadMutePref() {
+    SharedPreferences.getInstance().then((p) {
+      if (!mounted) return;
+      final isMuted = p.getBool(_mutePrefKey) ?? false;
+      final untilMs = p.getInt(_muteUntilPrefKey);
+      final until = untilMs != null
+          ? DateTime.fromMillisecondsSinceEpoch(untilMs)
+          : null;
+
+      // Nếu đã hết hạn thì tự bật lại
+      if (until != null && DateTime.now().isAfter(until)) {
+        p.remove(_muteUntilPrefKey);
+        p.setBool(_mutePrefKey, false);
+        setState(() {
+          _isMuted = false;
+          _muteUntil = null;
+        });
+        return;
+      }
+
+      setState(() {
+        _isMuted = isMuted;
+        _muteUntil = until;
+      });
+    });
+  }
+
+  void _loadDescriptionPref() {
+    SharedPreferences.getInstance().then((p) {
+      if (!mounted) return;
+      final local = p.getString(_descPrefKey);
+      if (local == null) return;
+
+      final current = _group.description?.trim() ?? '';
+      final parsed = local.trim();
+      // Ưu tiên backend/khởi tạo group; chỉ dùng local khi đang rỗng.
+      if (current.isNotEmpty) return;
+      if (parsed.isEmpty) return;
+
+      setState(() {
+        _group = ApiGroupModel(
+          id: _group.id,
+          name: _group.name,
+          avatar: _group.avatar,
+          members: _group.members,
+          description: parsed,
+          lastMessageContent: _group.lastMessageContent,
+          lastMessageAt: _group.lastMessageAt,
+          updatedAt: _group.updatedAt,
+        );
+      });
+    });
+  }
+
+  Future<void> _persistMute(bool value, {DateTime? until}) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_mutePrefKey, value);
+    if (!value) {
+      await p.remove(_muteUntilPrefKey);
+      return;
+    }
+    if (until != null) {
+      await p.setInt(_muteUntilPrefKey, until.millisecondsSinceEpoch);
+    } else {
+      await p.remove(_muteUntilPrefKey);
+    }
+  }
+
+  void _openSearchMessages() {
+    final uid = authService.userId;
+    if (uid == null) return;
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            GroupMessageSearchScreen(conversationId: _group.id, userId: uid),
+      ),
+    );
+  }
+
+  Future<void> _openAddMembers() async {
+    if (!_isAdmin) {
+      _showLeaveSnack(
+        'Chỉ quản trị viên mới thêm được thành viên',
+        isError: true,
+      );
+      return;
+    }
+    final result = await Navigator.push<Object?>(
+      context,
+      MaterialPageRoute(builder: (_) => GroupMembersScreen(group: _group)),
+    );
+    if (!mounted) return;
+    if (result == true) {
+      Navigator.pop(context, true);
+    } else if (result is ApiGroupModel) {
+      setState(() => _group = result);
+    }
+  }
+
+  Future<void> _showWallpaperPicker() async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = (prefs.getInt(_bgPrefKey) ?? 0).clamp(
+      0,
+      GroupChatBackgrounds.count - 1,
+    );
+    final currentCustom = prefs.getString(_bgCustomPrefKey);
+
+    if (!mounted) return;
+    final result =
+        await Navigator.push<
+          ({int? index, String? customBase64, bool applyForAll})
+        >(
+          context,
+          MaterialPageRoute(
+            builder: (_) => _GroupWallpaperPickerScreen(
+              initialIndex: current,
+              initialCustomBase64: currentCustom,
+            ),
+          ),
+        );
+    if (result == null) return;
+
+    if (result.customBase64 != null) {
+      await prefs.setString(_bgCustomPrefKey, result.customBase64!);
+    } else {
+      await prefs.remove(_bgCustomPrefKey);
+    }
+    if (result.index != null) {
+      await prefs.setInt(_bgPrefKey, result.index!);
+    }
+
+    // Nếu tick "toàn nhóm" → không override cá nhân; nếu không tick → override.
+    await prefs.setBool(_bgOverridePrefKey, !result.applyForAll);
+
+    if (!mounted) return;
+    if (result.applyForAll) {
+      // Sync lên backend để tất cả thành viên thấy.
+      final isCustom = result.customBase64 != null;
+      if (isCustom) {
+        // Giới hạn để tránh payload quá lớn (demo).
+        if ((result.customBase64?.length ?? 0) > 350000) {
+          _showLeaveSnack(
+            'Ảnh nền quá lớn để áp dụng cho tất cả thành viên. Hãy chọn ảnh nhẹ hơn.',
+            isError: true,
+          );
+          return;
+        }
+      }
+
+      final type = isCustom ? 'CUSTOM' : 'PRESET';
+      final idx = isCustom ? 0 : (result.index ?? current);
+      final syncRes = await ContactsApiService.instance
+          .updateGroupChatBackground(
+            conversationId: _group.id,
+            type: type,
+            index: idx,
+            customBase64: isCustom ? result.customBase64 : null,
+          );
+      if (!mounted) return;
+      if (!syncRes.isSuccess) {
+        _showLeaveSnack(
+          syncRes.error ?? 'Không thể áp dụng hình nền cho tất cả thành viên',
+          isError: true,
+        );
+        return;
+      }
+
+      _showLeaveSnack('Đã áp dụng hình nền cho tất cả thành viên');
+      return;
+    }
+    if (result.customBase64 != null) {
+      _showLeaveSnack('Đã đặt nền: Ảnh từ thiết bị');
+      return;
+    }
+    final idx = result.index ?? current;
+    _showLeaveSnack('Đã đặt nền: ${GroupChatBackgrounds.labels[idx]}');
+  }
+
+  Future<void> _onMuteTap() async {
+    // Nếu đang mute → bấm là bật lại luôn
+    if (_isMuted) {
+      setState(() {
+        _isMuted = false;
+        _muteUntil = null;
+      });
+      await _persistMute(false);
+      if (!mounted) return;
+      _showLeaveSnack('Đã bật thông báo cho nhóm này');
+      return;
+    }
+
+    // Nếu chưa mute → mở sheet chọn thời gian (giống UI ảnh)
+    final selected = await _showMuteSheet();
+    if (selected == null) return;
+
+    final now = DateTime.now();
+    DateTime? until;
+    String msg = 'Đã tắt thông báo cho nhóm này';
+
+    switch (selected) {
+      case _MuteOption.oneHour:
+        until = now.add(const Duration(hours: 1));
+        msg = 'Đã tắt thông báo trong 1 giờ';
+        break;
+      case _MuteOption.fourHours:
+        until = now.add(const Duration(hours: 4));
+        msg = 'Đã tắt thông báo trong 4 giờ';
+        break;
+      case _MuteOption.until8am:
+        final eight = DateTime(now.year, now.month, now.day, 8);
+        // Nếu đã qua 8h sáng hôm nay → lấy 8h sáng ngày mai
+        until = now.isBefore(eight)
+            ? eight
+            : eight.add(const Duration(days: 1));
+        msg = 'Đã tắt thông báo đến 8 giờ sáng';
+        break;
+      case _MuteOption.untilTurnedOn:
+        until = null;
+        msg = 'Đã tắt thông báo cho đến khi được mở lại';
+        break;
+    }
+
+    setState(() {
+      _isMuted = true;
+      _muteUntil = until;
+    });
+    await _persistMute(true, until: until);
+    if (!mounted) return;
+    _showLeaveSnack(msg);
+  }
+
+  String _muteLabelForAction() {
+    if (!_isMuted) return 'Tắt\nthông báo';
+    if (_muteUntil == null) return 'Bật\nthông báo';
+    return 'Bật\nthông báo';
+  }
+
+  Future<_MuteOption?> _showMuteSheet() async {
+    return showModalBottomSheet<_MuteOption>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+      ),
+      builder: (ctx) {
+        Widget item(String label, _MuteOption opt) {
+          return InkWell(
+            onTap: () => Navigator.pop(ctx, opt),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 15,
+                  color: Color(0xFF222222),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 4,
+                margin: const EdgeInsets.only(top: 10, bottom: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE6E6E6),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+                child: Row(
+                  children: const [
+                    Expanded(
+                      child: Text(
+                        'Tắt thông báo tin nhắn',
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF222222),
+                        ),
+                      ),
+                    ),
+                    // Bỏ icon cài đặt theo yêu cầu
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              item('Trong 1 giờ', _MuteOption.oneHour),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              item('Trong 4 giờ', _MuteOption.fourHours),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              item('Đến 8 giờ sáng', _MuteOption.until8am),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              item('Cho đến khi được mở lại', _MuteOption.untilTurnedOn),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _changeGroupAvatar() async {
+    if (!_isAdmin) {
+      _showLeaveSnack('Chỉ quản trị viên mới đổi được ảnh nhóm', isError: true);
+      return;
+    }
+
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.camera_alt_outlined,
+                color: AppColors.primary,
+              ),
+              title: const Text(
+                'Chụp ảnh',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.photo_library_outlined,
+                color: AppColors.primary,
+              ),
+              title: const Text(
+                'Chọn từ thư viện',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    final picker = ImagePicker();
+    final file = await picker.pickImage(
+      source: source,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 85,
+    );
+    if (file == null || !mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+
+    try {
+      final bytes = await file.readAsBytes();
+      final ext = file.name.split('.').last.toLowerCase();
+      // Đồng bộ với create_group_screen (upload S3 qua conversations/avatar/upload)
+      const mimeMap = {
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'bmp': 'image/bmp',
+        'tiff': 'image/tiff',
+        'tif': 'image/tiff',
+        'svg': 'image/svg+xml',
+        'ico': 'image/x-icon',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+      };
+      final mime = mimeMap[ext] ?? 'image/jpeg';
+      final url = await ContactsApiService.instance.uploadGroupAvatar(
+        bytes: bytes,
+        fileName: file.name,
+        mimeType: mime,
+      );
+      final result = await ContactsApiService.instance.updateConversationAvatar(
+        conversationId: _group.id,
+        avatarUrl: url,
+      );
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+      if (!mounted) return;
+      if (result.isSuccess) {
+        setState(() {
+          _group = ApiGroupModel(
+            id: _group.id,
+            name: _group.name,
+            avatar: url,
+            members: _group.members,
+            description: _group.description,
+            lastMessageContent: _group.lastMessageContent,
+            lastMessageAt: _group.lastMessageAt,
+            updatedAt: _group.updatedAt,
+          );
+        });
+        _showLeaveSnack('Đã cập nhật ảnh nhóm');
+      } else {
+        _showLeaveSnack(
+          result.error ?? 'Không thể cập nhật ảnh',
+          isError: true,
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted) {
+        _showLeaveSnack('Upload thất bại: $e', isError: true);
+      }
+    }
   }
 
   // ── Đổi tên nhóm ──────────────────────────────────────────────
@@ -65,7 +549,9 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
           controller: ctrl,
           autofocus: true,
           style: const TextStyle(
-              fontFamily: 'Inter', color: AppColors.textPrimary),
+            fontFamily: 'Inter',
+            color: AppColors.textPrimary,
+          ),
           decoration: InputDecoration(
             hintText: 'Nhập tên nhóm',
             hintStyle: const TextStyle(color: AppColors.textHint),
@@ -80,29 +566,37 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Huỷ',
-                style: TextStyle(color: AppColors.textSecondary)),
+            child: const Text(
+              'Huỷ',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
           ),
           TextButton(
             onPressed: () {
               final name = ctrl.text.trim();
               if (name.isNotEmpty) {
-                setState(() => _group = ApiGroupModel(
-                      id: _group.id,
-                      name: name,
-                      avatar: _group.avatar,
-                      members: _group.members,
-                      lastMessageContent: _group.lastMessageContent,
-                      lastMessageAt: _group.lastMessageAt,
-                      updatedAt: _group.updatedAt,
-                    ));
+                setState(
+                  () => _group = ApiGroupModel(
+                    id: _group.id,
+                    name: name,
+                    avatar: _group.avatar,
+                    members: _group.members,
+                    description: _group.description,
+                    lastMessageContent: _group.lastMessageContent,
+                    lastMessageAt: _group.lastMessageAt,
+                    updatedAt: _group.updatedAt,
+                  ),
+                );
               }
               Navigator.pop(context);
             },
-            child: const Text('Lưu',
-                style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w700)),
+            child: const Text(
+              'Lưu',
+              style: TextStyle(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -141,27 +635,35 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         title: const Text(
           'Rời nhóm',
           style: TextStyle(
-              fontFamily: 'Inter',
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary),
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
         ),
         content: Text(
           'Bạn có chắc muốn rời khỏi nhóm "${_group.name}"?',
           style: const TextStyle(
-              fontFamily: 'Inter', color: AppColors.textSecondary),
+            fontFamily: 'Inter',
+            color: AppColors.textSecondary,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Huỷ',
-                style: TextStyle(color: AppColors.textSecondary)),
+            child: const Text(
+              'Huỷ',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Rời nhóm',
-                style: TextStyle(
-                    color: AppColors.error,
-                    fontWeight: FontWeight.w700)),
+            child: const Text(
+              'Rời nhóm',
+              style: TextStyle(
+                color: AppColors.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -207,30 +709,83 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         title: const Text(
           'Xoá lịch sử trò chuyện',
           style: TextStyle(
-              fontFamily: 'Inter',
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary),
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
         ),
         content: const Text(
           'Toàn bộ tin nhắn sẽ bị xoá khỏi thiết bị của bạn. Thao tác này không thể hoàn tác.',
-          style: TextStyle(
-              fontFamily: 'Inter', color: AppColors.textSecondary),
+          style: TextStyle(fontFamily: 'Inter', color: AppColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Huỷ',
-                style: TextStyle(color: AppColors.textSecondary)),
+            child: const Text(
+              'Huỷ',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Xoá',
-                style: TextStyle(
-                    color: AppColors.error,
-                    fontWeight: FontWeight.w700)),
+            onPressed: () async {
+              Navigator.pop(context);
+              final myId = authService.userId ?? '';
+              if (myId.isEmpty) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Chưa đăng nhập'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+                return;
+              }
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Đang xoá lịch sử...'),
+                  behavior: SnackBarBehavior.floating,
+                  duration: Duration(seconds: 1),
+                ),
+              );
+
+              final ok = await apiService.deleteConversationHistoryForMe(
+                _group.id,
+                myId,
+              );
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    ok ? 'Đã xoá lịch sử trò chuyện' : 'Xoá thất bại',
+                  ),
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+            child: const Text(
+              'Xoá',
+              style: TextStyle(
+                color: AppColors.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  void _openStorageSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => _ConversationStorageSheet(conversationId: _group.id),
     );
   }
 
@@ -278,21 +833,17 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
             _buildMediaTile(),
             _buildDivider(),
             _buildNavTile(
-              icon: Icons.calendar_month_outlined,
-              label: 'Lịch nhóm',
-              onTap: () {},
-            ),
-            _buildDivider(),
-            _buildNavTile(
               icon: Icons.push_pin_outlined,
               label: 'Tin nhắn đã ghim',
-              onTap: () {},
-            ),
-            _buildDivider(),
-            _buildNavTile(
-              icon: Icons.bar_chart_rounded,
-              label: 'Bình chọn',
-              onTap: () {},
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => GroupPinnedMessagesScreen(
+                    conversationId: _group.id,
+                    groupName: _group.name.isEmpty ? 'Nhóm' : _group.name,
+                  ),
+                ),
+              ),
             ),
           ]),
 
@@ -320,20 +871,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               icon: Icons.push_pin_outlined,
               label: 'Ghim trò chuyện',
               value: _isPinned,
-              onChanged: (v) => setState(() => _isPinned = v),
-            ),
-            _buildDivider(),
-            _buildToggleTile(
-              icon: Icons.visibility_off_outlined,
-              label: 'Ẩn trò chuyện',
-              value: _isHidden,
-              onChanged: (v) => setState(() => _isHidden = v),
-            ),
-            _buildDivider(),
-            _buildNavTile(
-              icon: Icons.person_outline_rounded,
-              label: 'Cài đặt cá nhân',
-              onTap: () {},
+              onChanged: (v) => _setPinned(v),
             ),
           ]),
 
@@ -342,15 +880,9 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
           // ── Section 3: Báo xấu / Dung lượng
           _buildSection([
             _buildNavTile(
-              icon: Icons.warning_amber_outlined,
-              label: 'Báo xấu',
-              onTap: () {},
-            ),
-            _buildDivider(),
-            _buildNavTile(
               icon: Icons.storage_outlined,
               label: 'Dung lượng trò chuyện',
-              onTap: () {},
+              onTap: _openStorageSheet,
             ),
           ]),
 
@@ -388,37 +920,53 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
         children: [
-          // Avatar
-          Stack(
-            children: [
-              _group.avatar.isNotEmpty
-                  ? ClipOval(
-                      child: Image.network(
-                        webSafeImageUrl(_group.avatar),
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            _defaultGroupAvatar(80),
+          // Avatar: chạm / icon máy ảnh — QTV; upload S3 + PATCH (create_group_screen)
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _isAdmin ? _changeGroupAvatar : null,
+              borderRadius: BorderRadius.circular(48),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  _group.avatar.isNotEmpty
+                      ? ClipOval(
+                          child: Image.network(
+                            webSafeImageUrl(_group.avatar),
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                _defaultGroupAvatar(80),
+                          ),
+                        )
+                      : _defaultGroupAvatar(80),
+                  if (_isAdmin)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Material(
+                        color: AppColors.bgDark,
+                        shape: const CircleBorder(
+                          side: BorderSide(color: AppColors.bgCard, width: 2),
+                        ),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: _changeGroupAvatar,
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.camera_alt_outlined,
+                              size: 14,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
                       ),
-                    )
-                  : _defaultGroupAvatar(80),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(
-                    color: AppColors.bgDark,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.bgCard, width: 2),
-                  ),
-                  child: const Icon(Icons.camera_alt_outlined,
-                      size: 14, color: AppColors.textSecondary),
-                ),
+                    ),
+                ],
               ),
-            ],
+            ),
           ),
 
           const SizedBox(height: 10),
@@ -443,8 +991,11 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                 ),
                 if (_isAdmin) ...[
                   const SizedBox(width: 6),
-                  const Icon(Icons.edit_outlined,
-                      size: 18, color: AppColors.textSecondary),
+                  const Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: AppColors.textSecondary,
+                  ),
                 ],
               ],
             ),
@@ -465,24 +1016,24 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
           _ActionButton(
             icon: Icons.search_rounded,
             label: 'Tìm\ntin nhắn',
-            onTap: () {},
+            onTap: _openSearchMessages,
           ),
           _ActionButton(
             icon: Icons.person_add_alt_1_outlined,
             label: 'Thêm\nthành viên',
-            onTap: () {},
+            onTap: _openAddMembers,
           ),
           _ActionButton(
             icon: Icons.wallpaper_rounded,
-            label: 'Đổi\nhinh nền',
-            onTap: () {},
+            label: 'Đổi\nhình nền',
+            onTap: _showWallpaperPicker,
           ),
           _ActionButton(
             icon: _isMuted
                 ? Icons.notifications_off_outlined
                 : Icons.notifications_outlined,
-            label: _isMuted ? 'Bật\nthông báo' : 'Tắt\nthông báo',
-            onTap: () => setState(() => _isMuted = !_isMuted),
+            label: _muteLabelForAction(),
+            onTap: _onMuteTap,
           ),
         ],
       ),
@@ -491,11 +1042,14 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
 
   // ── Mô tả nhóm ───────────────────────────────────────────────
   Widget _buildDescriptionTile() {
+    final desc = _group.description?.trim() ?? '';
+    final title = desc.isEmpty ? 'Thêm mô tả nhóm' : 'Mô tả nhóm';
     return InkWell(
-      onTap: () {},
+      onTap: () => _showGroupDescriptionDialog(editable: _isAdmin),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
               width: 32,
@@ -504,22 +1058,168 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                 color: const Color(0xFFE8F5E9),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.info_outline_rounded,
-                  size: 18, color: AppColors.primary),
-            ),
-            const SizedBox(width: 14),
-            const Text(
-              'Thêm mô tả nhóm',
-              style: TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 14,
-                color: AppColors.textSecondary,
+              child: const Icon(
+                Icons.info_outline_rounded,
+                size: 18,
+                color: AppColors.primary,
               ),
             ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 14,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    desc.isEmpty ? 'Chưa có mô tả nhóm' : desc,
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 12,
+                      color: desc.isEmpty
+                          ? AppColors.textHint
+                          : AppColors.primary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            if (_isAdmin)
+              const Icon(
+                Icons.edit_outlined,
+                size: 18,
+                color: AppColors.textHint,
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showGroupDescriptionDialog({required bool editable}) async {
+    final initial = _group.description?.trim() ?? '';
+    final ctrl = TextEditingController(text: initial);
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !editable,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        title: Text(
+          editable ? 'Mô tả nhóm' : 'Mô tả nhóm',
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: editable,
+          readOnly: !editable,
+          minLines: 3,
+          maxLines: 6,
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            color: AppColors.textPrimary,
+          ),
+          decoration: InputDecoration(
+            hintText: 'Nhập mô tả cho nhóm',
+            hintStyle: const TextStyle(color: AppColors.textHint),
+            filled: true,
+            fillColor: AppColors.bgDark,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              editable ? 'Huỷ' : 'Đóng',
+              style: TextStyle(
+                color: editable ? AppColors.textSecondary : AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (editable)
+            TextButton(
+              onPressed: () async {
+                final newDesc = ctrl.text.trim();
+                Navigator.pop(context);
+                await _saveGroupDescription(newDesc);
+              },
+              child: Text(
+                'Lưu',
+                style: TextStyle(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    ctrl.dispose();
+  }
+
+  Future<void> _saveGroupDescription(String newDesc) async {
+    final desc = newDesc.trim();
+
+    // Cập nhật local trước để UI phản hồi ngay.
+    if (!mounted) return;
+    setState(() {
+      _group = ApiGroupModel(
+        id: _group.id,
+        name: _group.name,
+        avatar: _group.avatar,
+        members: _group.members,
+        description: desc,
+        lastMessageContent: _group.lastMessageContent,
+        lastMessageAt: _group.lastMessageAt,
+        updatedAt: _group.updatedAt,
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    if (desc.isEmpty) {
+      await prefs.remove(_descPrefKey);
+    } else {
+      await prefs.setString(_descPrefKey, desc);
+    }
+
+    _showLeaveLoading();
+    final result = await ContactsApiService.instance.updateGroupDescription(
+      conversationId: _group.id,
+      description: desc,
+    );
+
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      _showLeaveSnack(
+        result.error ?? 'Không thể cập nhật mô tả nhóm',
+        isError: true,
+      );
+      return;
+    }
+
+    _showLeaveSnack('Đã cập nhật mô tả nhóm');
   }
 
   // ── Ảnh, file, link ──────────────────────────────────────────
@@ -540,8 +1240,11 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                     color: const Color(0xFFFFF3E0),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.folder_outlined,
-                      size: 18, color: Color(0xFFFF9800)),
+                  child: const Icon(
+                    Icons.folder_outlined,
+                    size: 18,
+                    color: Color(0xFFFF9800),
+                  ),
                 ),
                 const SizedBox(width: 14),
                 const Expanded(
@@ -555,8 +1258,11 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                     ),
                   ),
                 ),
-                const Icon(Icons.chevron_right_rounded,
-                    color: AppColors.textHint, size: 20),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textHint,
+                  size: 20,
+                ),
               ],
             ),
             const SizedBox(height: 10),
@@ -565,14 +1271,14 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               height: 60,
               child: Row(
                 children: [
-                  _mediaThumbnail(Icons.image_outlined,
-                      const Color(0xFFE8F5E9)),
+                  _mediaThumbnail(
+                    Icons.image_outlined,
+                    const Color(0xFFE8F5E9),
+                  ),
                   const SizedBox(width: 6),
-                  _mediaThumbnail(Icons.code_rounded,
-                      const Color(0xFFE8F5E9)),
+                  _mediaThumbnail(Icons.code_rounded, const Color(0xFFE8F5E9)),
                   const SizedBox(width: 6),
-                  _mediaThumbnail(Icons.link_rounded,
-                      const Color(0xFFF3E5F5)),
+                  _mediaThumbnail(Icons.link_rounded, const Color(0xFFF3E5F5)),
                   const SizedBox(width: 6),
                   Expanded(
                     child: InkWell(
@@ -584,8 +1290,11 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Center(
-                          child: Icon(Icons.arrow_forward_rounded,
-                              color: AppColors.primary, size: 20),
+                          child: Icon(
+                            Icons.arrow_forward_rounded,
+                            color: AppColors.primary,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ),
@@ -613,19 +1322,9 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
 
   // ── Link nhóm ────────────────────────────────────────────────
   Widget _buildLinkTile() {
-    final link = 'https://zalo.me/g/${_group.id.substring(0, 8)}';
+    final linkPreview = 'Link mời vào nhóm';
     return InkWell(
-      onTap: () {
-        Clipboard.setData(ClipboardData(text: link));
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Đã sao chép link nhóm'),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
-            backgroundColor: Color(0xFF1C1C1C),
-          ),
-        );
-      },
+      onTap: _openInviteLinkSheet,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
@@ -637,8 +1336,11 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                 color: const Color(0xFFE8F5E9),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.link_rounded,
-                  size: 18, color: AppColors.primary),
+              child: const Icon(
+                Icons.link_rounded,
+                size: 18,
+                color: AppColors.primary,
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -656,7 +1358,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    link,
+                    linkPreview,
                     style: const TextStyle(
                       fontFamily: 'Inter',
                       fontSize: 12,
@@ -668,11 +1370,28 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                 ],
               ),
             ),
-            const Icon(Icons.copy_outlined,
-                size: 16, color: AppColors.textHint),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: AppColors.textHint,
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _openInviteLinkSheet() async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      showDragHandle: true,
+      builder: (_) {
+        return _InviteLinkSheet(conversationId: _group.id);
+      },
     );
   }
 
@@ -697,6 +1416,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               name: _group.name,
               avatar: _group.avatar,
               members: updated,
+              description: _group.description,
               lastMessageContent: _group.lastMessageContent,
               lastMessageAt: _group.lastMessageAt,
               updatedAt: _group.updatedAt,
@@ -711,17 +1431,14 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
   Widget _buildSection(List<Widget> children) {
     return Container(
       color: AppColors.bgCard,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: children,
-      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: children),
     );
   }
 
   Widget _buildDivider() => const Padding(
-        padding: EdgeInsets.only(left: 62),
-        child: Divider(height: 1, thickness: 1, color: AppColors.divider),
-      );
+    padding: EdgeInsets.only(left: 62),
+    child: Divider(height: 1, thickness: 1, color: AppColors.divider),
+  );
 
   Widget _buildNavTile({
     required IconData icon,
@@ -752,13 +1469,13 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
                 ),
               ),
             ),
-            if (trailing != null) ...[
-              trailing,
-              const SizedBox(width: 4),
-            ],
+            if (trailing != null) ...[trailing, const SizedBox(width: 4)],
             if (trailing == null && labelColor == null)
-              const Icon(Icons.chevron_right_rounded,
-                  size: 20, color: AppColors.textHint),
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: AppColors.textHint,
+              ),
           ],
         ),
       ),
@@ -807,8 +1524,463 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
         color: Color(0xFFE5E7EB),
         shape: BoxShape.circle,
       ),
-      child: Icon(Icons.group,
-          color: AppColors.textSecondary, size: size * 0.5),
+      child: Icon(
+        Icons.group,
+        color: AppColors.textSecondary,
+        size: size * 0.5,
+      ),
+    );
+  }
+}
+
+class _GroupWallpaperPickerScreen extends StatefulWidget {
+  final int initialIndex;
+  final String? initialCustomBase64;
+
+  const _GroupWallpaperPickerScreen({
+    required this.initialIndex,
+    required this.initialCustomBase64,
+  });
+
+  @override
+  State<_GroupWallpaperPickerScreen> createState() =>
+      _GroupWallpaperPickerScreenState();
+}
+
+class _GroupWallpaperPickerScreenState
+    extends State<_GroupWallpaperPickerScreen> {
+  late int _selectedIndex;
+  bool _applyForAllMembers = true;
+  String? _customBase64;
+  bool _selectingCustom = false;
+  bool _pickingImage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIndex = widget.initialIndex;
+    _customBase64 = widget.initialCustomBase64;
+    _selectingCustom = _customBase64 != null;
+  }
+
+  Future<void> _pickCustomWallpaper(ImageSource source) async {
+    if (_pickingImage) return;
+    setState(() => _pickingImage = true);
+    try {
+      final picker = ImagePicker();
+      final file = await picker.pickImage(
+        source: source,
+        maxWidth: 1080,
+        maxHeight: 1920,
+        imageQuality: 80,
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      final b64 = base64Encode(bytes);
+      if (!mounted) return;
+      setState(() {
+        _customBase64 = b64;
+        _selectingCustom = true;
+      });
+    } finally {
+      if (mounted) setState(() => _pickingImage = false);
+    }
+  }
+
+  Future<void> _openCameraTile() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.camera_alt_outlined,
+                color: AppColors.primary,
+              ),
+              title: const Text(
+                'Chụp ảnh',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.photo_library_outlined,
+                color: AppColors.primary,
+              ),
+              title: const Text(
+                'Chọn từ thư viện',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+            if (_customBase64 != null) ...[
+              const Divider(height: 1, color: AppColors.divider),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline,
+                  color: AppColors.error,
+                ),
+                title: const Text(
+                  'Xóa ảnh nền đã chọn',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                onTap: () => Navigator.pop(context, null),
+              ),
+            ],
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    if (source == null) {
+      if (_customBase64 != null) {
+        setState(() {
+          _customBase64 = null;
+          _selectingCustom = false;
+        });
+      }
+      return;
+    }
+    await _pickCustomWallpaper(source);
+  }
+
+  Widget _previewTile({
+    required Widget child,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Stack(
+          children: [
+            Positioned.fill(child: child),
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: active ? AppColors.primary : const Color(0x33000000),
+                    width: active ? 2 : 1,
+                  ),
+                ),
+              ),
+            ),
+            if (active)
+              const Positioned(
+                left: 6,
+                bottom: 6,
+                child: CircleAvatar(
+                  radius: 11,
+                  backgroundColor: AppColors.primary,
+                  child: Icon(
+                    Icons.check_rounded,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _miniChatPreview({LinearGradient? gradient, ImageProvider? image}) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: gradient,
+        image: image != null
+            ? DecorationImage(image: image, fit: BoxFit.cover)
+            : null,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeImage = _selectingCustom && _customBase64 != null
+        ? MemoryImage(base64Decode(_customBase64!))
+        : null;
+    final activeGradient = activeImage == null
+        ? GroupChatBackgrounds.gradientAt(_selectedIndex)
+        : null;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFDDE3EE),
+      appBar: AppBar(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Đổi hình nền',
+          style: TextStyle(
+            fontFamily: 'Inter',
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, (
+              index: _selectingCustom ? null : _selectedIndex,
+              customBase64: _selectingCustom ? _customBase64 : null,
+              applyForAll: _applyForAllMembers,
+            )),
+            child: const Text(
+              'XONG',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: activeGradient,
+                image: activeImage != null
+                    ? DecorationImage(image: activeImage, fit: BoxFit.cover)
+                    : null,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 78,
+            child: const SizedBox.shrink(),
+          ),
+          Positioned(
+            left: 8,
+            right: 8,
+            top: 10,
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(6),
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 5,
+                            crossAxisSpacing: 3,
+                            mainAxisSpacing: 3,
+                            childAspectRatio: 1,
+                          ),
+                      itemCount: GroupChatBackgrounds.count + 1,
+                      itemBuilder: (_, i) {
+                        if (i == 0) {
+                          final active = _selectingCustom;
+                          return _previewTile(
+                            active: active,
+                            onTap: () {
+                              if (_customBase64 != null) {
+                                setState(() => _selectingCustom = true);
+                              } else {
+                                _openCameraTile();
+                              }
+                            },
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: _customBase64 != null
+                                      ? _miniChatPreview(
+                                          image: MemoryImage(
+                                            base64Decode(_customBase64!),
+                                          ),
+                                        )
+                                      : Container(
+                                          color: const Color(0xFF1EA5FF),
+                                          child: const Icon(
+                                            Icons.camera_alt_rounded,
+                                            color: Colors.white,
+                                            size: 22,
+                                          ),
+                                        ),
+                                ),
+                                Positioned(
+                                  right: 2,
+                                  top: 2,
+                                  child: GestureDetector(
+                                    onTap: _openCameraTile,
+                                    child: Container(
+                                      width: 16,
+                                      height: 16,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.95),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        _customBase64 == null
+                                            ? Icons.add_rounded
+                                            : Icons.edit_outlined,
+                                        size: 12,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        final presetIndex = i - 1;
+                        final active =
+                            !_selectingCustom && presetIndex == _selectedIndex;
+                        return _previewTile(
+                          active: active,
+                          onTap: () => setState(() {
+                            _selectedIndex = presetIndex;
+                            _selectingCustom = false;
+                          }),
+                          child: _miniChatPreview(
+                            gradient: GroupChatBackgrounds.gradientAt(
+                              presetIndex,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _applyForAllMembers,
+                          activeColor: AppColors.primary,
+                          onChanged: (v) =>
+                              setState(() => _applyForAllMembers = v ?? false),
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'Đổi hình nền cho tất cả thành viên',
+                            style: TextStyle(
+                              fontFamily: 'Inter',
+                              fontSize: 14,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _groupFooterPreview(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _groupFooterPreview() {
+    const footerBg = AppColors.bgCard;
+    const inputBg = AppColors.bgInput;
+    const actionColor = AppColors.primary;
+
+    Widget actionIcon(IconData icon) {
+      return Padding(
+        padding: const EdgeInsets.all(6),
+        child: Icon(icon, color: actionColor, size: 24),
+      );
+    }
+
+    return Container(
+      color: footerBg,
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
+      child: Row(
+        children: [
+          actionIcon(Icons.add_circle),
+          actionIcon(Icons.camera_alt_rounded),
+          actionIcon(Icons.image_rounded),
+          actionIcon(Icons.mic_none_rounded),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Container(
+              height: 40,
+              decoration: BoxDecoration(
+                color: inputBg,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Nhắn tin',
+                      style: TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: 14,
+                        color: AppColors.textHint,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Icon(
+                    Icons.sentiment_satisfied_alt_outlined,
+                    color: actionColor,
+                    size: 22,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          actionIcon(Icons.thumb_up),
+        ],
+      ),
     );
   }
 }
@@ -833,14 +2005,415 @@ class _GroupMembersSheetBody extends StatefulWidget {
   State<_GroupMembersSheetBody> createState() => _GroupMembersSheetBodyState();
 }
 
+// ── Invite link sheet (top-level) ─────────────────────────────────────────────
+class _InviteLinkSheet extends StatefulWidget {
+  final String conversationId;
+  const _InviteLinkSheet({required this.conversationId});
+
+  @override
+  State<_InviteLinkSheet> createState() => _InviteLinkSheetState();
+}
+
+class _InviteLinkSheetState extends State<_InviteLinkSheet> {
+  bool _loading = true;
+  bool _enabled = true;
+  String _link = '';
+  bool _working = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final res = await ContactsApiService.instance.getGroupInviteLink(
+      widget.conversationId,
+    );
+    if (!mounted) return;
+    if (!res.isSuccess) {
+      setState(() {
+        _loading = false;
+        _link = '';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.error ?? 'Không lấy được link nhóm'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final data = res.data ?? const <String, dynamic>{};
+    setState(() {
+      _enabled = (data['enabled'] as bool?) ?? true;
+      _link = (data['link'] ?? '').toString();
+      _loading = false;
+    });
+  }
+
+  Future<void> _toggle(bool v) async {
+    setState(() {
+      _enabled = v;
+      _working = true;
+    });
+    final res = await ContactsApiService.instance.setGroupInviteLinkEnabled(
+      conversationId: widget.conversationId,
+      enabled: v,
+    );
+    if (!mounted) return;
+    setState(() => _working = false);
+    if (!res.isSuccess) {
+      setState(() => _enabled = !v);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.error ?? 'Không cập nhật được'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _copy() async {
+    if (_link.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: _link));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Đã sao chép link nhóm'),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _regenerate() async {
+    setState(() => _working = true);
+    final res = await ContactsApiService.instance.regenerateGroupInviteLink(
+      widget.conversationId,
+    );
+    if (!mounted) return;
+    setState(() => _working = false);
+    if (!res.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.error ?? 'Không tạo được link mới'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final data = res.data ?? const <String, dynamic>{};
+    setState(() {
+      _enabled = (data['enabled'] as bool?) ?? true;
+      _link = (data['link'] ?? '').toString();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Link nhóm',
+            style: TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Cho phép mời bằng link',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              Switch(
+                value: _enabled,
+                onChanged: _working ? null : _toggle,
+                activeColor: AppColors.primary,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.primary),
+              ),
+            )
+          else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.bgInput,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.divider),
+              ),
+              child: Text(
+                _enabled
+                    ? (_link.isEmpty ? 'Chưa có link' : _link)
+                    : 'Link mời đã tắt',
+                style: const TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 13,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: (!_enabled || _link.isEmpty || _working)
+                        ? null
+                        : _copy,
+                    icon: const Icon(Icons.copy_outlined, size: 18),
+                    label: const Text('Sao chép'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.primary),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      textStyle: const TextStyle(
+                        fontFamily: 'Inter',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _working ? null : _regenerate,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Tạo mới'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      textStyle: const TextStyle(
+                        fontFamily: 'Inter',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Storage sheet ─────────────────────────────────────────────────────────────
+class _ConversationStorageSheet extends StatefulWidget {
+  final String conversationId;
+  const _ConversationStorageSheet({required this.conversationId});
+
+  @override
+  State<_ConversationStorageSheet> createState() =>
+      _ConversationStorageSheetState();
+}
+
+class _ConversationStorageSheetState extends State<_ConversationStorageSheet> {
+  bool _loading = true;
+  int _count = 0;
+  int _bytesText = 0;
+  int _bytesMedia = 0;
+  int _bytesVideo = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  String _fmtBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    double v = bytes.toDouble();
+    int i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i++;
+    }
+    return '${v.toStringAsFixed(i == 0 ? 0 : 1)} ${units[i]}';
+  }
+
+  Future<void> _load() async {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      return;
+    }
+
+    setState(() => _loading = true);
+    // Lấy tối đa 200 tin gần nhất để tính nhanh (có thể nâng cấp phân trang sau)
+    final msgs = await apiService.getMessages(widget.conversationId, myId);
+    int textBytes = 0;
+    int mediaBytes = 0;
+    int videoBytes = 0;
+
+    for (final m in msgs) {
+      final fs = m.metadata?.fileSize;
+      if (fs != null && fs > 0) {
+        mediaBytes += fs;
+        if (m.type == 'VIDEO') {
+          videoBytes += fs;
+        }
+      } else {
+        textBytes += utf8.encode(m.content).length;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _count = msgs.length;
+      _bytesText = textBytes;
+      _bytesMedia = mediaBytes;
+      _bytesVideo = videoBytes;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _bytesText + _bytesMedia;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Dung lượng trò chuyện',
+            style: TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.primary),
+              ),
+            )
+          else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.bgInput,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.divider),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tổng: ${_fmtBytes(total)}',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Đính kèm: ${_fmtBytes(_bytesMedia)}',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Video: ${_fmtBytes(_bytesVideo)}',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Văn bản: ${_fmtBytes(_bytesText)}',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Số tin đã tính: $_count',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 12,
+                      color: AppColors.textHint,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Tính lại'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  textStyle: const TextStyle(
+                    fontFamily: 'Inter',
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
   late List<ApiGroupMember> _members;
   Map<String, UserModel> _userMap = {};
   bool _loading = true;
   String? _error;
 
-  int get _adminCount =>
-      _members.where((m) => m.role == 'ADMIN').length;
+  int get _adminCount => _members.where((m) => m.role == 'ADMIN').length;
 
   @override
   void initState() {
@@ -857,10 +2430,12 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
     try {
       final ids = _members.map((m) => m.userId).toList();
       final Map<String, UserModel> map = {};
-      await Future.wait(ids.map((id) async {
-        final user = await apiService.getUserById(id);
-        if (user != null) map[id] = user;
-      }));
+      await Future.wait(
+        ids.map((id) async {
+          final user = await apiService.getUserById(id);
+          if (user != null) map[id] = user;
+        }),
+      );
       if (mounted) {
         setState(() {
           _userMap = map;
@@ -938,7 +2513,10 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
             onPressed: () => Navigator.pop(context, false),
             child: const Text(
               'Hủy',
-              style: TextStyle(fontFamily: 'Inter', color: AppColors.textSecondary),
+              style: TextStyle(
+                fontFamily: 'Inter',
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
           TextButton(
@@ -991,9 +2569,11 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
     if (result.isSuccess) {
       setState(() {
         _members = _members
-            .map((m) => m.userId == member.userId
-                ? ApiGroupMember(userId: m.userId, role: newRole)
-                : m)
+            .map(
+              (m) => m.userId == member.userId
+                  ? ApiGroupMember(userId: m.userId, role: newRole)
+                  : m,
+            )
             .toList();
       });
       widget.onMembersUpdated?.call(_members);
@@ -1027,8 +2607,7 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
 
     if (result.isSuccess) {
       setState(() {
-        _members =
-            _members.where((m) => m.userId != member.userId).toList();
+        _members = _members.where((m) => m.userId != member.userId).toList();
       });
       widget.onMembersUpdated?.call(_members);
       _showSnack('Đã xóa $name khỏi nhóm');
@@ -1179,89 +2758,92 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                     child: CircularProgressIndicator(color: AppColors.primary),
                   )
                 : _error != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            _error!,
-                            style: const TextStyle(
-                              fontFamily: 'Inter',
-                              color: AppColors.textSecondary,
-                            ),
-                            textAlign: TextAlign.center,
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          color: AppColors.textSecondary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: ctrl,
+                    itemCount: _members.length,
+                    itemBuilder: (_, i) {
+                      final m = _members[i];
+                      final user = _userMap[m.userId];
+                      final name = _displayName(m);
+                      final isAdmin = m.role == 'ADMIN';
+                      final canTap =
+                          widget.canManage &&
+                          m.userId != (widget.myUserId ?? '');
+                      return ListTile(
+                        onTap: canTap ? () => _showMemberActions(m) : null,
+                        leading: AvatarWidget(
+                          url: user?.avatar,
+                          name: name,
+                          size: 40,
+                        ),
+                        title: Text(
+                          name,
+                          style: const TextStyle(
+                            fontFamily: 'Inter',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                      )
-                    : ListView.builder(
-                        controller: ctrl,
-                        itemCount: _members.length,
-                        itemBuilder: (_, i) {
-                          final m = _members[i];
-                          final user = _userMap[m.userId];
-                          final name = _displayName(m);
-                          final isAdmin = m.role == 'ADMIN';
-                          final canTap = widget.canManage &&
-                              m.userId != (widget.myUserId ?? '');
-                          return ListTile(
-                            onTap: canTap ? () => _showMemberActions(m) : null,
-                            leading: AvatarWidget(
-                              url: user?.avatar,
-                              name: name,
-                              size: 40,
-                            ),
-                            title: Text(
-                              name,
-                              style: const TextStyle(
-                                fontFamily: 'Inter',
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.textPrimary,
+                        subtitle: isAdmin
+                            ? const Text(
+                                'Quản trị viên',
+                                style: TextStyle(
+                                  fontFamily: 'Inter',
+                                  fontSize: 12,
+                                  color: AppColors.primary,
+                                ),
+                              )
+                            : null,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isAdmin)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryLight,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'Admin',
+                                  style: TextStyle(
+                                    fontFamily: 'Inter',
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
                               ),
-                            ),
-                            subtitle: isAdmin
-                                ? const Text(
-                                    'Quản trị viên',
-                                    style: TextStyle(
-                                      fontFamily: 'Inter',
-                                      fontSize: 12,
-                                      color: AppColors.primary,
-                                    ),
-                                  )
-                                : null,
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (isAdmin)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 3),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primaryLight,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: const Text(
-                                      'Admin',
-                                      style: TextStyle(
-                                        fontFamily: 'Inter',
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppColors.primary,
-                                      ),
-                                    ),
-                                  ),
-                                if (canTap) ...[
-                                  const SizedBox(width: 4),
-                                  const Icon(
-                                    Icons.more_vert_rounded,
-                                    size: 20,
-                                    color: AppColors.textHint,
-                                  ),
-                                ],
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                            if (canTap) ...[
+                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.more_vert_rounded,
+                                size: 20,
+                                color: AppColors.textHint,
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -1358,3 +2940,5 @@ class _ActionButton extends StatelessWidget {
     );
   }
 }
+
+enum _MuteOption { oneHour, fourHours, until8am, untilTurnedOn }

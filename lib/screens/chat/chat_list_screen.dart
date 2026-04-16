@@ -8,6 +8,7 @@ import '../../services/socket_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
 import 'dart:developer';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -27,12 +28,36 @@ class _ChatListScreenState extends State<ChatListScreen> {
   // cache profile (tên + avatar) của các user trong chat 1-1
   final Map<String, UserModel> _userProfiles = {};
   bool _isLoading = true;
+  final Set<String> _pinnedConversationIds = {};
 
   @override
   void initState() {
     super.initState();
     _loadConversations();
     _initSocketListener();
+  }
+
+  String _pinPrefKey(String convId) =>
+      'conv_pin_${authService.userId ?? 'me'}_$convId';
+
+  Future<void> _loadPinnedPrefs(List<ConversationModel> convs) async {
+    final p = await SharedPreferences.getInstance();
+    _pinnedConversationIds
+      ..clear()
+      ..addAll(
+        convs.where((c) => p.getBool(_pinPrefKey(c.id)) ?? false).map((c) => c.id),
+      );
+  }
+
+  List<ConversationModel> _sortWithPinned(List<ConversationModel> input) {
+    final list = [...input];
+    list.sort((a, b) {
+      final ap = _pinnedConversationIds.contains(a.id) ? 1 : 0;
+      final bp = _pinnedConversationIds.contains(b.id) ? 1 : 0;
+      if (ap != bp) return bp - ap; // pinned lên đầu
+      return b.updatedAt.compareTo(a.updatedAt);
+    });
+    return list;
   }
 
   // Load dữ liệu
@@ -43,9 +68,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     try {
       final data = await apiService.getConversations(authService.userId!);
+      await _loadPinnedPrefs(data);
+      final sorted = _sortWithPinned(data);
       _cacheKnownUsers(data);
       setState(() {
-        _conversations = data;
+        _conversations = sorted;
         _isLoading = false;
       });
       log('✅ Đã load ${_conversations.length} cuộc trò chuyện');
@@ -139,6 +166,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
             _conversations.removeAt(index);
             _conversations.insert(0, updatedConv);
+            // re-sort để pinned luôn nằm trên
+            _conversations = _sortWithPinned(_conversations);
           } else {
             _loadConversations();
           }
@@ -194,6 +223,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
           _conversations.removeAt(index);
           _conversations.insert(0, updatedConv);
+          _conversations = _sortWithPinned(_conversations);
         });
       } catch (e) {
         log('❌ conversation_call_updated list error: $e');
@@ -614,6 +644,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final bool isMissedCall = lastContent.toLowerCase().contains(
       'cuộc gọi nhỡ',
     );
+    final isPinned = _pinnedConversationIds.contains(c.id);
 
     return GestureDetector(
       onTap: () => Navigator.push(
@@ -665,6 +696,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (isPinned) ...[
+                        const SizedBox(width: 6),
+                        const Icon(
+                          Icons.push_pin_rounded,
+                          size: 16,
+                          color: AppColors.primary,
+                        ),
+                      ],
                       if (last != null)
                         Text(
                           du.DateUtils.formatChatTime(last.createdAt),

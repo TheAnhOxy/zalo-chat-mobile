@@ -591,13 +591,16 @@ class _GroupsTabState extends State<_GroupsTab> {
                   if (left == true && mounted) _load();
                 },
                 onManage: () async {
-                  final left = await Navigator.push<bool>(
+                  final result = await Navigator.push<Object?>(
                     context,
                     MaterialPageRoute(
                       builder: (_) => GroupMembersScreen(group: g),
                     ),
                   );
-                  if (left == true) _load(); // reload nếu vừa rời nhóm
+                  if (!mounted) return;
+                  if (result == true || result is ApiGroupModel) {
+                    _load();
+                  }
                 },
               );
             }),

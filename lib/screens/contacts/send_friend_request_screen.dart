@@ -38,7 +38,7 @@ class _SendFriendRequestScreenState extends State<SendFriendRequestScreen> {
     if (myId == null || myId.isEmpty) return;
 
     setState(() => _isSending = true);
-    final ok = await ContactsApiService.instance.sendFriendRequest(
+    final result = await ContactsApiService.instance.sendFriendRequest(
       requesterId: myId,
       receiverId: widget.targetUser.id,
       message: _msgCtrl.text.trim(),
@@ -46,18 +46,18 @@ class _SendFriendRequestScreenState extends State<SendFriendRequestScreen> {
     if (!mounted) return;
     setState(() => _isSending = false);
 
-    if (ok) {
+    if (result.isSuccess) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Đã gửi lời mời kết bạn'),
+        SnackBar(
+          content: Text(result.data ?? 'Thành công'),
           backgroundColor: AppColors.primary,
         ),
       );
-      Navigator.pop(context, true); // trả true → màn hình trước biết đã gửi
+      Navigator.pop(context, true); // trả true → màn hình trước biết đã xử lý
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Gửi lời mời thất bại, vui lòng thử lại'),
+        SnackBar(
+          content: Text(result.error ?? 'Gửi lời mời thất bại, vui lòng thử lại'),
           backgroundColor: AppColors.error,
         ),
       );
