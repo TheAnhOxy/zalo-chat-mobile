@@ -21,6 +21,7 @@ import '../screens/contacts/found_user_screen.dart';
 import '../screens/contacts/friend_requests_screen.dart';
 import '../screens/contacts/birthday_screen.dart';
 import '../screens/contacts/send_friend_request_screen.dart';
+import '../screens/contacts/qr_scan_screen.dart';
 import '../services/contacts_api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ class AppRouter {
   static const String sendFriendRequest = '/contacts/send-friend-request';
   static const String friendRequests = '/contacts/friend-requests';
   static const String birthday = '/contacts/birthday';
+  static const String qrScan = '/contacts/qr-scan';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -109,6 +111,9 @@ class AppRouter {
 
       case birthday:
         return _slide(const BirthdayScreen());
+
+      case qrScan:
+        return _fullscreen(const QrScanScreen());
 
       // ── Main Shell (Bottom Nav) ───────────────────────────────
       case main:

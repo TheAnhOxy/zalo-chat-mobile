@@ -138,6 +138,29 @@ class ApiService {
     }
   }
 
+  /// Lấy danh sách tin nhắn đã ghim của 1 hội thoại
+  Future<List<MessageModel>> getPinnedMessages(
+    String conversationId,
+    String userId,
+  ) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl/messages/conversation/$conversationId',
+        queryParameters: {
+          'userId': userId,
+          'pinned': true,
+          'limit': 50,
+          'skip': 0,
+        },
+      );
+      final List data = response.data;
+      return data.map((json) => MessageModel.fromJson(json)).toList();
+    } catch (e) {
+      log('❌ Lỗi getPinnedMessages: $e');
+      return [];
+    }
+  }
+
   /// Cập nhật trạng thái xóa tin nhắn ở phía người dùng (API dự phòng cho Socket)
   Future<bool> deleteMessageForMe(String messageId, String userId) async {
     try {
@@ -148,6 +171,23 @@ class ApiService {
       return true;
     } catch (e) {
       log('❌ Lỗi deleteMessageForMe: $e');
+      return false;
+    }
+  }
+
+  /// Xóa lịch sử cuộc trò chuyện (phía tôi) theo hội thoại
+  Future<bool> deleteConversationHistoryForMe(
+    String conversationId,
+    String userId,
+  ) async {
+    try {
+      await _dio.post(
+        '$baseUrl/messages/conversation/$conversationId/deleted-by',
+        data: {'userId': userId},
+      );
+      return true;
+    } catch (e) {
+      log('❌ Lỗi deleteConversationHistoryForMe: $e');
       return false;
     }
   }

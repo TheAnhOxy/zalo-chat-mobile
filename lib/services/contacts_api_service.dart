@@ -38,12 +38,20 @@ class ContactsApiService {
     if (dobRaw != null && dobRaw.toString().isNotEmpty) {
       dob = DateTime.tryParse(dobRaw.toString());
     }
+    // status có thể là Map hoặc String tuỳ backend version
+    bool isOnline = false;
+    final status = j['status'];
+    if (status is Map) {
+      isOnline = status['isOnline'] == true;
+    } else if (status is String) {
+      isOnline = status == 'ONLINE';
+    }
     return ApiUserModel(
       id: _extractId(j['_id'] ?? j['id']),
       fullName: (j['fullName'] ?? '').toString(),
       phone: (j['phone'] ?? '').toString(),
       avatar: (j['avatar'] ?? '').toString(),
-      isOnline: (j['status'] as Map<String, dynamic>?)?['isOnline'] == true,
+      isOnline: isOnline,
       dob: dob,
     );
   }
@@ -58,12 +66,14 @@ class ContactsApiService {
         )
         .toList();
 
+    final rawDesc = j['description'] ?? j['about'] ?? j['mota'] ?? j['groupDescription'];
     final lm = j['lastMessage'] as Map<String, dynamic>?;
     return ApiGroupModel(
       id: _extractId(j['_id'] ?? j['id']),
       name: (j['name'] ?? '').toString(),
       avatar: (j['avatar'] ?? '').toString(),
       members: members,
+      description: rawDesc == null ? null : rawDesc.toString(),
       lastMessageContent: lm?['content']?.toString(),
       lastMessageAt: lm?['createdAt'] != null
           ? DateTime.tryParse(lm!['createdAt'].toString())
@@ -311,8 +321,8 @@ class ContactsApiService {
 
   /// Gửi lời mời kết bạn từ [requesterId] đến [receiverId].
   /// [message] là lời nhắn kèm theo (tùy chọn).
-  /// Trả về true nếu thành công.
-  Future<bool> sendFriendRequest({
+  /// Trả về message nếu thành công; nếu đã tồn tại thì cũng trả về message phù hợp.
+  Future<ContactsResult<String>> sendFriendRequest({
     required String requesterId,
     required String receiverId,
     String message = '',
@@ -328,10 +338,30 @@ class ContactsApiService {
             }),
           )
           .timeout(const Duration(seconds: 10));
-      return res.statusCode == 200 || res.statusCode == 201;
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return const ContactsResult.success('Đã gửi lời mời kết bạn');
+      }
+
+      // 409 = đã tồn tại quan hệ friendship (PENDING/ACCEPTED)
+      if (res.statusCode == 409) {
+        final rel = await getFriendshipBetween(
+          myUserId: requesterId,
+          otherUserId: receiverId,
+        );
+        final status = rel.data?['status'];
+        if (status == 'ACCEPTED') {
+          return const ContactsResult.success('Hai bạn đã là bạn bè');
+        }
+        if (status == 'PENDING') {
+          return const ContactsResult.success('Lời mời kết bạn đã tồn tại');
+        }
+        return const ContactsResult.success('Quan hệ kết bạn đã tồn tại');
+      }
+
+      return ContactsResult.error('Lỗi ${res.statusCode}');
     } catch (e) {
       dev.log('❌ sendFriendRequest error: $e');
-      return false;
+      return ContactsResult.error('Không kết nối được: $e');
     }
   }
 
@@ -365,6 +395,43 @@ class ContactsApiService {
 
   Future<bool> cancelSentRequest(String friendshipId) =>
       rejectFriendRequest(friendshipId);
+
+  /// Lấy quan hệ friendship giữa [myUserId] và [otherUserId] (nếu có).
+  /// Trả về: { id, status } hoặc null nếu chưa có.
+  Future<ContactsResult<Map<String, String>?>> getFriendshipBetween({
+    required String myUserId,
+    required String otherUserId,
+  }) async {
+    try {
+      if (myUserId.isEmpty || otherUserId.isEmpty) {
+        return const ContactsResult.success(null);
+      }
+      final res = await _client
+          .get(Uri.parse('$baseUrl/friendships/user/$myUserId'))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+
+      final List<dynamic> list = jsonDecode(res.body) as List;
+      for (final f in list) {
+        if (f is! Map) continue;
+        final rid = _extractId(f['requesterId']);
+        final aid = _extractId(f['addresseeId']);
+        final match = (rid == myUserId && aid == otherUserId) ||
+            (rid == otherUserId && aid == myUserId);
+        if (!match) continue;
+
+        final id = _extractId(f['_id'] ?? f['id']);
+        final status = (f['status'] ?? '').toString();
+        if (id.isEmpty) continue;
+        return ContactsResult.success({'id': id, 'status': status});
+      }
+      return const ContactsResult.success(null);
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
 
   // ── Privacy: findByPhone ──────────────────────────────────────────────────────
 
@@ -505,6 +572,172 @@ class ContactsApiService {
     return fileUrl;
   }
 
+  /// Cập nhật ảnh đại diện nhóm (PATCH conversation).
+  Future<ContactsResult<bool>> updateConversationAvatar({
+    required String conversationId,
+    required String avatarUrl,
+  }) async {
+    try {
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'avatar': avatarUrl}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode == 200) return const ContactsResult.success(true);
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Cập nhật mô tả nhóm (PATCH conversation).
+  Future<ContactsResult<bool>> updateGroupDescription({
+    required String conversationId,
+    required String description,
+  }) async {
+    try {
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'description': description}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        return const ContactsResult.success(true);
+      }
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  // ── Group chat background (sync toàn nhóm) ──────────────────────────────────
+
+  /// Lấy groupSettings (raw) của conversation theo ID.
+  Future<ContactsResult<Map<String, dynamic>>> fetchConversationRaw(
+    String conversationId,
+  ) async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/conversations/$conversationId'))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+      final data = jsonDecode(res.body);
+      if (data is Map<String, dynamic>) {
+        return ContactsResult.success(data);
+      }
+      return const ContactsResult.error('Dữ liệu không hợp lệ');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Cập nhật hình nền nhóm (áp dụng cho tất cả thành viên) qua groupSettings.
+  Future<ContactsResult<bool>> updateGroupChatBackground({
+    required String conversationId,
+    required String type, // 'PRESET' | 'CUSTOM'
+    required int index,
+    String? customBase64,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'groupSettings': <String, dynamic>{
+          'chatBackgroundType': type,
+          'chatBackgroundIndex': index,
+          'chatBackgroundCustomBase64': customBase64 ?? '',
+        },
+      };
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode == 200) return const ContactsResult.success(true);
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Lấy/tạo link mời vào nhóm.
+  Future<ContactsResult<Map<String, dynamic>>> getGroupInviteLink(
+    String conversationId,
+  ) async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/conversations/$conversationId/invite-link'))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+      final data = jsonDecode(res.body);
+      if (data is Map<String, dynamic>) {
+        return ContactsResult.success(data);
+      }
+      return const ContactsResult.error('Dữ liệu không hợp lệ');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Tạo mới link mời (đổi code).
+  Future<ContactsResult<Map<String, dynamic>>> regenerateGroupInviteLink(
+    String conversationId,
+  ) async {
+    try {
+      final res = await _client
+          .post(
+            Uri.parse(
+              '$baseUrl/conversations/$conversationId/invite-link/regenerate',
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200 && res.statusCode != 201) {
+        return ContactsResult.error('Lỗi ${res.statusCode}');
+      }
+      final data = jsonDecode(res.body);
+      if (data is Map<String, dynamic>) {
+        return ContactsResult.success(data);
+      }
+      return const ContactsResult.error('Dữ liệu không hợp lệ');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Bật/tắt link mời nhóm qua groupSettings.allowInviteLink.
+  Future<ContactsResult<bool>> setGroupInviteLinkEnabled({
+    required String conversationId,
+    required bool enabled,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'groupSettings': <String, dynamic>{'allowInviteLink': enabled},
+      };
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        return const ContactsResult.success(true);
+      }
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
   /// Tạo cuộc trò chuyện nhóm mới.
   Future<ContactsResult<ApiGroupModel>> createGroup({
     required String name,
@@ -548,6 +781,135 @@ class ContactsApiService {
       return ContactsResult.error('Không kết nối được backend: $e');
     }
   }
+
+  // ── Group Member Management ──────────────────────────────────────────────────
+
+  /// Lấy thông tin user theo ID
+  Future<ApiUserModel?> fetchUserById(String userId) async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/users/$userId'))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final body = jsonDecode(res.body);
+        if (body is Map<String, dynamic>) {
+          return _parseUser(body);
+        }
+      } else {
+        dev.log('⚠️ fetchUserById $userId → ${res.statusCode}');
+      }
+    } catch (e) {
+      dev.log('❌ fetchUserById $userId error: $e');
+    }
+    return null;
+  }
+
+  /// Lấy thông tin nhiều user cùng lúc (song song)
+  Future<Map<String, ApiUserModel>> fetchUsersByIds(List<String> ids) async {
+    final result = <String, ApiUserModel>{};
+    await Future.wait(ids.map((id) async {
+      final u = await fetchUserById(id);
+      if (u != null) {
+        result[id] = u;
+      } else {
+        dev.log('⚠️ fetchUsersByIds: không lấy được user $id');
+      }
+    }));
+    dev.log('✅ fetchUsersByIds: ${result.length}/${ids.length} users loaded');
+    return result;
+  }
+
+  /// Kick thành viên ra khỏi nhóm
+  Future<ContactsResult<bool>> kickMember({
+    required String conversationId,
+    required String targetUserId,
+    required List<ApiGroupMember> currentMembers,
+  }) async {
+    try {
+      final remaining = currentMembers
+          .where((m) => m.userId != targetUserId)
+          .map((m) => {'userId': m.userId, 'role': m.role})
+          .toList();
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'members': remaining}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) return const ContactsResult.success(true);
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Cập nhật role của thành viên (ADMIN / MODERATOR / MEMBER)
+  Future<ContactsResult<bool>> updateMemberRole({
+    required String conversationId,
+    required String targetUserId,
+    required String newRole,
+    required List<ApiGroupMember> currentMembers,
+  }) async {
+    try {
+      final updated = currentMembers
+          .map((m) => {
+                'userId': m.userId,
+                'role': m.userId == targetUserId ? newRole : m.role,
+              })
+          .toList();
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'members': updated}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) return const ContactsResult.success(true);
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Thêm thành viên vào nhóm
+  Future<ContactsResult<bool>> addMembersToGroup({
+    required String conversationId,
+    required List<ApiGroupMember> currentMembers,
+    required List<String> newUserIds,
+  }) async {
+    try {
+      final updated = [
+        ...currentMembers.map((m) => {'userId': m.userId, 'role': m.role}),
+        ...newUserIds
+            .where((id) => currentMembers.every((m) => m.userId != id))
+            .map((id) => {'userId': id, 'role': 'MEMBER'}),
+      ];
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'members': updated}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) return const ContactsResult.success(true);
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Rời khỏi nhóm (tự remove mình)
+  Future<ContactsResult<bool>> leaveGroup({
+    required String conversationId,
+    required String myUserId,
+    required List<ApiGroupMember> currentMembers,
+  }) =>
+      kickMember(
+        conversationId: conversationId,
+        targetUserId: myUserId,
+        currentMembers: currentMembers,
+      );
 
   // ── Fetch Birthday Contacts ───────────────────────────────────────────────────
 
@@ -613,6 +975,7 @@ class ApiGroupModel {
   final String name;
   final String avatar;
   final List<ApiGroupMember> members;
+  final String? description;
   final String? lastMessageContent;
   final DateTime? lastMessageAt;
   final DateTime updatedAt;
@@ -622,6 +985,7 @@ class ApiGroupModel {
     required this.name,
     required this.avatar,
     required this.members,
+    this.description,
     this.lastMessageContent,
     this.lastMessageAt,
     required this.updatedAt,
