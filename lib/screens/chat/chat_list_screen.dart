@@ -32,6 +32,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
   bool _isLoading = true;
   final Set<String> _pinnedConversationIds = {};
 
+  void _rebuildActiveUserOrder() {
+    final ids = _knownUsers.keys.toList();
+    ids.sort((a, b) {
+      final aOnline = _onlineStates[a] == true;
+      final bOnline = _onlineStates[b] == true;
+      if (aOnline != bOnline) return aOnline ? -1 : 1;
+
+      final aName = _knownUsers[a]?.name.toLowerCase() ?? '';
+      final bName = _knownUsers[b]?.name.toLowerCase() ?? '';
+      return aName.compareTo(bName);
+    });
+
+    _activeUserOrder
+      ..clear()
+      ..addAll(ids);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -73,8 +90,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
       await _loadPinnedPrefs(data);
       final sorted = _sortWithPinned(data);
       _cacheKnownUsers(data);
+
+      await _loadFriendPresence(authService.userId!);
+
       setState(() {
         _conversations = sorted;
+        _rebuildActiveUserOrder();
         _isLoading = false;
       });
       log('✅ Đã load ${_conversations.length} cuộc trò chuyện');
@@ -117,7 +138,42 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     if (updated.isEmpty || !mounted) return;
-    setState(() => _userProfiles.addAll(updated));
+    setState(() {
+      _userProfiles.addAll(updated);
+      _refreshKnownUsersFromProfiles();
+      _rebuildActiveUserOrder();
+    });
+  }
+
+  Future<void> _loadFriendPresence(String userId) async {
+    final result = await ContactsApiService.instance.fetchFriends(userId);
+    final friends = result.data;
+    if (friends == null || friends.isEmpty || !mounted) return;
+
+    setState(() {
+      for (final f in friends) {
+        if (f.id.isEmpty || f.id == userId) continue;
+        _onlineStates[f.id] = f.isOnline;
+        _knownUsers[f.id] = _ActiveUserItem(
+          userId: f.id,
+          name: f.fullName.isNotEmpty ? f.fullName : 'Người dùng',
+          avatar: f.avatar,
+        );
+      }
+      _rebuildActiveUserOrder();
+    });
+  }
+
+  void _refreshKnownUsersFromProfiles() {
+    for (final entry in _knownUsers.entries.toList()) {
+      final profile = _userProfiles[entry.key];
+      if (profile == null) continue;
+      _knownUsers[entry.key] = _ActiveUserItem(
+        userId: entry.key,
+        name: profile.fullName.isNotEmpty ? profile.fullName : entry.value.name,
+        avatar: profile.avatar.isNotEmpty ? profile.avatar : entry.value.avatar,
+      );
+    }
   }
 
   // Socket listener - realtime
@@ -286,13 +342,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final map = _tryMap(data);
     if (map == null) return;
 
-    final userId = map['userId']?.toString();
-    if (userId == null || userId.isEmpty) return;
+    final userId = map['userId']?.toString() ?? '';
+    if (userId.isEmpty) return;
 
     final isOnline = map['isOnline'] == true;
 
     setState(() {
       _onlineStates[userId] = isOnline;
+      if (!_knownUsers.containsKey(userId)) {
+        final profile = _userProfiles[userId];
+        if (profile != null) {
+          _knownUsers[userId] = _ActiveUserItem(
+            userId: userId,
+            name: profile.fullName.isNotEmpty ? profile.fullName : 'Người dùng',
+            avatar: profile.avatar,
+          );
+        }
+      }
+      _rebuildActiveUserOrder();
     });
   }
 
@@ -346,6 +413,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
     if (normalizedType == 'VIDEO' || _isVideoUrl(content)) {
       return 'Đã gửi 1 video';
+    }
+    if (normalizedType == 'VOICE') {
+      return 'Đã gửi 1 tin nhắn thoại';
     }
     if (normalizedType == 'FILE') {
       final fileName = metadata?.fileName;
@@ -404,6 +474,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         avatar: _getAvatar(c),
       );
     }
+    _rebuildActiveUserOrder();
   }
 
   UserModel? _getOtherUser(ConversationModel c) {
@@ -446,6 +517,53 @@ class _ChatListScreenState extends State<ChatListScreen> {
       lastMessageContent: c.lastMessage?.content,
       lastMessageAt: c.lastMessage?.createdAt,
       updatedAt: c.updatedAt,
+    );
+  }
+
+  Future<void> _openActiveUserChat(String userId) async {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty || userId.isEmpty || userId == myId) return;
+
+    ConversationModel? target;
+    for (final c in _conversations) {
+      if (c.isGroup) continue;
+      if (_getOtherUserId(c) == userId) {
+        target = c;
+        break;
+      }
+    }
+
+    target ??= await apiService.findOrCreateDirectConversation(
+      currentUserId: myId,
+      targetUserId: userId,
+    );
+
+    if (!mounted || target == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không thể mở cuộc trò chuyện')),
+      );
+      return;
+    }
+
+    final known = _knownUsers[userId];
+    final otherUser = _userProfiles[userId] ??
+        UserModel(
+          id: userId,
+          fullName: known?.name ?? 'Người dùng',
+          avatar: known?.avatar ?? '',
+          phone: '',
+        );
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatDetailScreen(
+          conversationId: target!.id,
+          otherUser: otherUser,
+          conversation: target,
+        ),
+      ),
     );
   }
 
@@ -596,12 +714,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   margin: const EdgeInsets.symmetric(horizontal: 4),
                   child: Column(
                     children: [
-                      AvatarWidget(
-                        url: user.avatar,
-                        name: user.name,
-                        size: 60,
-                        showOnline: true,
-                        isOnline: _onlineStates[userId] ?? false,
+                      GestureDetector(
+                        onTap: () => _openActiveUserChat(userId),
+                        child: AvatarWidget(
+                          url: user.avatar,
+                          name: user.name,
+                          size: 60,
+                          showOnline: true,
+                          isOnline: _onlineStates[userId] ?? false,
+                        ),
                       ),
                       const SizedBox(height: 6),
                       Text(
@@ -610,6 +731,22 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           fontSize: 11,
                           fontFamily: 'Inter',
                           color: AppColors.textSecondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        (_onlineStates[userId] ?? false)
+                            ? 'Đang hoạt động'
+                            : 'Ngoại tuyến',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontFamily: 'Inter',
+                          color: (_onlineStates[userId] ?? false)
+                              ? AppColors.online
+                              : AppColors.textHint,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
