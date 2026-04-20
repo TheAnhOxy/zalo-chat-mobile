@@ -8,7 +8,7 @@ class AppConfig {
     if (kIsWeb) {
       return 'http://localhost:8081';
     } else if (Platform.isAndroid) {
-      return 'http://172.20.10.13:8081';
+      return 'http://10.122.169.187:8081';
     } else {
       return 'http://localhost:8081';
     }

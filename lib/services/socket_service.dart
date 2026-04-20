@@ -117,8 +117,10 @@ class SocketService {
   }
 
   /// Hủy lắng nghe một sự kiện
-  void off(String event) {
-    _socket?.off(event);
+  /// Nếu truyền [handler] thì chỉ gỡ đúng callback đó,
+  /// tránh ảnh hưởng listener của màn hình khác.
+  void off(String event, [Function(dynamic)? handler]) {
+    _socket?.off(event, handler);
   }
 
   /// Ngắt kết nối hoàn toàn
