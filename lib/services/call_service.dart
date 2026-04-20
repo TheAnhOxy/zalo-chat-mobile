@@ -173,6 +173,46 @@ class CallService {
     }
   }
 
+  Future<String?> startGroupCall({
+    required String conversationId,
+    required List<String> participantIds,
+    bool isVideo = false,
+  }) async {
+    if (_isStartingCall) return null;
+    _isStartingCall = true;
+
+    try {
+      _currentConversationId = conversationId;
+
+      await _createPeerConnection(isVideo: isVideo);
+      await _getLocalStream(isVideo: isVideo);
+
+      final offer = await _pc!.createOffer();
+      await _pc!.setLocalDescription(offer);
+
+      socketService.emit('start_call', {
+        'callDto': {
+          'conversationId': conversationId,
+          'callerId': authService.userId!,
+          'callerName': authService.currentUser?.fullName ?? '',
+          'callerAvatar': authService.currentUser?.avatar ?? '',
+          'participants': participantIds,
+          'type': isVideo ? 'VIDEO' : 'VOICE',
+        },
+        'offer': {'sdp': offer.sdp, 'type': offer.type},
+      });
+
+      _setState(CallState.calling);
+      return null;
+    } catch (e) {
+      dev.log('❌ startGroupCall error: $e');
+      _cleanUp();
+      return null;
+    } finally {
+      _isStartingCall = false;
+    }
+  }
+
   Future<void> answerCall({
     required String conversationId,
     required String callId,

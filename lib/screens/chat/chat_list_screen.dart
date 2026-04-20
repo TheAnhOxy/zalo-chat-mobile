@@ -4,9 +4,11 @@ import '../../core/utils/date_utils.dart' as du;
 import '../../data/models/models.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/contacts_api_service.dart';
 import '../../services/socket_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
+import '../group/group_chat_screen.dart';
 import 'dart:developer';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -428,6 +430,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  ApiGroupModel _toApiGroupModel(ConversationModel c) {
+    return ApiGroupModel(
+      id: c.id,
+      name: c.name?.isNotEmpty == true ? c.name! : 'Nhóm',
+      avatar: c.avatar ?? '',
+      members: c.members
+          .map(
+            (m) => ApiGroupMember(
+              userId: m.userId,
+              role: m.role,
+            ),
+          )
+          .toList(),
+      lastMessageContent: c.lastMessage?.content,
+      lastMessageAt: c.lastMessage?.createdAt,
+      updatedAt: c.updatedAt,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredConversations = _conversations.where((c) {
@@ -691,11 +712,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ChatDetailScreen(
-            conversationId: c.id,
-            otherUser: _getOtherUser(c),
-            conversation: c,
-          ),
+          builder: (_) => c.isGroup
+              ? GroupChatScreen(group: _toApiGroupModel(c))
+              : ChatDetailScreen(
+                  conversationId: c.id,
+                  otherUser: _getOtherUser(c),
+                  conversation: c,
+                ),
         ),
       ),
       onLongPress: () => _showContextMenu(c),

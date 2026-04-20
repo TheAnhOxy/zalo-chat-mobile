@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import '../../data/models/models.dart';
 import '../../screens/call/voice_call_screen.dart';
 import '../../screens/call/video_call_screen.dart';
+import '../../screens/call/group_voice_call_screen.dart';
+import '../../screens/call/group_video_call_screen.dart';
+import '../../services/auth_service.dart';
 import '../../services/call_service.dart';
+import '../../services/contacts_api_service.dart';
 
 class IncomingCallListener extends StatefulWidget {
   final Widget child;
@@ -49,7 +53,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     _isIncomingDialogVisible = false;
   }
 
-  void _showIncomingCallDialog(Map<String, dynamic> data) {
+  Future<void> _showIncomingCallDialog(Map<String, dynamic> data) async {
     if (_isIncomingDialogVisible) return;
 
     final callerId = data['callerId']?.toString() ?? '';
@@ -58,9 +62,71 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     final offer = data['offer'] as Map<String, dynamic>?;
     final type = data['type']?.toString() ?? 'VOICE';
     final isVideo = type == 'VIDEO';
+    final rawParticipants = (data['participants'] as List?) ?? const [];
+    final participantIds = rawParticipants
+        .map((e) {
+          if (e is Map) {
+            return (e['userId'] ?? e['_id'] ?? e['id'] ?? '').toString();
+          }
+          return e.toString();
+        })
+        .where((id) => id.isNotEmpty)
+        .toList();
+    final explicitGroup = data['isGroup'] == true ||
+        data['conversationType']?.toString().toUpperCase() == 'GROUP';
+    final isGroupCall = explicitGroup || participantIds.length > 1;
+    String groupName = data['groupName']?.toString() ?? '';
+    String? groupAvatar = data['groupAvatar']?.toString();
+    final memberNameById = <String, String>{};
 
     final callerName = data['callerName']?.toString() ?? 'Người dùng';
     final callerAvatar = data['callerAvatar']?.toString() ?? '';
+    final myUserId = authService.userId ?? '';
+
+    if (isGroupCall && conversationId.isNotEmpty) {
+      final conversationRes = await ContactsApiService.instance.fetchConversationRaw(
+        conversationId,
+      );
+      if (conversationRes.isSuccess) {
+        final map = conversationRes.data ?? const <String, dynamic>{};
+        final resolvedName = map['name']?.toString() ?? '';
+        if (resolvedName.isNotEmpty) {
+          groupName = resolvedName;
+        }
+        final resolvedAvatar = map['avatar']?.toString();
+        if (resolvedAvatar != null && resolvedAvatar.isNotEmpty) {
+          groupAvatar = resolvedAvatar;
+        }
+
+        final members = (map['members'] as List?) ?? const [];
+        for (final raw in members) {
+          if (raw is! Map) continue;
+          final userId = (raw['userId'] ?? raw['_id'] ?? '').toString();
+          if (userId.isEmpty) continue;
+          final name =
+              raw['nickname']?.toString() ??
+              raw['name']?.toString() ??
+              raw['fullName']?.toString() ??
+              userId;
+          memberNameById[userId] = name;
+        }
+      }
+    }
+
+    if (groupName.isEmpty) {
+      groupName = 'Nhóm';
+    }
+
+    final groupParticipants = participantIds
+        .where((id) => id != callerId && id != myUserId)
+        .map(
+          (id) => GroupCallParticipant(
+            userId: id,
+            name: memberNameById[id] ?? id,
+            avatar: null,
+          ),
+        )
+        .toList();
 
     final callerUser = UserModel(
       id: callerId,
@@ -101,7 +167,9 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
             ),
             const SizedBox(height: 16),
             Text(
-              isVideo ? 'Cuộc gọi video đến' : 'Cuộc gọi thoại đến',
+              isGroupCall
+                  ? (isVideo ? 'Cuộc gọi video nhóm đến' : 'Cuộc gọi thoại nhóm đến')
+                  : (isVideo ? 'Cuộc gọi video đến' : 'Cuộc gọi thoại đến'),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 17,
@@ -111,7 +179,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
             ),
             const SizedBox(height: 6),
             Text(
-              callerName,
+              isGroupCall ? '$callerName từ $groupName' : callerName,
               style: TextStyle(
                 color: Colors.white.withOpacity(0.5),
                 fontSize: 12,
@@ -172,33 +240,69 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
                   onTap: () {
                     _dismissIncomingDialog();
                     if (isVideo) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          fullscreenDialog: true,
-                          builder: (_) => VideoCallScreen(
-                            otherUser: callerUser,
-                            isIncoming: true,
-                            callId: callId,
-                            conversationId: conversationId,
-                            offer: offer,
+                      if (isGroupCall) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            fullscreenDialog: true,
+                            builder: (_) => GroupVideoCallScreen(
+                              conversationId: conversationId,
+                              groupName: groupName,
+                              groupAvatar: groupAvatar,
+                              participants: groupParticipants,
+                              isIncoming: true,
+                              callId: callId,
+                              offer: offer,
+                            ),
                           ),
-                        ),
-                      );
+                        );
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            fullscreenDialog: true,
+                            builder: (_) => VideoCallScreen(
+                              otherUser: callerUser,
+                              isIncoming: true,
+                              callId: callId,
+                              conversationId: conversationId,
+                              offer: offer,
+                            ),
+                          ),
+                        );
+                      }
                     } else {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          fullscreenDialog: true,
-                          builder: (_) => VoiceCallScreen(
-                            otherUser: callerUser,
-                            isIncoming: true,
-                            callId: callId,
-                            conversationId: conversationId,
-                            offer: offer,
+                      if (isGroupCall) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            fullscreenDialog: true,
+                            builder: (_) => GroupVoiceCallScreen(
+                              conversationId: conversationId,
+                              groupName: groupName,
+                              groupAvatar: groupAvatar,
+                              participants: groupParticipants,
+                              isIncoming: true,
+                              callId: callId,
+                              offer: offer,
+                            ),
                           ),
-                        ),
-                      );
+                        );
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            fullscreenDialog: true,
+                            builder: (_) => VoiceCallScreen(
+                              otherUser: callerUser,
+                              isIncoming: true,
+                              callId: callId,
+                              conversationId: conversationId,
+                              offer: offer,
+                            ),
+                          ),
+                        );
+                      }
                     }
                   },
                   child: Container(

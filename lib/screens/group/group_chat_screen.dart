@@ -2,14 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../../core/constants/app_colors.dart';
+import '../../core/utils/date_utils.dart' as du;
 import '../../core/utils/image_utils.dart';
+import '../../data/models/models.dart';
+import '../../services/api_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/auth_service.dart';
+import '../../services/socket_service.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_options_screen.dart';
+import '../call/group_voice_call_screen.dart';
+import '../call/group_video_call_screen.dart';
 
 class GroupChatScreen extends StatefulWidget {
   final ApiGroupModel group;
-
   const GroupChatScreen({super.key, required this.group});
 
   @override
@@ -22,6 +28,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final FocusNode _focusNode = FocusNode();
 
   late ApiGroupModel _group;
+  List<MessageModel> _messages = [];
+  bool _isLoading = true;
+  bool _isSending = false;
+  final Map<String, ApiUserModel> _memberProfiles = {};
   int _bgIndex = 0;
   String? _bgCustomBase64;
 
@@ -30,8 +40,73 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     super.initState();
     _group = widget.group;
     _loadBackgroundPref();
+    _loadMemberProfiles();
+    _loadMessages();
+    _initSocket();
   }
 
+  // ── Helpers để build GroupCallParticipant từ members ─────────────────────
+  List<GroupCallParticipant> _buildParticipants() {
+    final myId = authService.userId ?? '';
+    return _group.members
+        .where((m) => m.userId != myId)
+        .map(
+          (m) => GroupCallParticipant(
+            userId: m.userId,
+            name: _memberProfiles[m.userId]?.fullName ?? m.userId,
+            avatar: _memberProfiles[m.userId]?.avatar,
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> _loadMemberProfiles() async {
+    final ids = _group.members.map((m) => m.userId).where((id) => id.isNotEmpty).toList();
+    if (ids.isEmpty) return;
+    final profiles = await ContactsApiService.instance.fetchUsersByIds(ids);
+    if (!mounted) return;
+    setState(() => _memberProfiles.addAll(profiles));
+  }
+
+  String _resolveMemberName(String userId) {
+    if (userId == authService.userId) return 'Bạn';
+    final profile = _memberProfiles[userId];
+    if (profile != null && profile.fullName.isNotEmpty) return profile.fullName;
+    return userId;
+  }
+
+  void _startVoiceCall() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GroupVoiceCallScreen(
+          conversationId: _group.id,
+          groupName: _group.name.isNotEmpty ? _group.name : 'Nhóm',
+          groupAvatar: _group.avatar.isNotEmpty ? _group.avatar : null,
+          participants: _buildParticipants(),
+          isIncoming: false,
+        ),
+      ),
+    );
+  }
+
+  void _startVideoCall() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => GroupVideoCallScreen(
+          conversationId: _group.id,
+          groupName: _group.name.isNotEmpty ? _group.name : 'Nhóm',
+          groupAvatar: _group.avatar.isNotEmpty ? _group.avatar : null,
+          participants: _buildParticipants(),
+          isIncoming: false,
+        ),
+      ),
+    );
+  }
+
+  // ── Background loading (giữ nguyên) ──────────────────────────────────────
   Future<void> _loadBackgroundPref() async {
     final p = await SharedPreferences.getInstance();
     final idx = p.getInt('group_chat_bg_${_group.id}') ?? 0;
@@ -42,16 +117,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       _bgIndex = idx.clamp(0, GroupChatBackgrounds.count - 1);
       _bgCustomBase64 = custom;
     });
-
-    // Nếu không override cá nhân → lấy nền toàn nhóm từ backend.
-    if (!override) {
-      await _syncGroupBackgroundFromBackend();
-    }
+    if (!override) await _syncGroupBackgroundFromBackend();
   }
 
   Future<void> _syncGroupBackgroundFromBackend() async {
-    final res =
-        await ContactsApiService.instance.fetchConversationRaw(_group.id);
+    final res = await ContactsApiService.instance.fetchConversationRaw(
+      _group.id,
+    );
     if (!res.isSuccess) return;
     final map = res.data ?? const <String, dynamic>{};
     final gs = map['groupSettings'];
@@ -72,29 +144,127 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       }
     });
 
-    // Cache local để mở lại nhanh.
     final p = await SharedPreferences.getInstance();
     await p.setBool('group_chat_bg_override_${_group.id}', false);
     if (type == 'CUSTOM' && custom.isNotEmpty) {
       await p.setString('group_chat_bg_custom_${_group.id}', custom);
     } else {
       await p.remove('group_chat_bg_custom_${_group.id}');
-      await p.setInt('group_chat_bg_${_group.id}',
-          idx.clamp(0, GroupChatBackgrounds.count - 1));
+      await p.setInt(
+        'group_chat_bg_${_group.id}',
+        idx.clamp(0, GroupChatBackgrounds.count - 1),
+      );
     }
   }
 
   @override
   void dispose() {
+    socketService.off('new_message', _handleNewMessageEvent);
+    socketService.off('message_edited', _handleMessageUpdatedEvent);
+    socketService.off('message_recalled', _handleMessageUpdatedEvent);
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  // Mở GroupOptionsScreen: cập nhật nhóm hoặc rời nhóm (pop về danh sách)
+  void _initSocket() {
+    socketService.joinConversation(_group.id);
+    socketService.on('new_message', _handleNewMessageEvent);
+    socketService.on('message_edited', _handleMessageUpdatedEvent);
+    socketService.on('message_recalled', _handleMessageUpdatedEvent);
+  }
+
+  Future<void> _loadMessages() async {
+    final myId = authService.userId;
+    if (myId == null || myId.isEmpty) return;
+    setState(() => _isLoading = true);
+    try {
+      final data = await apiService.getMessages(_group.id, myId);
+      if (!mounted) return;
+      setState(() {
+        _messages = _normalizeMessages(data);
+        _isLoading = false;
+      });
+      _scrollToBottom(animated: false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _handleNewMessageEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final messageMap = _extractMessageMap(map);
+    if (messageMap == null) return;
+    final msg = MessageModel.fromJson(messageMap);
+    if (msg.conversationId != _group.id) return;
+    setState(() => _messages = _upsertMessage(_messages, msg));
+    _scrollToBottom();
+  }
+
+  void _handleMessageUpdatedEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final convId = map['conversationId']?.toString();
+    if (convId != null && convId != _group.id) return;
+    _loadMessages();
+  }
+
+  Map<String, dynamic>? _tryMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return null;
+  }
+
+  Map<String, dynamic>? _extractMessageMap(Map<String, dynamic> payload) {
+    if (payload.containsKey('conversationId') &&
+        (payload.containsKey('_id') || payload.containsKey('id'))) {
+      return payload;
+    }
+    final nested = _tryMap(payload['message']);
+    return nested;
+  }
+
+  List<MessageModel> _normalizeMessages(List<MessageModel> input) {
+    final byId = <String, MessageModel>{};
+    for (final m in input) {
+      byId[m.id] = m;
+    }
+    final list = byId.values.toList()
+      ..sort((a, b) {
+        final c = a.createdAt.compareTo(b.createdAt);
+        if (c != 0) return c;
+        return a.id.compareTo(b.id);
+      });
+    return list;
+  }
+
+  List<MessageModel> _upsertMessage(List<MessageModel> source, MessageModel next) {
+    final idx = source.indexWhere((m) => m.id == next.id);
+    if (idx == -1) return _normalizeMessages([...source, next]);
+    final updated = [...source];
+    updated[idx] = next;
+    return _normalizeMessages(updated);
+  }
+
+  void _scrollToBottom({bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollCtrl.hasClients) return;
+      if (animated) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+      }
+    });
+  }
+
   Future<void> _openOptions() async {
-    // `true` = đã rời nhóm; [ApiGroupModel] = nhóm đã chỉnh từ tùy chọn
     final result = await Navigator.push<Object?>(
       context,
       MaterialPageRoute(builder: (_) => GroupOptionsScreen(group: _group)),
@@ -111,18 +281,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   @override
   Widget build(BuildContext context) {
     final memberCount = _group.members.length;
-
     return Scaffold(
       backgroundColor: AppColors.bgDark,
       body: Column(
         children: [
-          // ── Header ──────────────────────────────────────────
-          SafeArea(
-            bottom: false,
-            child: _buildHeader(memberCount),
-          ),
-
-          // ── Messages area (nền gradient theo Tùy chọn) ─────
+          SafeArea(bottom: false, child: _buildHeader(memberCount)),
           Expanded(
             child: Container(
               width: double.infinity,
@@ -138,28 +301,34 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     : null,
               ),
               child: GestureDetector(
-                onTap: () {
-                  _focusNode.unfocus();
-                },
-                child: ListView(
-                  controller: _scrollCtrl,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
-                  ),
-                  children: const [
-                    _EmptyChat(),
-                  ],
-                ),
+                onTap: () => _focusNode.unfocus(),
+                child: _isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(color: AppColors.primary),
+                      )
+                    : _messages.isEmpty
+                        ? const _EmptyChat()
+                        : ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
+                            itemCount: _messages.length,
+                            itemBuilder: (_, i) {
+                              final msg = _messages[i];
+                              final isMe = msg.senderId == authService.userId;
+                              return _GroupMessageBubble(
+                                msg: msg,
+                                isMe: isMe,
+                                senderLabel: _resolveMemberName(msg.senderId),
+                              );
+                            },
+                          ),
               ),
             ),
           ),
-
-          // ── Input Bar ───────────────────────────────────────
-          SafeArea(
-            top: false,
-            child: _buildInputBar(),
-          ),
+          SafeArea(top: false, child: _buildInputBar()),
         ],
       ),
     );
@@ -169,11 +338,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) return;
-
-    // Đẩy menu lên cao để không che hàng icon ở footer.
     const menuLift = 140.0;
     final anchor = Offset(globalPosition.dx, globalPosition.dy - menuLift);
-
     final selected = await showMenu<String>(
       context: context,
       color: AppColors.bgCard,
@@ -222,19 +388,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ),
       ],
     );
-
     if (!mounted || selected == null) return;
-    switch (selected) {
-      case 'quick_ai':
-        // TODO: gắn flow AI sau (hiện tại chỉ UI menu)
-        break;
-      case 'file':
-        // TODO: gắn flow chọn/gửi file sau (hiện tại chỉ UI menu)
-        break;
-    }
   }
 
-  // ── Header ────────────────────────────────────────────────────
+  // ── Header (ĐÃ THÊM 2 nút gọi nhóm) ─────────────────────────────────────
   Widget _buildHeader(int memberCount) {
     return Container(
       decoration: const BoxDecoration(
@@ -252,8 +409,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
             onPressed: () => Navigator.pop(context),
           ),
-
-          // Avatar + online dot (giống kiểu Messenger)
           SizedBox(
             width: 38,
             height: 38,
@@ -278,7 +433,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ),
           const SizedBox(width: 10),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -307,22 +461,25 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ),
 
+          // ── Nút gọi thoại nhóm ──
           IconButton(
             icon: const Icon(
               Icons.phone_outlined,
               color: AppColors.primary,
               size: 22,
             ),
-            onPressed: () {},
+            onPressed: _startVoiceCall,
           ),
+          // ── Nút gọi video nhóm ──
           IconButton(
             icon: const Icon(
               Icons.videocam_outlined,
               color: AppColors.primary,
               size: 24,
             ),
-            onPressed: () {},
+            onPressed: _startVideoCall,
           ),
+          // ── Nút thông tin nhóm ──
           IconButton(
             icon: const Icon(
               Icons.info_outline,
@@ -336,27 +493,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  // ── Input Bar ─────────────────────────────────────────────────
+  // ── Input Bar (giữ nguyên) ────────────────────────────────────────────────
   Widget _buildInputBar() {
-    const footerBg = AppColors.bgCard;
-    const inputBg = AppColors.bgInput;
-    const actionColor = AppColors.primary;
-
     final hasText = _textCtrl.text.trim().isNotEmpty;
-
     Widget actionIcon(IconData icon, {VoidCallback? onTap}) {
       return InkResponse(
         onTap: onTap,
         radius: 22,
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, color: actionColor, size: 24),
+          child: Icon(icon, color: AppColors.primary, size: 24),
         ),
       );
     }
 
     return Container(
-      color: footerBg,
+      color: AppColors.bgCard,
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
       child: Row(
         children: [
@@ -368,13 +520,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           actionIcon(Icons.image_rounded, onTap: () {}),
           actionIcon(Icons.mic_none_rounded, onTap: () {}),
           const SizedBox(width: 6),
-
-          // Text field
           Expanded(
             child: Container(
               constraints: const BoxConstraints(minHeight: 38, maxHeight: 120),
               decoration: BoxDecoration(
-                color: inputBg,
+                color: AppColors.bgInput,
                 borderRadius: BorderRadius.circular(22),
               ),
               child: TextField(
@@ -401,9 +551,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   suffixIcon: InkResponse(
                     onTap: () {},
                     radius: 22,
-                    child: Icon(
+                    child: const Icon(
                       Icons.sentiment_satisfied_alt_outlined,
-                      color: actionColor,
+                      color: AppColors.primary,
                       size: 22,
                     ),
                   ),
@@ -416,9 +566,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ),
             ),
           ),
-
           const SizedBox(width: 10),
-
           InkResponse(
             onTap: hasText ? _sendMessage : () {},
             radius: 24,
@@ -426,7 +574,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               padding: const EdgeInsets.all(6),
               child: Icon(
                 hasText ? Icons.send_rounded : Icons.thumb_up,
-                color: actionColor,
+                color: AppColors.primary,
                 size: 24,
               ),
             ),
@@ -438,17 +586,27 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   void _sendMessage() {
     final text = _textCtrl.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isSending) return;
+    final userId = authService.userId;
+    if (userId == null || userId.isEmpty) return;
+    _isSending = true;
+    socketService.sendMessage({
+      'conversationId': _group.id,
+      'senderId': userId,
+      'content': text,
+      'type': 'TEXT',
+    });
     _textCtrl.clear();
-    setState(() {});
+    setState(() {
+      _isSending = false;
+    });
   }
 }
 
-// ── Group avatar widget ───────────────────────────────────────────────────────
+// ── Group avatar widget (giữ nguyên) ─────────────────────────────────────────
 class _GroupAvatar extends StatelessWidget {
   final ApiGroupModel group;
   final double size;
-
   const _GroupAvatar({required this.group, required this.size});
 
   @override
@@ -467,20 +625,18 @@ class _GroupAvatar extends StatelessWidget {
     return _fallback();
   }
 
-  Widget _fallback() {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: AppColors.bgInput,
-        shape: BoxShape.circle,
-      ),
-      child: Icon(Icons.group, color: AppColors.primary, size: size * 0.55),
-    );
-  }
+  Widget _fallback() => Container(
+    width: size,
+    height: size,
+    decoration: const BoxDecoration(
+      color: AppColors.bgInput,
+      shape: BoxShape.circle,
+    ),
+    child: Icon(Icons.group, color: AppColors.primary, size: size * 0.55),
+  );
 }
 
-// ── Empty chat placeholder ────────────────────────────────────────────────────
+// ── Empty chat placeholder (giữ nguyên) ──────────────────────────────────────
 class _EmptyChat extends StatelessWidget {
   const _EmptyChat();
 
@@ -513,6 +669,77 @@ class _EmptyChat extends StatelessWidget {
                 fontSize: 14,
                 color: AppColors.textSecondary,
                 height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupMessageBubble extends StatelessWidget {
+  final MessageModel msg;
+  final bool isMe;
+  final String senderLabel;
+
+  const _GroupMessageBubble({
+    required this.msg,
+    required this.isMe,
+    required this.senderLabel,
+  });
+
+  String _previewContent() {
+    final type = msg.type.toUpperCase();
+    if (type == 'IMAGE') return '[Ảnh]';
+    if (type == 'VIDEO') return '[Video]';
+    if (type == 'FILE') return '[File]';
+    return msg.content;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: EdgeInsets.only(
+          top: 4,
+          bottom: 4,
+          left: isMe ? 56 : 0,
+          right: isMe ? 0 : 56,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? AppColors.primary : AppColors.bubbleOther,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!isMe)
+              Text(
+                senderLabel,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                  fontFamily: 'Inter',
+                ),
+              ),
+            Text(
+              _previewContent(),
+              style: TextStyle(
+                color: isMe ? Colors.white : AppColors.bubbleOtherText,
+                fontSize: 14,
+                fontFamily: 'Inter',
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              du.DateUtils.formatMessageTime(msg.createdAt),
+              style: TextStyle(
+                fontSize: 10,
+                color: isMe ? Colors.white70 : AppColors.textHint,
+                fontFamily: 'Inter',
               ),
             ),
           ],
