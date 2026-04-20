@@ -13,9 +13,13 @@ class IncomingCallListener extends StatefulWidget {
 }
 
 class _IncomingCallListenerState extends State<IncomingCallListener> {
+  BuildContext? _dialogContext;
+  bool _isIncomingDialogVisible = false;
+
   @override
   void initState() {
     super.initState();
+    callService.addStateListener(_onCallStateChanged);
     callService.onIncomingCall = (data) {
       if (!mounted) return;
       _showIncomingCallDialog(data);
@@ -25,10 +29,29 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
   @override
   void dispose() {
     callService.onIncomingCall = null;
+    callService.removeStateListener(_onCallStateChanged);
     super.dispose();
   }
 
+  void _onCallStateChanged(CallState state) {
+    if (state == CallState.ended) {
+      _dismissIncomingDialog();
+    }
+  }
+
+  void _dismissIncomingDialog() {
+    if (!_isIncomingDialogVisible) return;
+    final ctx = _dialogContext;
+    if (ctx != null && Navigator.of(ctx).canPop()) {
+      Navigator.of(ctx).pop();
+    }
+    _dialogContext = null;
+    _isIncomingDialogVisible = false;
+  }
+
   void _showIncomingCallDialog(Map<String, dynamic> data) {
+    if (_isIncomingDialogVisible) return;
+
     final callerId = data['callerId']?.toString() ?? '';
     final callId = data['callId']?.toString() ?? '';
     final conversationId = data['conversationId']?.toString() ?? '';
@@ -45,11 +68,14 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
       phone: '',
       avatar: callerAvatar,
     );
+    _isIncomingDialogVisible = true;
 
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) {
+        _dialogContext = dialogCtx;
+        return AlertDialog(
         backgroundColor: const Color(0xFF1A3A1A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
@@ -104,7 +130,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
               Expanded(
                 child: GestureDetector(
                   onTap: () {
-                    Navigator.pop(context);
+                    _dismissIncomingDialog();
                     callService.rejectCall(
                       callId: callId,
                       conversationId: conversationId,
@@ -144,7 +170,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
               Expanded(
                 child: GestureDetector(
                   onTap: () {
-                    Navigator.pop(context);
+                    _dismissIncomingDialog();
                     if (isVideo) {
                       Navigator.push(
                         context,
@@ -207,8 +233,12 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
             ],
           ),
         ],
-      ),
-    );
+      );
+      },
+    ).whenComplete(() {
+      _dialogContext = null;
+      _isIncomingDialogVisible = false;
+    });
   }
 
   @override

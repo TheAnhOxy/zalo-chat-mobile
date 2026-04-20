@@ -22,6 +22,8 @@ class CallService {
 
   String? _currentCallId;
   String? _currentConversationId;
+  bool _pendingRejectBeforeCallId = false;
+  String? _pendingRejectConversationId;
 
   bool _isStartingCall = false; // ✅ chống gọi trùng
 
@@ -49,6 +51,7 @@ class CallService {
     socketService.off('call_created'); // ✅ thêm
 
     socketService.on('incoming_call', (data) {
+      _setState(CallState.incoming);
       onIncomingCall?.call(Map<String, dynamic>.from(data as Map));
     });
 
@@ -57,6 +60,25 @@ class CallService {
       final map = Map<String, dynamic>.from(data as Map);
       _currentCallId = map['callId']?.toString();
       dev.log('📞 Received callId: $_currentCallId');
+
+      final createdConversationId = map['conversationId']?.toString();
+      final canFlushPendingEnd =
+          _pendingRejectBeforeCallId &&
+          _currentCallId != null &&
+          _currentCallId!.isNotEmpty &&
+          _pendingRejectConversationId != null &&
+          (createdConversationId == null ||
+              createdConversationId.isEmpty ||
+              createdConversationId == _pendingRejectConversationId);
+
+      if (canFlushPendingEnd) {
+        socketService.emit('reject_call', {
+          'callId': _currentCallId!,
+          'conversationId': _pendingRejectConversationId!,
+        });
+        _pendingRejectBeforeCallId = false;
+        _pendingRejectConversationId = null;
+      }
     });
 
     socketService.on('call_answered', (data) async {
@@ -200,13 +222,36 @@ class CallService {
 
   void endCall() {
     if (_state == CallState.ended) return;
+    final wasConnected = _state == CallState.connected;
 
     _setState(CallState.ended);
 
     if (_currentCallId != null && _currentConversationId != null) {
-      socketService.emit('end_call', {
-        'callId': _currentCallId!,
+      if (wasConnected) {
+        socketService.emit('end_call', {
+          'callId': _currentCallId!,
+          'conversationId': _currentConversationId!,
+        });
+      } else {
+        socketService.emit('reject_call', {
+          'callId': _currentCallId!,
+          'conversationId': _currentConversationId!,
+        });
+      }
+    } else if (_currentConversationId != null && !wasConnected) {
+      // Caller tắt trước khi connected và trước khi có callId:
+      // emit reject sớm theo conversation để callee đóng incoming,
+      // rồi flush reject_call có callId khi call_created về.
+      _pendingRejectBeforeCallId = true;
+      _pendingRejectConversationId = _currentConversationId;
+      socketService.emit('reject_call', {
         'conversationId': _currentConversationId!,
+        'callerId': authService.userId,
+      });
+    } else if (_currentConversationId != null) {
+      socketService.emit('end_call', {
+        'conversationId': _currentConversationId!,
+        'callerId': authService.userId,
       });
     }
 
