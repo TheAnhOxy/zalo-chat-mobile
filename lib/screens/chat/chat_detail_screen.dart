@@ -15,6 +15,7 @@ import '../../widgets/common/common_widgets.dart';
 import '../call/voice_call_screen.dart';
 import '../call/video_call_screen.dart';
 import 'video_player_screen.dart';
+import 'forward_message_screen.dart';
 import 'dart:developer';
 import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
@@ -1955,6 +1956,29 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     _recallMessage(msg);
                   },
                 ),
+              ListTile(
+                leading: const Icon(
+                  Icons.forward_to_inbox_outlined,
+                  color: AppColors.textPrimary,
+                  size: 22,
+                ),
+                title: const Text(
+                  'Chuyển tiếp',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ForwardMessageScreen(message: msg),
+                    ),
+                  );
+                },
+              ),
               ListTile(
                 leading: const Icon(
                   Icons.delete_outline,
