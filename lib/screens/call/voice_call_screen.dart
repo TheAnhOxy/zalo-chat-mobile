@@ -590,6 +590,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
                   await callService.answerCall(
                     conversationId: widget.conversationId ?? '',
                     callId: widget.callId ?? '',
+                    peerId: widget.otherUser.id,
                     offer: widget.offer ?? {},
                     isVideo: false,
                   );

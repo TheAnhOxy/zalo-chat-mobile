@@ -7,25 +7,34 @@ import 'auth_service.dart';
 enum CallState { idle, calling, incoming, connected, ended }
 
 typedef IncomingCallData = void Function(Map<String, dynamic> data);
+typedef ParticipantLeftData = void Function(Map<String, dynamic> data);
+typedef CallStartedData = void Function(Map<String, dynamic> data);
 
 class CallService {
-  final List<RTCIceCandidate> _remoteCandidatesQueue = [];
   static final CallService _instance = CallService._internal();
   factory CallService() => _instance;
   CallService._internal();
 
   RTCPeerConnection? _pc;
+  final Map<String, RTCPeerConnection> _peerConnections = {};
   MediaStream? _localStream;
   MediaStream? _remoteStream;
+  MediaStream? _mixedRemoteStream;
+  final Map<String, List<RTCIceCandidate>> _pendingRemoteCandidates = {};
+  final Map<String, bool> _peerHasRemoteDescription = {};
   bool _hasRemoteDescription = false;
   CallState _state = CallState.idle;
 
   String? _currentCallId;
   String? _currentConversationId;
+  String? _currentCallerId;
+  String? _currentPeerId;
   bool _pendingRejectBeforeCallId = false;
   String? _pendingRejectConversationId;
 
   bool _isStartingCall = false; // ✅ chống gọi trùng
+  bool _isGroupCall = false;
+  bool _callConnectedEmitted = false; // ✅ Chỉ emit call_connected một lần
 
   CallState get state => _state;
   MediaStream? get localStream => _localStream;
@@ -33,6 +42,8 @@ class CallService {
 
   final List<void Function(CallState)> _stateListeners = [];
   IncomingCallData? onIncomingCall;
+  ParticipantLeftData? onParticipantLeft;
+  CallStartedData? onCallStarted;
   void Function(MediaStream)? onRemoteStream;
 
   final Map<String, dynamic> _iceConfig = {
@@ -49,6 +60,8 @@ class CallService {
     socketService.off('call_ended');
     socketService.off('call_rejected');
     socketService.off('call_created'); // ✅ thêm
+    socketService.off('participant_left'); // ✅ thêm
+    socketService.off('call_started'); // ✅ thêm
 
     socketService.on('incoming_call', (data) {
       _setState(CallState.incoming);
@@ -84,17 +97,29 @@ class CallService {
     socketService.on('call_answered', (data) async {
       try {
         final map = Map<String, dynamic>.from(data as Map);
+        final responderId = map['responderId']?.toString();
+        final peerId = responderId ?? _currentPeerId;
+        final pc = peerId != null ? _peerConnections[peerId] : _pc;
+
+        if (pc == null) {
+          dev.log(
+            '❌ call_answered received but no peer connection found for $peerId',
+          );
+          return;
+        }
+
         final answer = RTCSessionDescription(
           map['answer']['sdp'],
           map['answer']['type'],
         );
-        await _pc?.setRemoteDescription(answer);
-        _hasRemoteDescription = true;
+        await pc.setRemoteDescription(answer);
+        _peerHasRemoteDescription[peerId ?? 'default'] = true;
 
-        for (final c in _remoteCandidatesQueue) {
-          await _pc?.addCandidate(c);
+        final pending = _pendingRemoteCandidates[peerId] ?? [];
+        for (final c in pending) {
+          await pc.addCandidate(c);
         }
-        _remoteCandidatesQueue.clear();
+        _pendingRemoteCandidates.remove(peerId);
       } catch (e) {
         dev.log('❌ call_answered error: $e');
       }
@@ -108,11 +133,30 @@ class CallService {
           map['sdpMid'],
           map['sdpMLineIndex'],
         );
+        final sourceId = map['sourceId']?.toString();
+        final targetId = map['targetId']?.toString();
+        final peerId = sourceId ?? targetId ?? _currentPeerId;
 
-        if (!_hasRemoteDescription) {
-          _remoteCandidatesQueue.add(candidate);
+        if (targetId != null && targetId != authService.userId) {
+          return;
+        }
+
+        final pc = peerId != null ? _peerConnections[peerId] : _pc;
+        if (pc == null) {
+          _pendingRemoteCandidates
+              .putIfAbsent(peerId ?? 'default', () => [])
+              .add(candidate);
+          return;
+        }
+
+        final hasRemote =
+            _peerHasRemoteDescription[peerId] ?? _hasRemoteDescription;
+        if (!hasRemote) {
+          _pendingRemoteCandidates
+              .putIfAbsent(peerId ?? 'default', () => [])
+              .add(candidate);
         } else {
-          await _pc?.addCandidate(candidate);
+          await pc.addCandidate(candidate);
         }
       } catch (e) {
         dev.log('❌ ICE error: $e');
@@ -124,31 +168,49 @@ class CallService {
       _setState(CallState.ended);
     });
 
-    socketService.on('call_rejected', (_) {
+    socketService.on('call_rejected', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final groupReject = map['isGroup'] == true;
+      if (groupReject) {
+        dev.log('📞 Group call participant rejected: ${map['rejecterId']}');
+        return;
+      }
       _cleanUp();
       _setState(CallState.ended);
     });
-  }
+
+    // ✅ Xử lý khi 1 người rời khỏi cuộc gọi nhóm (call vẫn tiếp tục nếu còn 2+ người)
+    socketService.on('participant_left', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      dev.log('👤 Participant left: ${map['userId']}, Remaining: ${map['activeParticipantsCount']}');
+      onParticipantLeft?.call(map);
+    });
+    // ✅ Đồng bộ thời gian cuộc gọi từ server
+    socketService.on('call_started', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      dev.log('⏱️ Call started (sync timer): ${map['startedAt']}');
+      onCallStarted?.call(map);
+    });  }
 
   Future<String?> startCall({
     required String conversationId,
     required String calleeId,
     bool isVideo = false,
   }) async {
-    // ✅ chống spam / gọi 2 lần
     if (_isStartingCall) return null;
     _isStartingCall = true;
 
     try {
       _currentConversationId = conversationId;
+      _currentCallerId = authService.userId;
+      _currentPeerId = calleeId;
+      _isGroupCall = false;
 
-      await _createPeerConnection(isVideo: isVideo);
       await _getLocalStream(isVideo: isVideo);
+      final pc = await _createPeerConnection(calleeId, isVideo: isVideo);
 
-      final offer = await _pc!.createOffer();
-      await _pc!.setLocalDescription(offer);
-
-      // ❌ ĐÃ XOÁ createCall API ở đây
+      final offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
       socketService.emit('start_call', {
         'callDto': {
@@ -183,12 +245,22 @@ class CallService {
 
     try {
       _currentConversationId = conversationId;
+      _currentCallerId = authService.userId;
+      _isGroupCall = true;
 
-      await _createPeerConnection(isVideo: isVideo);
       await _getLocalStream(isVideo: isVideo);
+      final offers = <Map<String, dynamic>>[];
 
-      final offer = await _pc!.createOffer();
-      await _pc!.setLocalDescription(offer);
+      for (final participantId in participantIds) {
+        final pc = await _createPeerConnection(participantId, isVideo: isVideo);
+        final offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        offers.add({
+          'targetId': participantId,
+          'offer': {'sdp': offer.sdp, 'type': offer.type},
+        });
+      }
 
       socketService.emit('start_call', {
         'callDto': {
@@ -199,7 +271,7 @@ class CallService {
           'participants': participantIds,
           'type': isVideo ? 'VIDEO' : 'VOICE',
         },
-        'offer': {'sdp': offer.sdp, 'type': offer.type},
+        'offers': offers,
       });
 
       _setState(CallState.calling);
@@ -216,32 +288,39 @@ class CallService {
   Future<void> answerCall({
     required String conversationId,
     required String callId,
+    required String peerId,
     required Map<String, dynamic> offer,
     bool isVideo = false,
   }) async {
     try {
       _currentConversationId = conversationId;
       _currentCallId = callId;
+      _currentPeerId = peerId;
+      _currentCallerId = peerId;
+      _isGroupCall = true;
 
-      await _createPeerConnection(isVideo: isVideo);
       await _getLocalStream(isVideo: isVideo);
+      final pc = await _createPeerConnection(peerId, isVideo: isVideo);
 
       final remoteDesc = RTCSessionDescription(offer['sdp'], offer['type']);
-      await _pc!.setRemoteDescription(remoteDesc);
-      _hasRemoteDescription = true;
+      await pc.setRemoteDescription(remoteDesc);
+      _peerHasRemoteDescription[peerId] = true;
 
-      for (final c in _remoteCandidatesQueue) {
-        await _pc?.addCandidate(c);
+      final pending = _pendingRemoteCandidates[peerId] ?? [];
+      for (final c in pending) {
+        await pc.addCandidate(c);
       }
-      _remoteCandidatesQueue.clear();
+      _pendingRemoteCandidates.remove(peerId);
 
-      final answer = await _pc!.createAnswer();
-      await _pc!.setLocalDescription(answer);
+      final answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
 
       socketService.emit('answer_call', {
         'conversationId': conversationId,
         'callId': callId,
         'answer': {'sdp': answer.sdp, 'type': answer.type},
+        'targetId': peerId,
+        'sourceId': authService.userId,
       });
 
       _setState(CallState.calling);
@@ -298,6 +377,26 @@ class CallService {
     _cleanUp();
   }
 
+  // ✅ Rời khỏi cuộc gọi nhóm (nhưng call vẫn tiếp tục nếu còn 2+ người)
+  void leaveCall() {
+    if (!_isGroupCall) {
+      endCall();
+      return;
+    }
+
+    dev.log('📞 Leaving group call...');
+
+    if (_currentCallId != null && _currentConversationId != null) {
+      socketService.emit('leave_call', {
+        'callId': _currentCallId!,
+        'conversationId': _currentConversationId!,
+        'userId': authService.userId,
+      });
+    }
+
+    _cleanUp();
+  }
+
   void toggleMute(bool mute) {
     _localStream?.getAudioTracks().forEach((t) => t.enabled = !mute);
   }
@@ -306,10 +405,21 @@ class CallService {
     if (!kIsWeb) Helper.setSpeakerphoneOn(speaker);
   }
 
-  Future<void> _createPeerConnection({bool isVideo = false}) async {
-    _pc = await createPeerConnection(_iceConfig);
+  Future<RTCPeerConnection> _createPeerConnection(
+    String peerId, {
+    bool isVideo = false,
+  }) async {
+    final pc = await createPeerConnection(_iceConfig);
+    _peerConnections[peerId] = pc;
+    _pc = pc;
+    _peerHasRemoteDescription[peerId] = false;
+    _pendingRemoteCandidates.putIfAbsent(peerId, () => []);
 
-    _pc!.onIceCandidate = (candidate) {
+    _localStream?.getTracks().forEach((track) {
+      pc.addTrack(track, _localStream!);
+    });
+
+    pc.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
 
       socketService.emit('ice_candidate', {
@@ -317,41 +427,91 @@ class CallService {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
         'sdpMLineIndex': candidate.sdpMLineIndex,
+        'targetId': peerId,
+        'sourceId': authService.userId,
       });
     };
 
-    _pc!.onConnectionState = (state) {
+    pc.onConnectionState = (state) {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        if (_currentCallId != null) {
-          socketService.emit('call_connected', {'callId': _currentCallId});
+        // ✅ Emit call_connected chỉ lần đầu tiên
+        if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
+          _callConnectedEmitted = true;
+          socketService.emit('call_connected', {
+            'callId': _currentCallId,
+            'conversationId': _currentConversationId,
+            'userId': authService.userId,
+          });
         }
-        _setState(CallState.connected);
+        // ✅ Chỉ transition tới connected nếu chưa connected
+        if (_state != CallState.connected) {
+          _setState(CallState.connected);
+        }
       } else if (state ==
               RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        endCall();
-      }
-    };
-
-    _pc!.onTrack = (event) {
-      if (event.streams.isNotEmpty) {
-        _remoteStream = event.streams[0];
-        onRemoteStream?.call(_remoteStream!);
-
-        if (_state == CallState.calling) {
-          _setState(CallState.connected);
+        // ✅ Group call: một kết nối P2P bị lỗi ≠ kết thúc toàn bộ call
+        // Chỉ end call nếu là 1-1 call hoặc người dùng tự click leave
+        if (!_isGroupCall) {
+          endCall();
         }
       }
     };
+
+    pc.onTrack = (event) async {
+      if (event.streams.isEmpty) return;
+      final stream = event.streams[0];
+
+      _remoteStream = stream;
+      if (_mixedRemoteStream == null) {
+        try {
+          _mixedRemoteStream = await createLocalMediaStream('mixed_remote');
+        } catch (_) {
+          _mixedRemoteStream = null;
+        }
+      }
+
+      if (_mixedRemoteStream != null) {
+        for (final track in stream.getTracks()) {
+          if (!_mixedRemoteStream!.getTracks().any((t) => t.id == track.id)) {
+            await _mixedRemoteStream!.addTrack(track);
+          }
+        }
+        onRemoteStream?.call(_mixedRemoteStream!);
+      } else {
+        onRemoteStream?.call(_remoteStream!);
+      }
+
+      if (_state == CallState.calling) {
+        // ✅ onTrack cũng có thể emit call_connected nếu onConnectionState chưa emit
+        if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
+          _callConnectedEmitted = true;
+          socketService.emit('call_connected', {
+            'callId': _currentCallId,
+            'conversationId': _currentConversationId,
+            'userId': authService.userId,
+          });
+        }
+        _setState(CallState.connected);
+      }
+    };
+
+    return pc;
   }
 
   Future<void> _getLocalStream({bool isVideo = false}) async {
+    if (_localStream != null) return;
+
     try {
       _localStream = await navigator.mediaDevices.getUserMedia({
         'audio': true,
         'video': isVideo ? {'facingMode': 'user'} : false,
       });
-      _localStream!.getTracks().forEach((t) => _pc!.addTrack(t, _localStream!));
+      _peerConnections.values.forEach((pc) {
+        _localStream!.getTracks().forEach(
+          (track) => pc.addTrack(track, _localStream!),
+        );
+      });
     } catch (e) {
       dev.log('❌ getUserMedia error: $e');
     }
@@ -380,15 +540,28 @@ class CallService {
     _remoteStream?.dispose();
     _remoteStream = null;
 
+    _mixedRemoteStream?.dispose();
+    _mixedRemoteStream = null;
+
+    for (final pc in _peerConnections.values) {
+      pc.close();
+    }
+    _peerConnections.clear();
+    _peerHasRemoteDescription.clear();
+    _pendingRemoteCandidates.clear();
+
     _pc?.close();
     _pc = null;
 
     _currentCallId = null;
     _currentConversationId = null;
+    _currentCallerId = null;
+    _currentPeerId = null;
+    _isGroupCall = false;
+    _callConnectedEmitted = false; // ✅ Reset flag
 
     _state = CallState.idle;
     _hasRemoteDescription = false;
-    _remoteCandidatesQueue.clear();
   }
 
   void dispose() {
@@ -398,6 +571,8 @@ class CallService {
     socketService.off('call_ended');
     socketService.off('call_rejected');
     socketService.off('call_created');
+    socketService.off('participant_left');
+    socketService.off('call_started');
     _cleanUp();
   }
 }
