@@ -4,9 +4,11 @@ import '../../core/utils/date_utils.dart' as du;
 import '../../data/models/models.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/contacts_api_service.dart';
 import '../../services/socket_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
+import '../group/group_chat_screen.dart';
 import 'dart:developer';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -78,7 +80,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       log('✅ Đã load ${_conversations.length} cuộc trò chuyện');
 
       for (var conv in _conversations) {
-        socketService.emit('join_conversation', {'conversationId': conv.id});
+        socketService.joinConversation(conv.id);
       }
 
       // Fetch profile của user kia trong mỗi chat 1-1
@@ -121,85 +123,52 @@ class _ChatListScreenState extends State<ChatListScreen> {
   // Socket listener - realtime
 
   void _initSocketListener() {
-    socketService.on('new_message', (data) {
-      if (!mounted) return;
-
-      try {
-        final map = data is Map ? Map<String, dynamic>.from(data) : null;
-        if (map == null) return;
-
-        final newMsg = MessageModel.fromJson(map);
-
-        setState(() {
-          final index = _conversations.indexWhere(
-            (c) => c.id == newMsg.conversationId,
-          );
-
-          if (index != -1) {
-            final conv = _conversations[index];
-            final isMe = newMsg.senderId == authService.userId;
-
-            String previewContent = newMsg.content;
-
-            if (newMsg.type == 'IMAGE' || _isImageUrl(newMsg.content)) {
-              previewContent = 'đã gửi 1 ảnh';
-            } else if (newMsg.type == 'FILE') {
-              previewContent = '[Tệp đính kèm]';
-            }
-
-            final updatedConv = ConversationModel(
-              id: conv.id,
-              type: conv.type,
-              name: conv.name,
-              avatar: conv.avatar,
-              members: conv.members,
-              createdAt: conv.createdAt,
-              updatedAt: newMsg.createdAt, // Cập nhật thời gian mới nhất
-              unreadCount: isMe ? conv.unreadCount : conv.unreadCount + 1,
-              lastMessage: LastMessagePreview(
-                messageId: newMsg.id,
-                content: previewContent,
-                senderId: newMsg.senderId,
-                createdAt: newMsg.createdAt,
-              ),
-            );
-
-            _conversations.removeAt(index);
-            _conversations.insert(0, updatedConv);
-            // re-sort để pinned luôn nằm trên
-            _conversations = _sortWithPinned(_conversations);
-          } else {
-            _loadConversations();
-          }
-        });
-      } catch (e) {
-        log('Lỗi parse socket data ở list screen: $e');
-      }
-    });
+    socketService.on('new_message', _handleNewMessageEvent);
 
     // ✅ Cập nhật lastMessage khi có cuộc gọi
-    socketService.on('conversation_call_updated', (data) {
-      if (!mounted) return;
-      try {
-        final map = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
+    socketService.on('conversation_call_updated', _handleConversationCallUpdated);
 
-        final convId = map['conversationId']?.toString();
-        if (convId == null) return;
+    // ✅ message_seen
+    socketService.on('message_seen', _handleMessageSeenEvent);
 
-        final lastMsgRaw = map['lastMessage'];
-        if (lastMsgRaw == null) return;
+    // ✅ user_status_changed
+    socketService.on('user_status_changed', _handleUserStatusChangedEvent);
+  }
 
-        final lastMsgMap = lastMsgRaw is Map<String, dynamic>
-            ? lastMsgRaw
-            : Map<String, dynamic>.from(lastMsgRaw as Map);
+  @override
+  void dispose() {
+    socketService.off('new_message', _handleNewMessageEvent);
+    socketService.off('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.off('message_seen', _handleMessageSeenEvent);
+    socketService.off('user_status_changed', _handleUserStatusChangedEvent);
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
-        setState(() {
-          final index = _conversations.indexWhere((c) => c.id == convId);
-          if (index == -1) return;
+  void _handleNewMessageEvent(dynamic data) {
+    if (!mounted) return;
+    try {
+      final map = _tryMap(data);
+      if (map == null) return;
 
+      final messageMap = _extractMessageMap(map);
+      if (messageMap == null) return;
+      final newMsg = MessageModel.fromJson(messageMap);
+
+      setState(() {
+        final index = _conversations.indexWhere(
+          (c) => c.id == newMsg.conversationId,
+        );
+
+        if (index != -1) {
           final conv = _conversations[index];
+          final isMe = newMsg.senderId == authService.userId;
+          final previewContent = _buildMessagePreview(
+            content: newMsg.content,
+            type: newMsg.type,
+            metadata: newMsg.metadata,
+          );
+
           final updatedConv = ConversationModel(
             id: conv.id,
             type: conv.type,
@@ -207,89 +176,124 @@ class _ChatListScreenState extends State<ChatListScreen> {
             avatar: conv.avatar,
             members: conv.members,
             createdAt: conv.createdAt,
-            updatedAt: DateTime.now(),
-            unreadCount: conv.unreadCount,
+            updatedAt: newMsg.createdAt,
+            unreadCount: isMe ? conv.unreadCount : conv.unreadCount + 1,
             lastMessage: LastMessagePreview(
-              messageId: '',
-              content: lastMsgMap['content']?.toString() ?? '',
-              senderId: lastMsgMap['senderId']?.toString() ?? '',
-              createdAt:
-                  DateTime.tryParse(
-                    lastMsgMap['createdAt']?.toString() ?? '',
-                  ) ??
-                  DateTime.now(),
+              messageId: newMsg.id,
+              content: previewContent,
+              senderId: newMsg.senderId,
+              createdAt: newMsg.createdAt,
             ),
           );
 
           _conversations.removeAt(index);
           _conversations.insert(0, updatedConv);
           _conversations = _sortWithPinned(_conversations);
-        });
-      } catch (e) {
-        log('❌ conversation_call_updated list error: $e');
-      }
-    });
+        } else {
+          _loadConversations();
+        }
+      });
+    } catch (e) {
+      log('Lỗi parse socket data ở list screen: $e');
+    }
+  }
 
-    // ✅ message_seen
-    socketService.on('message_seen', (data) {
-      if (!mounted) return;
-
-      try {
-        final map = _tryMap(data);
-        if (map == null) return;
-
-        final convId = map['conversationId']?.toString();
-        final userId = map['userId']?.toString();
-
-        if (convId == null) return;
-
-        setState(() {
-          final index = _conversations.indexWhere((c) => c.id == convId);
-          if (index == -1) return;
-
-          final conv = _conversations[index];
-
-          if (userId == authService.userId) {
-            _conversations[index] = ConversationModel(
-              id: conv.id,
-              type: conv.type,
-              name: conv.name,
-              avatar: conv.avatar,
-              members: conv.members,
-              createdAt: conv.createdAt,
-              updatedAt: conv.updatedAt,
-              unreadCount: 0,
-              lastMessage: conv.lastMessage,
-            );
-          }
-        });
-      } catch (e) {
-        log('❌ message_seen list error: $e');
-      }
-    });
-
-    // ✅ user_status_changed
-    socketService.on('user_status_changed', (data) {
+  void _handleConversationCallUpdated(dynamic data) {
+    if (!mounted) return;
+    try {
       final map = _tryMap(data);
       if (map == null) return;
 
-      final userId = map['userId']?.toString();
-      if (userId == null || userId.isEmpty) return;
+      final convId = map['conversationId']?.toString();
+      if (convId == null) return;
 
-      final isOnline = map['isOnline'] == true;
+      final lastMsgRaw = map['lastMessage'];
+      if (lastMsgRaw == null) return;
+
+      final lastMsgMap = _tryMap(lastMsgRaw);
+      if (lastMsgMap == null) return;
 
       setState(() {
-        _onlineStates[userId] = isOnline;
+        final index = _conversations.indexWhere((c) => c.id == convId);
+        if (index == -1) return;
+
+        final conv = _conversations[index];
+        final updatedConv = ConversationModel(
+          id: conv.id,
+          type: conv.type,
+          name: conv.name,
+          avatar: conv.avatar,
+          members: conv.members,
+          createdAt: conv.createdAt,
+          updatedAt: DateTime.now(),
+          unreadCount: conv.unreadCount,
+          lastMessage: LastMessagePreview(
+            messageId: '',
+            content: lastMsgMap['content']?.toString() ?? '',
+            senderId: lastMsgMap['senderId']?.toString() ?? '',
+            createdAt:
+                DateTime.tryParse(lastMsgMap['createdAt']?.toString() ?? '') ??
+                DateTime.now(),
+          ),
+        );
+
+        _conversations.removeAt(index);
+        _conversations.insert(0, updatedConv);
+        _conversations = _sortWithPinned(_conversations);
       });
-    });
+    } catch (e) {
+      log('❌ conversation_call_updated list error: $e');
+    }
   }
 
-  @override
-  void dispose() {
-    socketService.off('new_message');
-    socketService.off('user_status_changed');
-    _searchCtrl.dispose();
-    super.dispose();
+  void _handleMessageSeenEvent(dynamic data) {
+    if (!mounted) return;
+    try {
+      final map = _tryMap(data);
+      if (map == null) return;
+
+      final convId = map['conversationId']?.toString();
+      final userId = map['userId']?.toString();
+
+      if (convId == null) return;
+
+      setState(() {
+        final index = _conversations.indexWhere((c) => c.id == convId);
+        if (index == -1) return;
+
+        final conv = _conversations[index];
+
+        if (userId == authService.userId) {
+          _conversations[index] = ConversationModel(
+            id: conv.id,
+            type: conv.type,
+            name: conv.name,
+            avatar: conv.avatar,
+            members: conv.members,
+            createdAt: conv.createdAt,
+            updatedAt: conv.updatedAt,
+            unreadCount: 0,
+            lastMessage: conv.lastMessage,
+          );
+        }
+      });
+    } catch (e) {
+      log('❌ message_seen list error: $e');
+    }
+  }
+
+  void _handleUserStatusChangedEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+
+    final userId = map['userId']?.toString();
+    if (userId == null || userId.isEmpty) return;
+
+    final isOnline = map['isOnline'] == true;
+
+    setState(() {
+      _onlineStates[userId] = isOnline;
+    });
   }
 
   Map<String, dynamic>? _tryMap(dynamic data) {
@@ -305,11 +309,51 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   bool _isImageUrl(String content) {
-    return content.startsWith('http') &&
-        (content.contains('.jpg') ||
-            content.contains('.jpeg') ||
-            content.contains('.png') ||
-            content.contains('.webp'));
+    final value = content.toLowerCase();
+    return value.startsWith('http') &&
+        (value.contains('.jpg') ||
+            value.contains('.jpeg') ||
+            value.contains('.png') ||
+            value.contains('.webp') ||
+            value.contains('.gif'));
+  }
+
+  bool _isVideoUrl(String content) {
+    final value = content.toLowerCase();
+    return value.startsWith('http') &&
+        (value.contains('.mp4') || value.contains('.mov') || value.contains('.webm'));
+  }
+
+  Map<String, dynamic>? _extractMessageMap(Map<String, dynamic> payload) {
+    if (payload.containsKey('conversationId') &&
+        (payload.containsKey('_id') || payload.containsKey('id'))) {
+      return payload;
+    }
+
+    final nested = _tryMap(payload['message']);
+    if (nested != null) return nested;
+    return null;
+  }
+
+  String _buildMessagePreview({
+    required String content,
+    String? type,
+    MessageMetadata? metadata,
+  }) {
+    final normalizedType = (type ?? '').toUpperCase();
+    if (normalizedType == 'IMAGE' || _isImageUrl(content)) {
+      return 'Đã gửi 1 ảnh';
+    }
+    if (normalizedType == 'VIDEO' || _isVideoUrl(content)) {
+      return 'Đã gửi 1 video';
+    }
+    if (normalizedType == 'FILE') {
+      final fileName = metadata?.fileName;
+      return (fileName != null && fileName.trim().isNotEmpty)
+          ? 'Đã gửi 1 file: $fileName'
+          : 'Đã gửi 1 file';
+    }
+    return content;
   }
 
   // 2. Các hàm Helper để xử lý logic hiển thị dựa trên Model thật
@@ -383,6 +427,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
       fullName: name,
       avatar: c.avatar?.isNotEmpty == true ? c.avatar! : '',
       phone: '',
+    );
+  }
+
+  ApiGroupModel _toApiGroupModel(ConversationModel c) {
+    return ApiGroupModel(
+      id: c.id,
+      name: c.name?.isNotEmpty == true ? c.name! : 'Nhóm',
+      avatar: c.avatar ?? '',
+      members: c.members
+          .map(
+            (m) => ApiGroupMember(
+              userId: m.userId,
+              role: m.role,
+            ),
+          )
+          .toList(),
+      lastMessageContent: c.lastMessage?.content,
+      lastMessageAt: c.lastMessage?.createdAt,
+      updatedAt: c.updatedAt,
     );
   }
 
@@ -636,9 +699,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final isOnline = !c.isGroup && (_onlineStates[otherUserId] ?? false);
     final bool hasUnread = c.unreadCount > 0;
     String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
-
-    if (_isImageUrl(lastContent)) {
-      lastContent = 'đã gửi 1 ảnh';
+    if (last != null) {
+      lastContent = _buildMessagePreview(content: last.content);
     }
     final bool isMe = last != null && last.senderId == uid;
     final bool isMissedCall = lastContent.toLowerCase().contains(
@@ -650,11 +712,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ChatDetailScreen(
-            conversationId: c.id,
-            otherUser: _getOtherUser(c),
-            conversation: c,
-          ),
+          builder: (_) => c.isGroup
+              ? GroupChatScreen(group: _toApiGroupModel(c))
+              : ChatDetailScreen(
+                  conversationId: c.id,
+                  otherUser: _getOtherUser(c),
+                  conversation: c,
+                ),
         ),
       ),
       onLongPress: () => _showContextMenu(c),

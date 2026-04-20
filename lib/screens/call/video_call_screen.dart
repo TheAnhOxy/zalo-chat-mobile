@@ -36,6 +36,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _callWasConnected = false;
   int _seconds = 0;
   bool _endDialogShown = false;
+  bool _screenClosing = false;
   Timer? _timer;
   Timer? _hideTimer;
   CallState _callState = CallState.idle;
@@ -145,9 +146,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  void _closeCallScreen() {
+    if (_screenClosing || !mounted) return;
+    _screenClosing = true;
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
   void _onCallEnded() {
     if (_endDialogShown) return;
-  _endDialogShown = true;
+    _endDialogShown = true;
 
     _timer?.cancel();
     if (!mounted) return;
@@ -204,7 +213,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               child: TextButton(
                 onPressed: () {
                   Navigator.pop(context);
-                  Navigator.pop(context);
+                  _closeCallScreen();
                 },
                 style: TextButton.styleFrom(
                   backgroundColor: Colors.white.withOpacity(0.1),
@@ -222,13 +231,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         ),
       );
     } else {
-      Navigator.pop(context);
+      _closeCallScreen();
     }
   }
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    Navigator.pop(context);
+    _closeCallScreen();
   }
 
   @override
@@ -413,24 +422,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              // Back / minimize
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              ),
-              const Spacer(),
               Column(
                 children: [
                   Text(
@@ -601,7 +592,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       child: GestureDetector(
         onTap: () {
           callService.endCall();
-          Navigator.pop(context);
         },
         child: Column(
           children: [
@@ -649,7 +639,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   callId: widget.callId ?? '',
                   conversationId: widget.conversationId ?? '',
                 );
-                Navigator.pop(context);
               },
               child: Container(
                 width: 64,
