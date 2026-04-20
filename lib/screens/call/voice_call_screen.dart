@@ -139,8 +139,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
 
   void _onCallEnded() {
     if (_endDialogShown) return;
-  _endDialogShown = true;
-  
+    _endDialogShown = true;
+
     _timer?.cancel();
     if (!mounted) return;
 
@@ -295,22 +295,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
             ),
           ),
           const Spacer(),
-          // Minimize button
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.keyboard_arrow_down,
-                color: Colors.white.withOpacity(0.8),
-              ),
-            ),
-          ),
         ],
       ),
     );

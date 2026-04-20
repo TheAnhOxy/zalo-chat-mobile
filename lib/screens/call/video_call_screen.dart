@@ -147,7 +147,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   void _onCallEnded() {
     if (_endDialogShown) return;
-  _endDialogShown = true;
+    _endDialogShown = true;
 
     _timer?.cancel();
     if (!mounted) return;
@@ -413,24 +413,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              // Back / minimize
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              ),
-              const Spacer(),
               Column(
                 children: [
                   Text(
