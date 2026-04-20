@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import '../core/constants/app_colors.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BottomNavBar — Tách riêng để dễ sửa tab label, icon, thứ tự
-//
-// Muốn thêm tab mới: thêm vào _tabs list bên dưới là xong
-// Muốn đổi icon: sửa _NavTab ở cuối file
+// BottomNavBar — 4 tabs (bỏ tab AI, AI dùng floating button)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class BottomNavBar extends StatelessWidget {
@@ -18,7 +15,6 @@ class BottomNavBar extends StatelessWidget {
     required this.onTap,
   });
 
-  // ── Tab definitions — sửa ở đây nếu muốn đổi tab ────────────
   static const _tabs = [
     _NavTab(
       icon: Icons.chat_bubble_outline_rounded,
@@ -34,12 +30,6 @@ class BottomNavBar extends StatelessWidget {
       icon: Icons.notifications_none_rounded,
       activeIcon: Icons.notifications_rounded,
       label: 'Thông báo',
-    ),
-    _NavTab(
-      icon: Icons.auto_awesome_outlined,
-      activeIcon: Icons.auto_awesome,
-      label: 'AI',
-      isAI: true,
     ),
     _NavTab(
       icon: Icons.settings_outlined,
@@ -111,7 +101,6 @@ class _NavItemWidget extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Active indicator dot
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 width: isActive ? 20 : 0,
@@ -122,20 +111,21 @@ class _NavItemWidget extends StatelessWidget {
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
-
-              // Icon
-              _buildIcon(isActive),
-
+              Icon(
+                isActive ? tab.activeIcon : tab.icon,
+                size: 24,
+                color: isActive ? AppColors.primary : AppColors.textSecondary,
+              ),
               const SizedBox(height: 4),
-
-              // Label
               Text(
                 tab.label,
                 style: TextStyle(
                   fontSize: 11,
                   fontFamily: 'Inter',
-                  color: isActive ? AppColors.primary : AppColors.textSecondary,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  color:
+                      isActive ? AppColors.primary : AppColors.textSecondary,
+                  fontWeight:
+                      isActive ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
             ],
@@ -144,24 +134,6 @@ class _NavItemWidget extends StatelessWidget {
       ),
     );
   }
-
-  Widget _buildIcon(bool isActive) {
-    final icon = Icon(
-      isActive ? tab.activeIcon : tab.icon,
-      size: 24,
-      color: isActive ? AppColors.primary : AppColors.textSecondary,
-    );
-
-    // AI tab dùng gradient khi active
-    if (tab.isAI && isActive) {
-      return ShaderMask(
-        shaderCallback: (b) => AppColors.aiGradient.createShader(b),
-        child: Icon(tab.activeIcon, size: 24, color: Colors.white),
-      );
-    }
-
-    return icon;
-  }
 }
 
 // ── Tab data class ────────────────────────────────────────────────────────────
@@ -169,12 +141,10 @@ class _NavTab {
   final IconData icon;
   final IconData activeIcon;
   final String label;
-  final bool isAI;
 
   const _NavTab({
     required this.icon,
     required this.activeIcon,
     required this.label,
-    this.isAI = false,
   });
 }
