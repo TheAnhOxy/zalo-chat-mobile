@@ -7,6 +7,8 @@ import 'auth_service.dart';
 enum CallState { idle, calling, incoming, connected, ended }
 
 typedef IncomingCallData = void Function(Map<String, dynamic> data);
+typedef ParticipantLeftData = void Function(Map<String, dynamic> data);
+typedef CallStartedData = void Function(Map<String, dynamic> data);
 
 class CallService {
   static final CallService _instance = CallService._internal();
@@ -32,6 +34,7 @@ class CallService {
 
   bool _isStartingCall = false; // ✅ chống gọi trùng
   bool _isGroupCall = false;
+  bool _callConnectedEmitted = false; // ✅ Chỉ emit call_connected một lần
 
   CallState get state => _state;
   MediaStream? get localStream => _localStream;
@@ -39,6 +42,8 @@ class CallService {
 
   final List<void Function(CallState)> _stateListeners = [];
   IncomingCallData? onIncomingCall;
+  ParticipantLeftData? onParticipantLeft;
+  CallStartedData? onCallStarted;
   void Function(MediaStream)? onRemoteStream;
 
   final Map<String, dynamic> _iceConfig = {
@@ -55,6 +60,8 @@ class CallService {
     socketService.off('call_ended');
     socketService.off('call_rejected');
     socketService.off('call_created'); // ✅ thêm
+    socketService.off('participant_left'); // ✅ thêm
+    socketService.off('call_started'); // ✅ thêm
 
     socketService.on('incoming_call', (data) {
       _setState(CallState.incoming);
@@ -171,7 +178,19 @@ class CallService {
       _cleanUp();
       _setState(CallState.ended);
     });
-  }
+
+    // ✅ Xử lý khi 1 người rời khỏi cuộc gọi nhóm (call vẫn tiếp tục nếu còn 2+ người)
+    socketService.on('participant_left', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      dev.log('👤 Participant left: ${map['userId']}, Remaining: ${map['activeParticipantsCount']}');
+      onParticipantLeft?.call(map);
+    });
+    // ✅ Đồng bộ thời gian cuộc gọi từ server
+    socketService.on('call_started', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      dev.log('⏱️ Call started (sync timer): ${map['startedAt']}');
+      onCallStarted?.call(map);
+    });  }
 
   Future<String?> startCall({
     required String conversationId,
@@ -358,6 +377,26 @@ class CallService {
     _cleanUp();
   }
 
+  // ✅ Rời khỏi cuộc gọi nhóm (nhưng call vẫn tiếp tục nếu còn 2+ người)
+  void leaveCall() {
+    if (!_isGroupCall) {
+      endCall();
+      return;
+    }
+
+    dev.log('📞 Leaving group call...');
+
+    if (_currentCallId != null && _currentConversationId != null) {
+      socketService.emit('leave_call', {
+        'callId': _currentCallId!,
+        'conversationId': _currentConversationId!,
+        'userId': authService.userId,
+      });
+    }
+
+    _cleanUp();
+  }
+
   void toggleMute(bool mute) {
     _localStream?.getAudioTracks().forEach((t) => t.enabled = !mute);
   }
@@ -395,14 +434,27 @@ class CallService {
 
     pc.onConnectionState = (state) {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        if (_currentCallId != null) {
-          socketService.emit('call_connected', {'callId': _currentCallId});
+        // ✅ Emit call_connected chỉ lần đầu tiên
+        if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
+          _callConnectedEmitted = true;
+          socketService.emit('call_connected', {
+            'callId': _currentCallId,
+            'conversationId': _currentConversationId,
+            'userId': authService.userId,
+          });
         }
-        _setState(CallState.connected);
+        // ✅ Chỉ transition tới connected nếu chưa connected
+        if (_state != CallState.connected) {
+          _setState(CallState.connected);
+        }
       } else if (state ==
               RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        endCall();
+        // ✅ Group call: một kết nối P2P bị lỗi ≠ kết thúc toàn bộ call
+        // Chỉ end call nếu là 1-1 call hoặc người dùng tự click leave
+        if (!_isGroupCall) {
+          endCall();
+        }
       }
     };
 
@@ -431,6 +483,15 @@ class CallService {
       }
 
       if (_state == CallState.calling) {
+        // ✅ onTrack cũng có thể emit call_connected nếu onConnectionState chưa emit
+        if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
+          _callConnectedEmitted = true;
+          socketService.emit('call_connected', {
+            'callId': _currentCallId,
+            'conversationId': _currentConversationId,
+            'userId': authService.userId,
+          });
+        }
         _setState(CallState.connected);
       }
     };
@@ -497,6 +558,7 @@ class CallService {
     _currentCallerId = null;
     _currentPeerId = null;
     _isGroupCall = false;
+    _callConnectedEmitted = false; // ✅ Reset flag
 
     _state = CallState.idle;
     _hasRemoteDescription = false;
@@ -509,6 +571,8 @@ class CallService {
     socketService.off('call_ended');
     socketService.off('call_rejected');
     socketService.off('call_created');
+    socketService.off('participant_left');
+    socketService.off('call_started');
     _cleanUp();
   }
 }

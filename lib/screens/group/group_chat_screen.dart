@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:developer' as dev;
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
 import '../../core/utils/image_utils.dart';
@@ -9,6 +10,7 @@ import '../../services/api_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/socket_service.dart';
+import '../../services/call_service.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_options_screen.dart';
 import '../call/group_voice_call_screen.dart';
@@ -35,6 +37,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   int _bgIndex = 0;
   String? _bgCustomBase64;
 
+  // ✅ Tracking cuộc gọi nhóm đang hoạt động
+  String? _activeCallId;
+  String? _activeCallConversationId;
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +49,36 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _loadMemberProfiles();
     _loadMessages();
     _initSocket();
+    // ✅ Lắng nghe sự kiện cuộc gọi
+    _setupCallListeners();
+  }
+
+  // ✅ Setup listeners cho sự kiện cuộc gọi
+  void _setupCallListeners() {
+    socketService.on('participant_left', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final callId = map['callId']?.toString() ?? '';
+      if (callId.isNotEmpty) {
+        _activeCallId = callId;
+        if (mounted) setState(() {});
+      }
+    });
+
+    socketService.on('call_ended', (data) {
+      // Xoá active call khi call kết thúc
+      _activeCallId = null;
+      _activeCallConversationId = null;
+      if (mounted) setState(() {});
+    });
+
+    socketService.on('conversation_call_updated', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final conversationId = map['conversationId']?.toString() ?? '';
+      if (conversationId == _group.id) {
+        _activeCallConversationId = conversationId;
+        if (mounted) setState(() {});
+      }
+    });
   }
 
   // ── Helpers để build GroupCallParticipant từ members ─────────────────────
@@ -393,7 +429,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (!mounted || selected == null) return;
   }
 
-  // ── Header (ĐÃ THÊM 2 nút gọi nhóm) ─────────────────────────────────────
+  // ── Header (ĐÃ THÊM 2 nút gọi nhóm + REJOIN) ─────────────────────────────────────
   Widget _buildHeader(int memberCount) {
     return Container(
       decoration: const BoxDecoration(
@@ -462,6 +498,46 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ],
             ),
           ),
+
+          // ✅ Nút quay lại cuộc gọi (nếu đang có cuộc gọi)
+          if (_activeCallId != null && _activeCallId!.isNotEmpty)
+            IconButton(
+              icon: const Icon(
+                Icons.phone_in_talk_outlined,
+                color: Colors.green,
+                size: 22,
+              ),
+              tooltip: 'Quay lại cuộc gọi',
+              onPressed: () {
+                // ✅ Rejoin call: Navigate tới call screen
+                if (_activeCallConversationId != null && _activeCallId != null) {
+                  final group = widget.group;
+                  // Build participants từ group members
+                  final participants = group.members
+                      .map((m) => GroupCallParticipant(
+                            userId: m.userId,
+                            name: _memberProfiles[m.userId]?.fullName ?? m.userId,
+                            avatar: _memberProfiles[m.userId]?.avatar,
+                          ))
+                      .toList();
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => GroupVideoCallScreen(
+                        conversationId: _activeCallConversationId!,
+                        groupName: group.name.isNotEmpty ? group.name : 'Nhóm',
+                        callerId: authService.userId ?? '',
+                        groupAvatar: group.avatar,
+                        participants: participants,
+                        isIncoming: false,
+                        callId: _activeCallId,
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
 
           // ── Nút gọi thoại nhóm ──
           IconButton(
