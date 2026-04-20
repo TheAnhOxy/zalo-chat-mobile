@@ -169,6 +169,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
 
     socketService.on('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.on('call_ended', _handleCallTerminalEvent);
+    socketService.on('call_rejected', _handleCallTerminalEvent);
     socketService.on('new_message', _handleNewMessage);
     socketService.on('message_seen', _handleMessageSeen);
 
@@ -209,19 +211,62 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         final newCall = CallModel.fromJson(callMap);
 
         setState(() {
-          final exists = _chatItems.any(
-            (i) => i.type == ChatItemType.call && i.call?.id == newCall.id,
-          );
-          if (!exists) {
-            _chatItems = [..._chatItems, ChatItem.call(newCall)]
-              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-          }
+          _calls = _upsertCall(_calls, newCall);
+          _rebuildChatItems();
         });
         _scrollToBottom();
+      } else {
+        _syncCallsRealtime();
       }
     } catch (e) {
       log('❌ conversation_call_updated error: $e');
     }
+  }
+
+  void _handleCallTerminalEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map != null) {
+      final convId = map['conversationId']?.toString();
+      if (convId != null &&
+          convId.isNotEmpty &&
+          convId != widget.conversationId) {
+        return;
+      }
+    }
+    _syncCallsRealtime();
+  }
+
+  Future<void> _syncCallsRealtime() async {
+    try {
+      final rawCalls = await apiService.getCalls(widget.conversationId);
+      final latestCalls = rawCalls.map((e) => CallModel.fromJson(e)).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      if (!mounted) return;
+
+      final oldIds = _calls.map((c) => c.id).toSet();
+      final newIds = latestCalls.map((c) => c.id).toSet();
+      final hasNewCall = newIds.length > oldIds.length || !newIds.containsAll(oldIds);
+
+      setState(() {
+        _calls = latestCalls;
+        _rebuildChatItems();
+      });
+
+      if (hasNewCall) {
+        _scrollToBottom();
+      }
+    } catch (e) {
+      log('❌ sync call realtime error: $e');
+    }
+  }
+
+  List<CallModel> _upsertCall(List<CallModel> source, CallModel next) {
+    final idx = source.indexWhere((c) => c.id == next.id);
+    if (idx == -1) return [...source, next]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final updated = [...source];
+    updated[idx] = next;
+    updated.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return updated;
   }
 
   void _handleNewMessage(dynamic data) {
@@ -308,6 +353,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     socketService.off('conversation_theme_changed', _handleThemeEvent);
     socketService.off('theme_changed', _handleThemeEvent);
     socketService.off('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.off('call_ended', _handleCallTerminalEvent);
+    socketService.off('call_rejected', _handleCallTerminalEvent);
     socketService.off('user_status_changed', _handlePeerStatusChanged);
     _textCtrl.dispose();
     _scrollCtrl.dispose();
@@ -1265,7 +1312,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     if (isMissed) {
       iconColor = Colors.red;
       bgColor = Colors.red.withOpacity(0.1);
-      label = isMe ? 'Bạn đã gọi nhưng không nghe' : 'Cuộc gọi nhỡ';
+      label = isMe ? 'Người nhận không bắt máy' : 'Cuộc gọi nhỡ';
       icon = isVideo ? Icons.videocam_off : Icons.phone_missed;
     } else {
       iconColor = AppColors.primary;
