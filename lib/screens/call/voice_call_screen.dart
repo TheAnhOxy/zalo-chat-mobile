@@ -35,6 +35,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
   bool _isSpeaker = false;
   bool _callWasConnected = false;
   bool _endDialogShown = false;
+  bool _screenClosing = false;
   int _seconds = 0;
   Timer? _timer;
   CallState _callState = CallState.idle;
@@ -137,6 +138,14 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  void _closeCallScreen() {
+    if (_screenClosing || !mounted) return;
+    _screenClosing = true;
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
   void _onCallEnded() {
     if (_endDialogShown) return;
     _endDialogShown = true;
@@ -197,7 +206,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
               child: TextButton(
                 onPressed: () {
                   Navigator.pop(context); // đóng dialog
-                  Navigator.pop(context); // đóng call screen
+                  _closeCallScreen();
                 },
                 style: TextButton.styleFrom(
                   backgroundColor: Colors.white.withOpacity(0.1),
@@ -215,13 +224,13 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
         ),
       );
     } else {
-      Navigator.pop(context);
+      _closeCallScreen();
     }
   }
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    Navigator.pop(context);
+    _closeCallScreen();
   }
 
   @override
@@ -532,7 +541,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
         _EndCallButton(
           onTap: () {
             callService.endCall();
-            Navigator.pop(context);
           },
         ),
       ],
@@ -557,7 +565,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
                     callId: widget.callId ?? '',
                     conversationId: widget.conversationId ?? '',
                   );
-                  Navigator.pop(context);
                 },
               ),
               const SizedBox(height: 10),
