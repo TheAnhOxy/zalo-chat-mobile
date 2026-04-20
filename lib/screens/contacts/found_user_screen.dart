@@ -1,15 +1,125 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
+import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 
-class FoundUserScreen extends StatelessWidget {
+class FoundUserScreen extends StatefulWidget {
   final ApiUserModel user;
 
   const FoundUserScreen({super.key, required this.user});
 
   @override
+  State<FoundUserScreen> createState() => _FoundUserScreenState();
+}
+
+class _FoundUserScreenState extends State<FoundUserScreen> {
+  bool _loadingRelation = true;
+  String? _friendshipId;
+  String? _friendshipStatus; // PENDING | ACCEPTED | BLOCKED
+
+  bool get _isFriend => _friendshipStatus == 'ACCEPTED';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRelation();
+  }
+
+  Future<void> _loadRelation() async {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) {
+      if (!mounted) return;
+      setState(() => _loadingRelation = false);
+      return;
+    }
+
+    final res = await ContactsApiService.instance.getFriendshipBetween(
+      myUserId: myId,
+      otherUserId: widget.user.id,
+    );
+    if (!mounted) return;
+    final data = res.data;
+    setState(() {
+      _friendshipId = data?['id'];
+      _friendshipStatus = data?['status'];
+      _loadingRelation = false;
+    });
+  }
+
+  Future<void> _confirmUnfriend() async {
+    final fid = _friendshipId;
+    if (fid == null || fid.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        title: const Text(
+          'Hủy kết bạn',
+          style: TextStyle(
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: Text(
+          'Bạn có chắc muốn hủy kết bạn với ${widget.user.fullName}?',
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            color: AppColors.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Hủy',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Hủy kết bạn',
+              style: TextStyle(
+                color: AppColors.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final ok = await ContactsApiService.instance.rejectFriendRequest(fid);
+    if (!mounted) return;
+    if (ok) {
+      setState(() {
+        _friendshipId = null;
+        _friendshipStatus = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã hủy kết bạn'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hủy kết bạn thất bại'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final user = widget.user;
     return Scaffold(
       backgroundColor: AppColors.bgDark,
       body: Stack(
@@ -38,14 +148,16 @@ class FoundUserScreen extends StatelessWidget {
                 ),
                 Row(
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.phone_outlined, color: Colors.white),
-                      onPressed: () {},
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.more_horiz, color: Colors.white),
-                      onPressed: () {},
-                    ),
+                    if (_isFriend)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.person_remove_outlined,
+                          color: Colors.white,
+                        ),
+                        onPressed: _confirmUnfriend,
+                      )
+                    else
+                      const SizedBox.shrink(),
                   ],
                 ),
               ],
@@ -121,14 +233,30 @@ class FoundUserScreen extends StatelessWidget {
                               ),
                               const SizedBox(width: 12),
                               // Kết bạn
-                              _IconActionButton(
-                                icon: Icons.person_add_alt_1_outlined,
-                                onTap: () => Navigator.pushNamed(
-                                  context,
-                                  AppRouter.sendFriendRequest,
-                                  arguments: user,
+                              if (_loadingRelation)
+                                const SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else if (!_isFriend)
+                                _IconActionButton(
+                                  icon: Icons.person_add_alt_1_outlined,
+                                  onTap: () => Navigator.pushNamed(
+                                    context,
+                                    AppRouter.sendFriendRequest,
+                                    arguments: user,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         ),
@@ -192,7 +320,7 @@ class FoundUserScreen extends StatelessWidget {
         color: AppColors.primaryLight,
         child: Center(
           child: Text(
-            _initials(user.fullName),
+            _initials(widget.user.fullName),
             style: const TextStyle(
               fontFamily: 'Inter',
               fontSize: 28,

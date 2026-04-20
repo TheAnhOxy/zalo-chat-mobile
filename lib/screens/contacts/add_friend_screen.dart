@@ -25,9 +25,9 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   String get _qrData {
     final user = authService.currentUser;
-    if (user == null) return 'zalo://unknown';
+    if (user == null) return 'quickchat://unknown';
     final phone = user.phone.isNotEmpty ? user.phone : user.id;
-    return 'zalo://add-friend?phone=$phone';
+    return 'quickchat://add-friend?phone=$phone';
   }
 
   @override
@@ -172,42 +172,6 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             ),
 
             const SizedBox(height: 10),
-
-            // ── Quick Actions ────────────────────────────────────────
-            Container(
-              color: AppColors.bgCard,
-              child: Column(
-                children: [
-                  _ActionTile(
-                    icon: Icons.qr_code_scanner_rounded,
-                    iconColor: AppColors.primary,
-                    iconBg: AppColors.primaryLight,
-                    title: 'Quét mã QR',
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Tính năng quét mã QR đang phát triển'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(left: 58),
-                    child: Divider(height: 1, thickness: 1, color: AppColors.divider),
-                  ),
-                  _ActionTile(
-                    icon: Icons.people_alt_outlined,
-                    iconColor: const Color(0xFF9C27B0),
-                    iconBg: const Color(0xFFF3E5F5),
-                    title: 'Bạn bè có thể quen',
-                    onTap: () {},
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
 
             // ── Bottom hint ──────────────────────────────────────────
             Padding(
@@ -384,58 +348,6 @@ class _QrCard extends StatelessWidget {
           ),
           const SizedBox(height: 20),
         ],
-      ),
-    );
-  }
-}
-
-// ── Action Tile ───────────────────────────────────────────────────────────────
-
-class _ActionTile extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final Color iconBg;
-  final String title;
-  final VoidCallback onTap;
-
-  const _ActionTile({
-    required this.icon,
-    required this.iconColor,
-    required this.iconBg,
-    required this.title,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        child: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
-              child: Icon(icon, color: iconColor, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppColors.textHint, size: 22),
-          ],
-        ),
       ),
     );
   }

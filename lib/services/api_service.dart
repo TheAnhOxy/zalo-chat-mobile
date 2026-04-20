@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:http_parser/http_parser.dart';
 import '../data/models/models.dart';
 import '../core/config/app_config.dart';
 import 'dart:developer';
@@ -118,6 +119,7 @@ class ApiService {
   Future<List<MessageModel>> getMessages(
     String conversationId,
     String userId,
+    {int limit = 50, int skip = 0}
   ) async {
     try {
       final response = await _dio.get(
@@ -125,8 +127,8 @@ class ApiService {
         queryParameters: {
           'userId':
               userId, // Truyền userId lên để Backend thực hiện lọc deletedBy
-          'limit': 50,
-          'skip': 0,
+          'limit': limit,
+          'skip': skip,
         },
       );
 
@@ -134,6 +136,29 @@ class ApiService {
       return data.map((json) => MessageModel.fromJson(json)).toList();
     } catch (e) {
       log('❌ Lỗi getMessages: $e');
+      return [];
+    }
+  }
+
+  /// Lấy danh sách tin nhắn đã ghim của 1 hội thoại
+  Future<List<MessageModel>> getPinnedMessages(
+    String conversationId,
+    String userId,
+  ) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl/messages/conversation/$conversationId',
+        queryParameters: {
+          'userId': userId,
+          'pinned': true,
+          'limit': 50,
+          'skip': 0,
+        },
+      );
+      final List data = response.data;
+      return data.map((json) => MessageModel.fromJson(json)).toList();
+    } catch (e) {
+      log('❌ Lỗi getPinnedMessages: $e');
       return [];
     }
   }
@@ -148,6 +173,23 @@ class ApiService {
       return true;
     } catch (e) {
       log('❌ Lỗi deleteMessageForMe: $e');
+      return false;
+    }
+  }
+
+  /// Xóa lịch sử cuộc trò chuyện (phía tôi) theo hội thoại
+  Future<bool> deleteConversationHistoryForMe(
+    String conversationId,
+    String userId,
+  ) async {
+    try {
+      await _dio.post(
+        '$baseUrl/messages/conversation/$conversationId/deleted-by',
+        data: {'userId': userId},
+      );
+      return true;
+    } catch (e) {
+      log('❌ Lỗi deleteConversationHistoryForMe: $e');
       return false;
     }
   }
@@ -187,27 +229,47 @@ class ApiService {
     String contentType,
   ) async {
     try {
-      // ĐỔI THÀNH .get VÀ DÙNG queryParameters
+      final normalizedFileName = fileName.trim();
+      final normalizedContentType = contentType.trim().toLowerCase();
+      if (normalizedFileName.isEmpty || normalizedContentType.isEmpty) {
+        throw ArgumentError('fileName/contentType không được rỗng');
+      }
+      if (!normalizedContentType.startsWith('audio/')) {
+        throw ArgumentError(
+          'upload/presigned-url chỉ hỗ trợ audio/*, hiện tại là $normalizedContentType',
+        );
+      }
+
       final response = await _dio.get(
         '$baseUrl/upload/presigned-url',
-        queryParameters: {'fileName': fileName, 'contentType': contentType},
+        queryParameters: {
+          'fileName': normalizedFileName,
+          'contentType': normalizedContentType,
+        },
       );
 
       final raw = response.data is Map<String, dynamic>
           ? response.data as Map<String, dynamic>
           : Map<String, dynamic>.from(response.data as Map);
 
-      // Backend của bạn trả về { url, fileUrl }, hãy map đúng tên key
-      final uploadUrl = raw['url']?.toString() ?? raw['uploadUrl']?.toString();
-      final fileUrl = raw['fileUrl']?.toString();
+      final uploadUrl = _pickString(raw, const ['uploadUrl', 'url']);
+      final fileUrl = _pickString(raw, const ['fileUrl']);
 
-      if (uploadUrl == null) return null;
+      if (uploadUrl == null || uploadUrl.isEmpty) return null;
 
       return {'uploadUrl': uploadUrl, 'fileUrl': fileUrl};
     } catch (e) {
       log('❌ Lỗi lấy Presigned URL: $e');
       return null;
     }
+  }
+
+  String? _pickString(Map<String, dynamic> raw, List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
   }
 
   /// Upload trực tiếp lên S3 bằng phương thức PUT
@@ -223,11 +285,10 @@ class ApiService {
         presignedUrl,
         data: fileBytes,
         options: Options(
-          contentType: contentType,
           headers: {
             'Content-Type': contentType,
-            'Content-Length': fileBytes.length,
           },
+          contentType: contentType,
         ),
         onSendProgress: onSendProgress,
       );
@@ -240,7 +301,7 @@ class ApiService {
     }
   }
 
-  /// Helper upload trọn gói: lấy presigned URL -> PUT lên S3 -> trả về fileUrl.
+  /// Upload file/media qua backend multipart và trả về fileUrl công khai.
   Future<String?> uploadFileAndGetUrl({
     required String fileName,
     required Uint8List bytes,
@@ -248,23 +309,25 @@ class ApiService {
     void Function(int sent, int total)? onSendProgress,
   }) async {
     try {
-      final signed = await getPresignedUrl(fileName, contentType);
-      if (signed == null) return null;
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(
+          bytes,
+          filename: fileName,
+          contentType: MediaType.parse(contentType),
+        ),
+      });
 
-      final uploadUrl = signed['uploadUrl']?.toString();
-      final fileUrl = signed['fileUrl']?.toString();
-      if (uploadUrl == null || uploadUrl.isEmpty) return null;
-      if (fileUrl == null || fileUrl.isEmpty) return null;
-
-      final uploaded = await uploadFileToS3(
-        uploadUrl,
-        bytes,
-        contentType,
+      final response = await _dio.post(
+        '$baseUrl/conversations/avatar/upload',
+        data: formData,
+        options: Options(contentType: 'multipart/form-data'),
         onSendProgress: onSendProgress,
       );
-      if (!uploaded) return null;
 
-      return fileUrl;
+      final raw = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : Map<String, dynamic>.from(response.data as Map);
+      return _pickString(raw, const ['fileUrl']);
     } catch (e) {
       log('❌ Lỗi uploadFileAndGetUrl: $e');
       return null;

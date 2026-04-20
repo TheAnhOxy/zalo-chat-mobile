@@ -1,42 +1,54 @@
 import 'dart:async';
+import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../core/constants/app_colors.dart';
-import '../../data/models/models.dart';
 import '../../services/call_service.dart';
+import '../../services/auth_service.dart';
 import '../../widgets/common/common_widgets.dart';
+import 'group_voice_call_screen.dart' show GroupCallParticipant;
 
-class VideoCallScreen extends StatefulWidget {
-  final UserModel otherUser;
+/// Màn hình gọi video nhóm.
+///
+/// Kiến trúc hiện tại vẫn dùng mesh P2P đơn giản (1 RTCPeerConnection cho
+/// toàn room). Để hỗ trợ video nhiều chiều thực sự cần SFU/MCU — nhưng UI
+/// đã chuẩn bị sẵn grid cho từng participant.
+class GroupVideoCallScreen extends StatefulWidget {
+  final String conversationId;
+  final String groupName;
+  final String callerId;
+  final String? groupAvatar;
+  final List<GroupCallParticipant> participants;
   final bool isIncoming;
   final String? callId;
-  final String? conversationId;
   final Map<String, dynamic>? offer;
 
-  const VideoCallScreen({
+  const GroupVideoCallScreen({
     super.key,
-    required this.otherUser,
+    required this.conversationId,
+    required this.groupName,
+    required this.callerId,
+    this.groupAvatar,
+    required this.participants,
     this.isIncoming = false,
     this.callId,
-    this.conversationId,
     this.offer,
   });
 
   @override
-  State<VideoCallScreen> createState() => _VideoCallScreenState();
+  State<GroupVideoCallScreen> createState() => _GroupVideoCallScreenState();
 }
 
-class _VideoCallScreenState extends State<VideoCallScreen> {
+class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
   bool _isMuted = false;
   bool _isCamOff = false;
   bool _showControls = true;
   bool _callWasConnected = false;
-  int _seconds = 0;
   bool _endDialogShown = false;
-  bool _screenClosing = false;
+  int _seconds = 0;
   Timer? _timer;
   Timer? _hideTimer;
   CallState _callState = CallState.idle;
@@ -45,16 +57,21 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   late RTCVideoRenderer _remoteRenderer;
   bool _renderersReady = false;
 
+  late List<GroupCallParticipant> _participants;
+
   @override
   void initState() {
     super.initState();
     if (!kIsWeb) WakelockPlus.enable();
+    _participants = List.from(widget.participants);
     _initRenderers();
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
       setState(() => _remoteRenderer.srcObject = stream);
     };
+    callService.onParticipantLeft = _onParticipantLeft;
+    callService.onCallStarted = _onCallStarted;
     _init();
   }
 
@@ -70,10 +87,70 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (!mounted) return;
     setState(() => _callState = state);
     if (state == CallState.connected) {
-      _callWasConnected = true;
-      _startTimer();
+      // ✅ Chỉ start timer lần đầu tiên
+      if (!_callWasConnected) {
+        _callWasConnected = true;
+        _startTimer();
+        _scheduleHideControls();
+      }
+      setState(() {
+        for (final p in _participants) p.isConnected = true;
+      });
     }
     if (state == CallState.ended) _onCallEnded();
+  }
+
+  // ✅ Đồng bộ timer từ server
+  void _onCallStarted(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final startedAt = data['startedAt']?.toString() ?? '';
+    if (startedAt.isEmpty) return;
+
+    try {
+      final startTime = DateTime.parse(startedAt).millisecondsSinceEpoch;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final elapsedSeconds = ((now - startTime) / 1000).round();
+
+      if (mounted) {
+        setState(() {
+          _seconds = elapsedSeconds > 0 ? elapsedSeconds : 0;
+        });
+      }
+    } catch (e) {
+      dev.log('❌ Error parsing startedAt: $e');
+    }
+  }
+
+  // ✅ Xử lý khi có người rời khỏi cuộc gọi nhóm
+  void _onParticipantLeft(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final userId = data['userId']?.toString() ?? '';
+    final remainingCount = data['activeParticipantsCount'] as int? ?? 0;
+    final authService = AuthService();
+
+    // ✅ Không hiển thị thông báo nếu chính BẠN vừa thoát
+    if (userId == authService.userId) {
+      setState(() {
+        _participants.removeWhere((p) => p.userId == userId);
+      });
+      return;
+    }
+
+    setState(() {
+      _participants.removeWhere((p) => p.userId == userId);
+    });
+
+    final msg = remainingCount >= 2
+        ? 'Một thành viên rời cuộc gọi (còn $remainingCount người)'
+        : 'Cuộc gọi sắp kết thúc';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 2),
+        backgroundColor: Colors.orange.withOpacity(0.8),
+      ),
+    );
   }
 
   Future<void> _init() async {
@@ -89,12 +166,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (widget.isIncoming) {
       setState(() => _callState = CallState.incoming);
     } else {
-      await callService.startCall(
-        conversationId: widget.conversationId ?? '',
-        calleeId: widget.otherUser.id,
+      await callService.startGroupCall(
+        conversationId: widget.conversationId,
+        participantIds: widget.participants.map((p) => p.userId).toList(),
         isVideo: true,
       );
-      // Gán local stream vào renderer
       if (callService.localStream != null) {
         _localRenderer.srcObject = callService.localStream;
       }
@@ -111,9 +187,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _remoteRenderer.dispose();
     callService.removeStateListener(_onCallStateChanged);
     callService.onRemoteStream = null;
-    // if (_callState == CallState.calling || _callState == CallState.connected) {
-    //   callService.endCall();
-    // }
+    callService.onParticipantLeft = null;
+    callService.onCallStarted = null;
     super.dispose();
   }
 
@@ -123,7 +198,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
     });
-    _scheduleHideControls();
   }
 
   void _scheduleHideControls() {
@@ -135,9 +209,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   void _toggleControls() {
     setState(() => _showControls = !_showControls);
-    if (_showControls && _callState == CallState.connected) {
+    if (_showControls && _callState == CallState.connected)
       _scheduleHideControls();
-    }
   }
 
   String get _timerLabel {
@@ -146,26 +219,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-  void _closeCallScreen() {
-    if (_screenClosing || !mounted) return;
-    _screenClosing = true;
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
-  }
-
   void _onCallEnded() {
     if (_endDialogShown) return;
     _endDialogShown = true;
-
     _timer?.cancel();
     if (!mounted) return;
 
     if (_callWasConnected) {
+      // ✅ Auto-dismiss dialog sau 1.5s thay vì chờ người dùng click OK
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (_) => AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           backgroundColor: const Color(0xFF1A3A1A),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -188,7 +253,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Cuộc gọi video đã kết thúc',
+                'Cuộc gọi video nhóm đã kết thúc',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -212,8 +277,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               width: double.infinity,
               child: TextButton(
                 onPressed: () {
-                  Navigator.pop(context);
-                  _closeCallScreen();
+                  Navigator.pop(dialogContext); // Đóng dialog
+                  Navigator.pop(context); // Quay lại màn hình chat
                 },
                 style: TextButton.styleFrom(
                   backgroundColor: Colors.white.withOpacity(0.1),
@@ -230,14 +295,25 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           ],
         ),
       );
+      // ✅ Auto-dismiss sau 1.5s
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.pop(context); // Đóng dialog
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted && Navigator.canPop(context)) {
+              Navigator.pop(context); // Quay lại màn hình chat
+            }
+          });
+        }
+      });
     } else {
-      _closeCallScreen();
+      Navigator.pop(context);
     }
   }
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    _closeCallScreen();
+    Navigator.pop(context);
   }
 
   @override
@@ -249,19 +325,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ── Remote Video / Placeholder ────────────────────────
-            _buildRemoteView(),
+            // ── Background / remote view ──────────────────────
+            _buildBackground(),
 
-            // ── Gradient overlays ─────────────────────────────────
+            // ── Gradient overlays ─────────────────────────────
             Positioned.fill(
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      Colors.black.withOpacity(0.6),
+                      Colors.black.withOpacity(0.65),
                       Colors.transparent,
                       Colors.transparent,
-                      Colors.black.withOpacity(0.7),
+                      Colors.black.withOpacity(0.75),
                     ],
                     stops: const [0, 0.2, 0.7, 1],
                     begin: Alignment.topCenter,
@@ -271,13 +347,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
             ),
 
-            // ── Local preview (góc phải) ──────────────────────────
+            // ── Local preview (bottom-right) ──────────────────
             if (_renderersReady) _buildLocalPreview(),
 
-            // ── Top bar ───────────────────────────────────────────
+            // ── Participants strip (bottom of video area) ─────
+            if (_callState == CallState.connected) _buildParticipantsStrip(),
+
+            // ── Top bar ───────────────────────────────────────
             _buildTopBar(),
 
-            // ── Bottom controls ───────────────────────────────────
+            // ── Bottom controls ───────────────────────────────
             Positioned(
               bottom: 0,
               left: 0,
@@ -296,7 +375,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
-  Widget _buildRemoteView() {
+  Widget _buildBackground() {
     if (_callState == CallState.connected &&
         _renderersReady &&
         _remoteRenderer.srcObject != null) {
@@ -305,8 +384,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
       );
     }
-
-    // Placeholder khi chưa kết nối
+    // Placeholder: tên nhóm + avatar
     return Container(
       color: const Color(0xFF0A1A0A),
       child: Center(
@@ -314,8 +392,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 110,
-              height: 110,
+              width: 100,
+              height: 100,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
@@ -331,16 +409,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 ],
               ),
               child: ClipOval(
-                child: AvatarWidget(
-                  url: widget.otherUser.avatar,
-                  name: widget.otherUser.fullName,
-                  size: 110,
-                ),
+                child:
+                    widget.groupAvatar != null && widget.groupAvatar!.isNotEmpty
+                    ? Image.network(
+                        widget.groupAvatar!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _defaultGroupAvatar(),
+                      )
+                    : _defaultGroupAvatar(),
               ),
             ),
             const SizedBox(height: 16),
             Text(
-              widget.otherUser.fullName,
+              widget.groupName,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,
@@ -351,9 +432,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             const SizedBox(height: 8),
             Text(
               _callState == CallState.calling
-                  ? 'Đang gọi video...'
+                  ? 'Đang gọi video nhóm...'
                   : _callState == CallState.incoming
-                  ? 'Cuộc gọi video đến'
+                  ? 'Cuộc gọi video nhóm đến'
                   : 'Đang kết nối...',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.6),
@@ -367,6 +448,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  Widget _defaultGroupAvatar() => Container(
+    color: AppColors.bgInput,
+    child: const Icon(Icons.group, color: AppColors.primary, size: 44),
+  );
+
+  /// Thumbnail nhỏ của bản thân góc dưới phải.
   Widget _buildLocalPreview() {
     return Positioned(
       top: 100,
@@ -412,6 +499,93 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  /// Hàng nhỏ hiển thị avatar của các participant (khi đã connected).
+  Widget _buildParticipantsStrip() {
+    return Positioned(
+      bottom: 140,
+      left: 0,
+      right: 0,
+      child: AnimatedOpacity(
+        opacity: _showControls ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 300),
+        child: SizedBox(
+          height: 70,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _participants.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (_, i) {
+              final p = _participants[i];
+              return Column(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: p.isConnected
+                                ? AppColors.online
+                                : Colors.white24,
+                            width: 2,
+                          ),
+                        ),
+                        child: ClipOval(
+                          child: AvatarWidget(
+                            url: p.avatar,
+                            name: p.name,
+                            size: 44,
+                          ),
+                        ),
+                      ),
+                      if (p.isMuted)
+                        Positioned(
+                          right: -2,
+                          bottom: -2,
+                          child: Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.black,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.mic_off,
+                              color: Colors.white,
+                              size: 9,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    p.name.split(' ').first,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.white.withOpacity(0.8),
+                      fontFamily: 'Inter',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTopBar() {
     final showBar = _showControls || _callState != CallState.connected;
     return AnimatedSlide(
@@ -422,10 +596,27 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+              ),
+              const Spacer(),
               Column(
                 children: [
                   Text(
-                    widget.otherUser.fullName,
+                    widget.groupName,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -456,7 +647,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 ],
               ),
               const Spacer(),
-              // Mã hoá badge
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -534,10 +724,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             );
           },
         ),
-        // End call — lớn hơn
         GestureDetector(
+          // ✅ Sử dụng leaveCall() thay vì endCall() cho cuộc gọi nhóm
           onTap: () {
-            callService.endCall();
+            callService.leaveCall();
+            // ✅ Pop ngay sau khi rời cuộc gọi
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (mounted) Navigator.pop(context);
+            });
           },
           child: Column(
             children: [
@@ -582,7 +776,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             });
           },
         ),
-        _VideoBtn(icon: Icons.speaker_rounded, label: 'Loa', onTap: () {}),
+        _VideoBtn(
+          icon: Icons.people_outline_rounded,
+          label: '${_participants.length + 1} người',
+          onTap: () {},
+        ),
       ],
     );
   }
@@ -592,6 +790,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       child: GestureDetector(
         onTap: () {
           callService.endCall();
+          Navigator.pop(context);
         },
         child: Column(
           children: [
@@ -630,15 +829,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // Từ chối
         Column(
           children: [
             GestureDetector(
               onTap: () {
                 callService.rejectCall(
                   callId: widget.callId ?? '',
-                  conversationId: widget.conversationId ?? '',
+                  conversationId: widget.conversationId,
                 );
+                Navigator.pop(context);
               },
               child: Container(
                 width: 64,
@@ -671,23 +870,21 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             ),
           ],
         ),
-        // Chấp nhận
         Column(
           children: [
             GestureDetector(
               onTap: () async {
                 await callService.answerCall(
-                  conversationId: widget.conversationId ?? '',
+                  conversationId: widget.conversationId,
                   callId: widget.callId ?? '',
-                  peerId: widget.otherUser.id,
+                  peerId: widget.callerId,
                   offer: widget.offer ?? {},
                   isVideo: true,
                 );
-                // Gán local stream sau khi answer
                 if (callService.localStream != null && mounted) {
-                  setState(() {
-                    _localRenderer.srcObject = callService.localStream;
-                  });
+                  setState(
+                    () => _localRenderer.srcObject = callService.localStream,
+                  );
                 }
               },
               child: Container(
@@ -733,7 +930,6 @@ class _VideoBtn extends StatelessWidget {
   final VoidCallback onTap;
   final bool isActive;
   final Color activeColor;
-
   const _VideoBtn({
     required this.icon,
     required this.label,
