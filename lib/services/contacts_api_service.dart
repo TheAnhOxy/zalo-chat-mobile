@@ -38,11 +38,15 @@ class ContactsApiService {
     if (dobRaw != null && dobRaw.toString().isNotEmpty) {
       dob = DateTime.tryParse(dobRaw.toString());
     }
-    // status có thể là Map hoặc String tuỳ backend version
     bool isOnline = false;
+    DateTime? lastSeen;
     final status = j['status'];
     if (status is Map) {
       isOnline = status['isOnline'] == true;
+      final rawLastSeen = status['lastSeen'] ?? status['lastActiveAt'] ?? status['lastOnlineAt'];
+      if (rawLastSeen != null) {
+        lastSeen = DateTime.tryParse(rawLastSeen.toString());
+      }
     } else if (status is String) {
       isOnline = status == 'ONLINE';
     }
@@ -52,6 +56,7 @@ class ContactsApiService {
       phone: (j['phone'] ?? '').toString(),
       avatar: (j['avatar'] ?? '').toString(),
       isOnline: isOnline,
+      lastSeen: lastSeen,
       dob: dob,
     );
   }
@@ -958,6 +963,7 @@ class ApiUserModel {
   final String phone;
   final String avatar;
   final bool isOnline;
+  final DateTime? lastSeen;
   final DateTime? dob;
 
   const ApiUserModel({
@@ -966,6 +972,7 @@ class ApiUserModel {
     required this.phone,
     required this.avatar,
     required this.isOnline,
+    this.lastSeen,
     this.dob,
   });
 }
