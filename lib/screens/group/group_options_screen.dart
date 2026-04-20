@@ -12,6 +12,7 @@ import '../../services/contacts_api_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_members_screen.dart';
+import 'group_media_screen.dart';
 import 'group_message_search_screen.dart';
 import 'group_pinned_messages_screen.dart';
 
@@ -700,6 +701,69 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
     }
   }
 
+  Future<void> _confirmDissolveGroup() async {
+    if (!_isAdmin) {
+      _showLeaveSnack('Chỉ quản trị viên mới có thể giải tán nhóm', isError: true);
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        title: const Text(
+          'Giải tán nhóm',
+          style: TextStyle(
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: Text(
+          'Thao tác này sẽ xóa nhóm "${_group.name}" cho tất cả thành viên. Bạn có chắc chắn muốn tiếp tục?',
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            color: AppColors.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Huỷ',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Giải tán',
+              style: TextStyle(
+                color: AppColors.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    _showLeaveLoading();
+    final res = await ContactsApiService.instance.dissolveGroup(
+      conversationId: _group.id,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+    if (!mounted) return;
+    if (res.isSuccess) {
+      // Trả về true để màn trước refresh / quay về danh sách chat.
+      Navigator.pop(context, true);
+    } else {
+      _showLeaveSnack(res.error ?? 'Không thể giải tán nhóm', isError: true);
+    }
+  }
+
   // ── Xác nhận xoá lịch sử ──────────────────────────────────────
   void _confirmDeleteHistory() {
     showDialog(
@@ -905,6 +969,16 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               iconColor: AppColors.error,
               onTap: _confirmLeave,
             ),
+            if (_isAdmin) ...[
+              _buildDivider(),
+              _buildNavTile(
+                icon: Icons.delete_forever_rounded,
+                label: 'Giải tán nhóm',
+                labelColor: AppColors.error,
+                iconColor: AppColors.error,
+                onTap: _confirmDissolveGroup,
+              ),
+            ],
           ]),
 
           const SizedBox(height: 24),
@@ -1225,7 +1299,17 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
   // ── Ảnh, file, link ──────────────────────────────────────────
   Widget _buildMediaTile() {
     return InkWell(
-      onTap: () {},
+      onTap: () {
+        Navigator.push<void>(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => GroupMediaScreen(
+              conversationId: _group.id,
+              title: _group.name.isEmpty ? 'Ảnh, file, link' : _group.name,
+            ),
+          ),
+        );
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(

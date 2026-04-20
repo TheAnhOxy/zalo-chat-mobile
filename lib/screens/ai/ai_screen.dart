@@ -471,7 +471,7 @@ class _AiScreenState extends State<AiScreen> with TickerProviderStateMixin {
                                               TextEditingController(text: title);
                                           final next = await showDialog<String>(
                                             context: ctx,
-                                            builder: (_) {
+                                            builder: (dialogCtx) {
                                               return AlertDialog(
                                                 title: const Text(
                                                   'Đổi tên cuộc trò chuyện',
@@ -486,13 +486,15 @@ class _AiScreenState extends State<AiScreen> with TickerProviderStateMixin {
                                                 actions: [
                                                   TextButton(
                                                     onPressed: () =>
-                                                        Navigator.of(ctx).pop(),
+                                                        Navigator.of(dialogCtx)
+                                                            .pop(),
                                                     child: const Text('Hủy'),
                                                   ),
                                                   FilledButton(
-                                                    onPressed: () => Navigator.of(
-                                                      ctx,
-                                                    ).pop(controller.text.trim()),
+                                                    onPressed: () =>
+                                                        Navigator.of(dialogCtx).pop(
+                                                      controller.text.trim(),
+                                                    ),
                                                     child: const Text('Lưu'),
                                                   ),
                                                 ],

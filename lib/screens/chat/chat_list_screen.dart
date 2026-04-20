@@ -9,6 +9,7 @@ import '../../services/socket_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
 import '../group/group_chat_screen.dart';
+import '../ai/ai_screen.dart';
 import 'dart:developer';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -64,7 +65,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _pinnedConversationIds
       ..clear()
       ..addAll(
-        convs.where((c) => p.getBool(_pinPrefKey(c.id)) ?? false).map((c) => c.id),
+        convs
+            .where((c) => p.getBool(_pinPrefKey(c.id)) ?? false)
+            .map((c) => c.id),
       );
   }
 
@@ -123,7 +126,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
           );
           return other.userId;
         })
-        .where((id) => id.isNotEmpty && id != myId && !_userProfiles.containsKey(id))
+        .where(
+          (id) => id.isNotEmpty && id != myId && !_userProfiles.containsKey(id),
+        )
         .toSet()
         .toList();
 
@@ -182,7 +187,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
     socketService.on('new_message', _handleNewMessageEvent);
 
     // ✅ Cập nhật lastMessage khi có cuộc gọi
-    socketService.on('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.on(
+      'conversation_call_updated',
+      _handleConversationCallUpdated,
+    );
 
     // ✅ message_seen
     socketService.on('message_seen', _handleMessageSeenEvent);
@@ -194,7 +202,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void dispose() {
     socketService.off('new_message', _handleNewMessageEvent);
-    socketService.off('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.off(
+      'conversation_call_updated',
+      _handleConversationCallUpdated,
+    );
     socketService.off('message_seen', _handleMessageSeenEvent);
     socketService.off('user_status_changed', _handleUserStatusChangedEvent);
     _searchCtrl.dispose();
@@ -388,7 +399,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
   bool _isVideoUrl(String content) {
     final value = content.toLowerCase();
     return value.startsWith('http') &&
-        (value.contains('.mp4') || value.contains('.mov') || value.contains('.webm'));
+        (value.contains('.mp4') ||
+            value.contains('.mov') ||
+            value.contains('.webm'));
   }
 
   Map<String, dynamic>? _extractMessageMap(Map<String, dynamic> payload) {
@@ -451,8 +464,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return other.nickname?.isNotEmpty == true
         ? other.nickname!
         : other.name?.isNotEmpty == true
-            ? other.name!
-            : 'Người dùng';
+        ? other.name!
+        : 'Người dùng';
   }
 
   String? _getAvatar(ConversationModel c) {
@@ -491,8 +504,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final name = other.nickname?.isNotEmpty == true
         ? other.nickname!
         : other.name?.isNotEmpty == true
-            ? other.name!
-            : 'Người dùng';
+        ? other.name!
+        : 'Người dùng';
     return UserModel(
       id: other.userId,
       fullName: name,
@@ -507,12 +520,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       name: c.name?.isNotEmpty == true ? c.name! : 'Nhóm',
       avatar: c.avatar ?? '',
       members: c.members
-          .map(
-            (m) => ApiGroupMember(
-              userId: m.userId,
-              role: m.role,
-            ),
-          )
+          .map((m) => ApiGroupMember(userId: m.userId, role: m.role))
           .toList(),
       lastMessageContent: c.lastMessage?.content,
       lastMessageAt: c.lastMessage?.createdAt,
@@ -547,7 +555,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     final known = _knownUsers[userId];
-    final otherUser = _userProfiles[userId] ??
+    final otherUser =
+        _userProfiles[userId] ??
         UserModel(
           id: userId,
           fullName: known?.name ?? 'Người dùng',
@@ -761,65 +770,78 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _buildAiCard() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1A3A1A), Color(0xFF1F4A1F)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return GestureDetector(
+      onTap: _openAiChat,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1A3A1A), Color(0xFF1F4A1F)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.primary.withOpacity(0.25)),
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary.withOpacity(0.25)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              gradient: AppColors.aiGradient,
-              borderRadius: BorderRadius.circular(12),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                gradient: AppColors.aiGradient,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.auto_awesome,
+                color: Colors.white,
+                size: 22,
+              ),
             ),
-            child: const Icon(
-              Icons.auto_awesome,
-              color: Colors.white,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Trợ lý AI',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                    fontFamily: 'Inter',
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Trợ lý AI',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                      fontFamily: 'Inter',
+                    ),
                   ),
-                ),
-                Text(
-                  'Hôm nay tôi có thể giúp gì cho bạn?',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                    fontFamily: 'Inter',
+                  Text(
+                    'Hôm nay tôi có thể giúp gì cho bạn?',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white70,
+                      fontFamily: 'Inter',
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const Icon(
-            Icons.chevron_right,
-            color: AppColors.textSecondary,
-            size: 20,
-          ),
-        ],
+            const Icon(
+              Icons.chevron_right,
+              color: AppColors.textSecondary,
+              size: 20,
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  void _openAiChat() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useSafeArea: false,
+      builder: (_) => const _ChatListAiChatSheet(),
     );
   }
 
@@ -1005,6 +1027,47 @@ class _ChatListScreenState extends State<ChatListScreen> {
             () => Navigator.pop(context),
           ),
           const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bottom sheet chứa AiScreen (dùng cho thẻ "Trợ lý AI" trên ChatList)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ChatListAiChatSheet extends StatelessWidget {
+  const _ChatListAiChatSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final screenH = MediaQuery.of(context).size.height;
+    return Container(
+      height: screenH * 0.92,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              child: AiScreen(),
+            ),
+          ),
         ],
       ),
     );
