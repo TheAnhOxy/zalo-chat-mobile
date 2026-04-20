@@ -12,6 +12,7 @@ import '../../services/contacts_api_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_members_screen.dart';
+import 'group_media_screen.dart';
 import 'group_message_search_screen.dart';
 import 'group_pinned_messages_screen.dart';
 
@@ -1298,7 +1299,17 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
   // ── Ảnh, file, link ──────────────────────────────────────────
   Widget _buildMediaTile() {
     return InkWell(
-      onTap: () {},
+      onTap: () {
+        Navigator.push<void>(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => GroupMediaScreen(
+              conversationId: _group.id,
+              title: _group.name.isEmpty ? 'Ảnh, file, link' : _group.name,
+            ),
+          ),
+        );
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(

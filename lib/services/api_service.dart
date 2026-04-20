@@ -119,6 +119,7 @@ class ApiService {
   Future<List<MessageModel>> getMessages(
     String conversationId,
     String userId,
+    {int limit = 50, int skip = 0}
   ) async {
     try {
       final response = await _dio.get(
@@ -126,8 +127,8 @@ class ApiService {
         queryParameters: {
           'userId':
               userId, // Truyền userId lên để Backend thực hiện lọc deletedBy
-          'limit': 50,
-          'skip': 0,
+          'limit': limit,
+          'skip': skip,
         },
       );
 

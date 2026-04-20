@@ -175,6 +175,13 @@ class _CreateGroupScreenState extends State<CreateGroupScreen>
       .replaceAll(RegExp(r'[ỳýỵỷỹ]'), 'y')
       .replaceAll('đ', 'd');
 
+  /// Chỉ lấy tên gọi (từ cuối), không lấy họ đệm — giống cách Zalo rút gọn tên nhóm.
+  String _givenName(String fullName) {
+    final parts = fullName.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '';
+    return parts.last;
+  }
+
   Future<void> _createGroup() async {
     if (_selected.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -188,20 +195,43 @@ class _CreateGroupScreenState extends State<CreateGroupScreen>
       return;
     }
 
-    final me = authService.currentUser;
-    final myName = me?.fullName ?? 'Bạn';
     final myId = authService.userId ?? '';
+    final me = authService.currentUser;
+    final myGiven = _givenName(me?.fullName ?? '');
+    final myName = myGiven.isNotEmpty ? myGiven : 'Bạn';
 
     // Tên nhóm mặc định nếu user bỏ trống
     String groupName = _nameCtrl.text.trim();
     if (groupName.isEmpty) {
-      final allFriends = [...(_friends ?? []), ...(_recent?.map((r) => r.user) ?? [])];
-      final selectedUsers = allFriends
-          .where((u) => _selected.contains(u.id))
-          .map((u) => u.fullName.split(' ').last)
-          .take(3)
-          .toList();
-      groupName = '$myName, ${selectedUsers.join(', ')}';
+      // Giống Zalo: ghép tên gọi của tất cả thành viên (gồm cả người tạo nhóm).
+      final pool = <ApiUserModel>[
+        ...(_recent?.map((r) => r.user) ?? const Iterable<ApiUserModel>.empty()),
+        ...(_friends ?? const <ApiUserModel>[]),
+      ];
+
+      final otherNames = <String>[];
+      final seen = <String>{};
+      if (myId.isNotEmpty) seen.add(myId);
+      for (final u in pool) {
+        if (!_selected.contains(u.id)) continue;
+        if (!seen.add(u.id)) continue;
+        final n = _givenName(u.fullName);
+        if (n.isNotEmpty) otherNames.add(n);
+      }
+
+      final allNames = <String>[myName, ...otherNames];
+
+      // Không map được tên thành viên đã chọn → fallback
+      if (otherNames.isEmpty) {
+        groupName = 'Nhóm mới';
+      } else {
+        const maxShow = 4; // thường Zalo hiển thị 3-4 tên đầu
+        final show = allNames.take(maxShow).toList();
+        final remain = allNames.length - show.length;
+        groupName = remain > 0
+            ? '${show.join(', ')}, và $remain người khác'
+            : show.join(', ');
+      }
     }
 
     setState(() => _creating = true);
