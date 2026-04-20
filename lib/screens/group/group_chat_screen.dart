@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'dart:developer' as dev;
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
 import '../../core/utils/image_utils.dart';
@@ -10,11 +9,11 @@ import '../../services/api_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/socket_service.dart';
-import '../../services/call_service.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_options_screen.dart';
 import '../call/group_voice_call_screen.dart';
 import '../call/group_video_call_screen.dart';
+import '../ai/ai_screen.dart';
 
 class GroupChatScreen extends StatefulWidget {
   final ApiGroupModel group;
@@ -427,6 +426,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ],
     );
     if (!mounted || selected == null) return;
+
+    if (selected == 'quick_ai' || selected == 'file') {
+      _openAiChat();
+    }
+  }
+
+  void _openAiChat() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useSafeArea: false,
+      builder: (_) => const _GroupAiChatSheet(),
+    );
   }
 
   // ── Header (ĐÃ THÊM 2 nút gọi nhóm + REJOIN) ─────────────────────────────────────
@@ -678,6 +691,47 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     setState(() {
       _isSending = false;
     });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bottom sheet chứa AiScreen (dùng cho menu Quick AI / File trong group chat)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GroupAiChatSheet extends StatelessWidget {
+  const _GroupAiChatSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final screenH = MediaQuery.of(context).size.height;
+    return Container(
+      height: screenH * 0.92,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              child: AiScreen(),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

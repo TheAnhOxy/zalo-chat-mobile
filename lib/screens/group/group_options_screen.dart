@@ -700,6 +700,69 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
     }
   }
 
+  Future<void> _confirmDissolveGroup() async {
+    if (!_isAdmin) {
+      _showLeaveSnack('Chỉ quản trị viên mới có thể giải tán nhóm', isError: true);
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        title: const Text(
+          'Giải tán nhóm',
+          style: TextStyle(
+            fontFamily: 'Inter',
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: Text(
+          'Thao tác này sẽ xóa nhóm "${_group.name}" cho tất cả thành viên. Bạn có chắc chắn muốn tiếp tục?',
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            color: AppColors.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Huỷ',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Giải tán',
+              style: TextStyle(
+                color: AppColors.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    _showLeaveLoading();
+    final res = await ContactsApiService.instance.dissolveGroup(
+      conversationId: _group.id,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+    if (!mounted) return;
+    if (res.isSuccess) {
+      // Trả về true để màn trước refresh / quay về danh sách chat.
+      Navigator.pop(context, true);
+    } else {
+      _showLeaveSnack(res.error ?? 'Không thể giải tán nhóm', isError: true);
+    }
+  }
+
   // ── Xác nhận xoá lịch sử ──────────────────────────────────────
   void _confirmDeleteHistory() {
     showDialog(
@@ -905,6 +968,16 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               iconColor: AppColors.error,
               onTap: _confirmLeave,
             ),
+            if (_isAdmin) ...[
+              _buildDivider(),
+              _buildNavTile(
+                icon: Icons.delete_forever_rounded,
+                label: 'Giải tán nhóm',
+                labelColor: AppColors.error,
+                iconColor: AppColors.error,
+                onTap: _confirmDissolveGroup,
+              ),
+            ],
           ]),
 
           const SizedBox(height: 24),

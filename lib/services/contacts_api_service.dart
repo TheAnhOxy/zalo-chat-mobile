@@ -916,6 +916,23 @@ class ContactsApiService {
         currentMembers: currentMembers,
       );
 
+  /// Giải tán nhóm: xóa conversation (chỉ nên gọi nếu là ADMIN).
+  Future<ContactsResult<bool>> dissolveGroup({
+    required String conversationId,
+  }) async {
+    try {
+      final res = await _client
+          .delete(Uri.parse('$baseUrl/conversations/$conversationId'))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        return const ContactsResult.success(true);
+      }
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
   // ── Fetch Birthday Contacts ───────────────────────────────────────────────────
 
   /// Lấy tất cả user (trừ mình) có dob, dùng cho màn hình Sinh nhật.
