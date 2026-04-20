@@ -82,6 +82,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         builder: (_) => GroupVoiceCallScreen(
           conversationId: _group.id,
           groupName: _group.name.isNotEmpty ? _group.name : 'Nhóm',
+          callerId: authService.userId ?? '',
           groupAvatar: _group.avatar.isNotEmpty ? _group.avatar : null,
           participants: _buildParticipants(),
           isIncoming: false,
@@ -98,6 +99,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         builder: (_) => GroupVideoCallScreen(
           conversationId: _group.id,
           groupName: _group.name.isNotEmpty ? _group.name : 'Nhóm',
+          callerId: authService.userId ?? '',
           groupAvatar: _group.avatar.isNotEmpty ? _group.avatar : null,
           participants: _buildParticipants(),
           isIncoming: false,

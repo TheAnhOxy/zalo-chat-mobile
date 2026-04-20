@@ -40,6 +40,9 @@ class GroupVoiceCallScreen extends StatefulWidget {
   /// Tên nhóm hiển thị trên header.
   final String groupName;
 
+  /// Id của người gọi cuộc gọi nhóm.
+  final String callerId;
+
   /// Avatar nhóm (URL).
   final String? groupAvatar;
 
@@ -59,6 +62,7 @@ class GroupVoiceCallScreen extends StatefulWidget {
     super.key,
     required this.conversationId,
     required this.groupName,
+    required this.callerId,
     this.groupAvatar,
     required this.participants,
     this.isIncoming = false,
@@ -185,28 +189,64 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
         barrierDismissible: false,
         builder: (_) => AlertDialog(
           backgroundColor: const Color(0xFF1A3A1A),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 56, height: 56,
-                decoration: BoxDecoration(color: Colors.red.withOpacity(0.15), shape: BoxShape.circle),
-                child: const Icon(Icons.call_end_rounded, color: Colors.red, size: 28),
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.call_end_rounded,
+                  color: Colors.red,
+                  size: 28,
+                ),
               ),
               const SizedBox(height: 16),
-              const Text('Cuộc gọi nhóm đã kết thúc', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'Inter')),
+              const Text(
+                'Cuộc gọi nhóm đã kết thúc',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Inter',
+                ),
+              ),
               const SizedBox(height: 8),
-              Text('Thời lượng: $_timerLabel', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14, fontFamily: 'Inter')),
+              Text(
+                'Thời lượng: $_timerLabel',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 14,
+                  fontFamily: 'Inter',
+                ),
+              ),
             ],
           ),
           actions: [
             SizedBox(
               width: double.infinity,
               child: TextButton(
-                onPressed: () { Navigator.pop(context); Navigator.pop(context); },
-                style: TextButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.1), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                child: const Text('OK', style: TextStyle(color: Colors.white, fontFamily: 'Inter')),
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pop(context);
+                },
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  'OK',
+                  style: TextStyle(color: Colors.white, fontFamily: 'Inter'),
+                ),
               ),
             ),
           ],
@@ -250,7 +290,11 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
               _buildControls(),
               const SizedBox(height: 48),
               // Hidden renderer để audio remote vẫn phát
-              SizedBox(width: 1, height: 1, child: RTCVideoView(_remoteRenderer)),
+              SizedBox(
+                width: 1,
+                height: 1,
+                child: RTCVideoView(_remoteRenderer),
+              ),
             ],
           ),
         ),
@@ -273,9 +317,20 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.lock_outline, size: 12, color: Colors.white.withOpacity(0.7)),
+                Icon(
+                  Icons.lock_outline,
+                  size: 12,
+                  color: Colors.white.withOpacity(0.7),
+                ),
                 const SizedBox(width: 4),
-                Text('Mã hoá đầu cuối', style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.7), fontFamily: 'Inter')),
+                Text(
+                  'Mã hoá đầu cuối',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white.withOpacity(0.7),
+                    fontFamily: 'Inter',
+                  ),
+                ),
               ],
             ),
           ),
@@ -283,9 +338,16 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), shape: BoxShape.circle),
-              child: Icon(Icons.keyboard_arrow_down, color: Colors.white.withOpacity(0.8)),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.keyboard_arrow_down,
+                color: Colors.white.withOpacity(0.8),
+              ),
             ),
           ),
         ],
@@ -298,28 +360,51 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
       children: [
         // Group avatar
         Container(
-          width: 80, height: 80,
+          width: 80,
+          height: 80,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: AppColors.primary.withOpacity(0.5), width: 2),
-            boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.3), blurRadius: 20, spreadRadius: 3)],
+            border: Border.all(
+              color: AppColors.primary.withOpacity(0.5),
+              width: 2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.3),
+                blurRadius: 20,
+                spreadRadius: 3,
+              ),
+            ],
           ),
           child: ClipOval(
             child: widget.groupAvatar != null && widget.groupAvatar!.isNotEmpty
-                ? Image.network(widget.groupAvatar!, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _defaultGroupAvatar())
+                ? Image.network(
+                    widget.groupAvatar!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _defaultGroupAvatar(),
+                  )
                 : _defaultGroupAvatar(),
           ),
         ),
         const SizedBox(height: 12),
         Text(
           widget.groupName,
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white, fontFamily: 'Inter', letterSpacing: -0.5),
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+            fontFamily: 'Inter',
+            letterSpacing: -0.5,
+          ),
         ),
         const SizedBox(height: 4),
         Text(
           '${_participants.length + 1} người tham gia',
-          style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.6), fontFamily: 'Inter'),
+          style: TextStyle(
+            fontSize: 13,
+            color: Colors.white.withOpacity(0.6),
+            fontFamily: 'Inter',
+          ),
         ),
       ],
     );
@@ -384,7 +469,17 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
           Icon(Icons.call_outlined, size: 14, color: color),
           const SizedBox(width: 4),
         ],
-        Text(text, style: TextStyle(fontSize: 15, color: color, fontFamily: 'Inter', fontWeight: _callState == CallState.connected ? FontWeight.w600 : FontWeight.w400)),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 15,
+            color: color,
+            fontFamily: 'Inter',
+            fontWeight: _callState == CallState.connected
+                ? FontWeight.w600
+                : FontWeight.w400,
+          ),
+        ),
       ],
     );
   }
@@ -411,15 +506,30 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
               _ControlBtn(
                 icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
                 label: _isMuted ? 'Bật mic' : 'Tắt mic',
-                isActive: _isMuted, activeColor: AppColors.error,
-                onTap: () { setState(() => _isMuted = !_isMuted); callService.toggleMute(_isMuted); },
+                isActive: _isMuted,
+                activeColor: AppColors.error,
+                onTap: () {
+                  setState(() => _isMuted = !_isMuted);
+                  callService.toggleMute(_isMuted);
+                },
               ),
               _ControlBtn(
-                icon: _isSpeaker ? Icons.volume_up_rounded : Icons.volume_down_rounded,
-                label: 'Loa ngoài', isActive: _isSpeaker, activeColor: AppColors.primary,
-                onTap: () { setState(() => _isSpeaker = !_isSpeaker); callService.toggleSpeaker(_isSpeaker); },
+                icon: _isSpeaker
+                    ? Icons.volume_up_rounded
+                    : Icons.volume_down_rounded,
+                label: 'Loa ngoài',
+                isActive: _isSpeaker,
+                activeColor: AppColors.primary,
+                onTap: () {
+                  setState(() => _isSpeaker = !_isSpeaker);
+                  callService.toggleSpeaker(_isSpeaker);
+                },
               ),
-              _ControlBtn(icon: Icons.dialpad_rounded, label: 'Bàn phím', onTap: () {}),
+              _ControlBtn(
+                icon: Icons.dialpad_rounded,
+                label: 'Bàn phím',
+                onTap: () {},
+              ),
             ],
           ),
         ),
@@ -440,14 +550,23 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
               _ControlBtn(
                 icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
                 label: _isMuted ? 'Bật mic' : 'Tắt mic',
-                isActive: _isMuted, activeColor: AppColors.error,
-                onTap: () { setState(() => _isMuted = !_isMuted); callService.toggleMute(_isMuted); },
+                isActive: _isMuted,
+                activeColor: AppColors.error,
+                onTap: () {
+                  setState(() => _isMuted = !_isMuted);
+                  callService.toggleMute(_isMuted);
+                },
               ),
             ],
           ),
         ),
         const SizedBox(height: 36),
-        _EndCallButton(onTap: () { callService.endCall(); Navigator.pop(context); }),
+        _EndCallButton(
+          onTap: () {
+            callService.endCall();
+            Navigator.pop(context);
+          },
+        ),
       ],
     );
   }
@@ -461,31 +580,55 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
           Column(
             children: [
               _ActionButton(
-                icon: Icons.call_end_rounded, color: AppColors.callReject, size: 68,
+                icon: Icons.call_end_rounded,
+                color: AppColors.callReject,
+                size: 68,
                 onTap: () {
-                  callService.rejectCall(callId: widget.callId ?? '', conversationId: widget.conversationId);
+                  callService.rejectCall(
+                    callId: widget.callId ?? '',
+                    conversationId: widget.conversationId,
+                  );
                   Navigator.pop(context);
                 },
               ),
               const SizedBox(height: 10),
-              Text('Từ chối', style: TextStyle(color: Colors.white.withOpacity(0.7), fontFamily: 'Inter', fontSize: 13, fontWeight: FontWeight.w500)),
+              Text(
+                'Từ chối',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontFamily: 'Inter',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
           Column(
             children: [
               _ActionButton(
-                icon: Icons.call_rounded, color: AppColors.callAccept, size: 68,
+                icon: Icons.call_rounded,
+                color: AppColors.callAccept,
+                size: 68,
                 onTap: () async {
                   await callService.answerCall(
                     conversationId: widget.conversationId,
                     callId: widget.callId ?? '',
+                    peerId: widget.callerId,
                     offer: widget.offer ?? {},
                     isVideo: false,
                   );
                 },
               ),
               const SizedBox(height: 10),
-              Text('Chấp nhận', style: TextStyle(color: Colors.white.withOpacity(0.7), fontFamily: 'Inter', fontSize: 13, fontWeight: FontWeight.w500)),
+              Text(
+                'Chấp nhận',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontFamily: 'Inter',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
         ],
@@ -509,25 +652,45 @@ class _ParticipantTile extends StatelessWidget {
             clipBehavior: Clip.none,
             children: [
               Container(
-                width: 56, height: 56,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: participant.isConnected ? AppColors.online : Colors.white24,
+                    color: participant.isConnected
+                        ? AppColors.online
+                        : Colors.white24,
                     width: 2,
                   ),
                 ),
                 child: ClipOval(
-                  child: AvatarWidget(url: participant.avatar, name: participant.name, size: 56),
+                  child: AvatarWidget(
+                    url: participant.avatar,
+                    name: participant.name,
+                    size: 56,
+                  ),
                 ),
               ),
               if (participant.isMuted)
                 Positioned(
-                  right: -2, bottom: -2,
+                  right: -2,
+                  bottom: -2,
                   child: Container(
-                    width: 18, height: 18,
-                    decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: const Color(0xFF0A1A0A), width: 2)),
-                    child: const Icon(Icons.mic_off, color: Colors.white, size: 10),
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: const Color(0xFF0A1A0A),
+                        width: 2,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.mic_off,
+                      color: Colors.white,
+                      size: 10,
+                    ),
                   ),
                 ),
             ],
@@ -535,8 +698,14 @@ class _ParticipantTile extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             participant.name,
-            style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.8), fontFamily: 'Inter'),
-            maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withOpacity(0.8),
+              fontFamily: 'Inter',
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -551,7 +720,13 @@ class _ControlBtn extends StatelessWidget {
   final VoidCallback onTap;
   final bool isActive;
   final Color activeColor;
-  const _ControlBtn({required this.icon, required this.label, required this.onTap, this.isActive = false, this.activeColor = Colors.white});
+  const _ControlBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isActive = false,
+    this.activeColor = Colors.white,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -560,16 +735,35 @@ class _ControlBtn extends StatelessWidget {
       child: Column(
         children: [
           Container(
-            width: 58, height: 58,
+            width: 58,
+            height: 58,
             decoration: BoxDecoration(
-              color: isActive ? activeColor.withOpacity(0.2) : Colors.white.withOpacity(0.1),
+              color: isActive
+                  ? activeColor.withOpacity(0.2)
+                  : Colors.white.withOpacity(0.1),
               shape: BoxShape.circle,
-              border: Border.all(color: isActive ? activeColor.withOpacity(0.5) : Colors.white.withOpacity(0.15), width: 1),
+              border: Border.all(
+                color: isActive
+                    ? activeColor.withOpacity(0.5)
+                    : Colors.white.withOpacity(0.15),
+                width: 1,
+              ),
             ),
-            child: Icon(icon, color: isActive ? activeColor : Colors.white, size: 24),
+            child: Icon(
+              icon,
+              color: isActive ? activeColor : Colors.white,
+              size: 24,
+            ),
           ),
           const SizedBox(height: 8),
-          Text(label, style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.7), fontFamily: 'Inter')),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withOpacity(0.7),
+              fontFamily: 'Inter',
+            ),
+          ),
         ],
       ),
     );
@@ -587,16 +781,36 @@ class _EndCallButton extends StatelessWidget {
         GestureDetector(
           onTap: onTap,
           child: Container(
-            width: 68, height: 68,
+            width: 68,
+            height: 68,
             decoration: BoxDecoration(
-              color: AppColors.callReject, shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: AppColors.callReject.withOpacity(0.5), blurRadius: 20, spreadRadius: 2)],
+              color: AppColors.callReject,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.callReject.withOpacity(0.5),
+                  blurRadius: 20,
+                  spreadRadius: 2,
+                ),
+              ],
             ),
-            child: const Icon(Icons.call_end_rounded, color: Colors.white, size: 30),
+            child: const Icon(
+              Icons.call_end_rounded,
+              color: Colors.white,
+              size: 30,
+            ),
           ),
         ),
         const SizedBox(height: 10),
-        Text('Kết thúc', style: TextStyle(color: Colors.white.withOpacity(0.7), fontFamily: 'Inter', fontSize: 13, fontWeight: FontWeight.w500)),
+        Text(
+          'Kết thúc',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.7),
+            fontFamily: 'Inter',
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
@@ -607,17 +821,30 @@ class _ActionButton extends StatelessWidget {
   final Color color;
   final double size;
   final VoidCallback onTap;
-  const _ActionButton({required this.icon, required this.color, required this.size, required this.onTap});
+  const _ActionButton({
+    required this.icon,
+    required this.color,
+    required this.size,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: size, height: size,
+        width: size,
+        height: size,
         decoration: BoxDecoration(
-          color: color, shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 20, spreadRadius: 2)],
+          color: color,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.5),
+              blurRadius: 20,
+              spreadRadius: 2,
+            ),
+          ],
         ),
         child: Icon(icon, color: Colors.white, size: size * 0.42),
       ),

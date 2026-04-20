@@ -679,6 +679,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 await callService.answerCall(
                   conversationId: widget.conversationId ?? '',
                   callId: widget.callId ?? '',
+                  peerId: widget.otherUser.id,
                   offer: widget.offer ?? {},
                   isVideo: true,
                 );
