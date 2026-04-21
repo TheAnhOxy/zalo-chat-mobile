@@ -313,6 +313,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
     socketService.off('message_edited', _handleMessageUpdatedEvent);
     socketService.off('message_recalled', _handleMessageRecalledEvent);
+    socketService.off('message_reaction_updated', _handleMessageUpdatedEvent);
+    socketService.off('reaction_updated', _handleMessageUpdatedEvent);
+    socketService.off('message_reaction', _handleMessageUpdatedEvent);
     socketService.off('message_updated', _handleMessageUpdatedEvent);
     socketService.off('message_deleted_me', _handleMessageRealtimeEvent);
     socketService.off('message_deleted_for_me', _handleMessageRealtimeEvent);
@@ -331,6 +334,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     socketService.joinConversation(_group.id);
     socketService.on('message_edited', _handleMessageUpdatedEvent);
     socketService.on('message_recalled', _handleMessageRecalledEvent);
+    socketService.on('message_reaction_updated', _handleMessageUpdatedEvent);
+    socketService.on('reaction_updated', _handleMessageUpdatedEvent);
+    socketService.on('message_reaction', _handleMessageUpdatedEvent);
     socketService.on('message_updated', _handleMessageUpdatedEvent);
     socketService.on('message_deleted_me', _handleMessageRealtimeEvent);
     socketService.on('message_deleted_for_me', _handleMessageRealtimeEvent);
@@ -386,8 +392,27 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void _handleMessageUpdatedEvent(dynamic data) {
     final map = _tryMap(data);
     if (map == null) return;
-    final convId = map['conversationId']?.toString();
-    if (convId != null && convId != _group.id) return;
+
+    final messageMap = _extractMessageMap(map);
+    final convId =
+        messageMap?['conversationId']?.toString() ??
+        map['conversationId']?.toString();
+    if (convId != null && convId.isNotEmpty && convId != _group.id) return;
+
+    if (messageMap != null) {
+      final messageId =
+          messageMap['_id']?.toString() ?? messageMap['id']?.toString();
+      if (messageId != null && messageId.isNotEmpty) {
+        try {
+          final updated = MessageModel.fromJson(messageMap);
+          _chatController.updateMessageById(messageId, (_) => updated);
+          return;
+        } catch (_) {
+          // Fall back to lightweight merge below when payload is partial.
+        }
+      }
+    }
+
     _handleMessageRealtimeEvent(data);
   }
 
@@ -714,6 +739,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       _textCtrl.clear();
       _showEmoji = false;
     });
+    _scrollToBottomBurst();
+  }
+
+  void _sendQuickLike() {
+    if (_isUploading) return;
+    final userId = authService.userId;
+    if (userId == null || userId.isEmpty) return;
+
+    socketService.sendMessage({
+      'conversationId': _group.id,
+      'senderId': userId,
+      'content': '👍',
+      'type': 'TEXT',
+    });
+
+    setState(() => _showEmoji = false);
     _scrollToBottomBurst();
   }
 
@@ -1177,6 +1218,75 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  void _showComposerActionsSheet() {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.auto_awesome, color: AppColors.primary),
+                title: const Text('Trợ lý AI'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    useSafeArea: false,
+                    builder: (_) => const _GroupAiChatSheet(),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.textPrimary),
+                title: const Text('Chụp ảnh'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendImage();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.image_rounded, color: AppColors.textPrimary),
+                title: const Text('Chọn ảnh'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendImage();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file, color: AppColors.textPrimary),
+                title: const Text('Đính kèm file'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendFile();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined, color: AppColors.textPrimary),
+                title: const Text('Gửi video'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendVideo();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildVoiceRecordingBar() {
     final waveColor = _voiceCancelHint ? AppColors.error : AppColors.primary;
 
@@ -1630,8 +1740,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       hintText: 'Nhắn tin',
       actions: [
         ConversationComposerAction(
-          icon: Icons.add_circle,
-          onTap: () => setState(() => _showEmoji = !_showEmoji),
+          icon: Icons.add_circle_outline,
+          onTap: _showComposerActionsSheet,
         ),
         ConversationComposerAction(
           icon: Icons.camera_alt_rounded,
@@ -1661,7 +1771,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ],
       onEmojiTap: () => setState(() => _showEmoji = !_showEmoji),
       onSend: _sendMessage,
-      onEmptyActionTap: () {},
+      onEmptyActionTap: _sendQuickLike,
     );
   }
 }

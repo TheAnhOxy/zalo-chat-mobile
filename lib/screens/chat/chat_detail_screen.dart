@@ -26,6 +26,7 @@ import '../../widgets/chat/conversation_header.dart';
 import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
 import '../../widgets/chat/conversation_voice_recording_bar.dart';
+import '../ai/ai_screen.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -757,6 +758,25 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _scrollToBottomBurst();
   }
 
+  void _sendQuickLike() {
+    if (_isUploading) return;
+    final userId = authService.userId;
+    if (userId == null || userId.isEmpty) return;
+
+    socketService.sendMessage({
+      'conversationId': widget.conversationId,
+      'senderId': userId,
+      'content': '👍',
+      'type': 'TEXT',
+    });
+
+    setState(() {
+      _replyTo = null;
+      _showEmoji = false;
+    });
+    _scrollToBottomBurst();
+  }
+
   String _formatClock(int totalSeconds) {
     final m = (totalSeconds ~/ 60).toString().padLeft(1, '0');
     final s = (totalSeconds % 60).toString().padLeft(2, '0');
@@ -1160,6 +1180,85 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     ),
                   );
                 }),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showComposerActionsSheet() {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.auto_awesome, color: AppColors.primary),
+                title: const Text('Trợ lý AI'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    useSafeArea: false,
+                    builder: (_) => Container(
+                      height: MediaQuery.of(context).size.height * 0.92,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      child: const ClipRRect(
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                        child: AiScreen(),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.textPrimary),
+                title: const Text('Chụp ảnh'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendImage();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.image_rounded, color: AppColors.textPrimary),
+                title: const Text('Chọn ảnh'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendImage();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file, color: AppColors.textPrimary),
+                title: const Text('Đính kèm file'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendFile();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined, color: AppColors.textPrimary),
+                title: const Text('Gửi video'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendVideo();
+                },
               ),
             ],
           ),
@@ -1613,8 +1712,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       hintText: isEditing ? 'Sửa tin nhắn...' : 'Nhắn tin',
       actions: [
         ConversationComposerAction(
-          icon: Icons.add_circle,
-          onTap: () => setState(() => _showEmoji = !_showEmoji),
+          icon: Icons.add_circle_outline,
+          onTap: _showComposerActionsSheet,
         ),
         ConversationComposerAction(
           icon: Icons.camera_alt_rounded,
@@ -1644,7 +1743,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ],
       onEmojiTap: () => setState(() => _showEmoji = !_showEmoji),
       onSend: _sendMessage,
-      onEmptyActionTap: () {},
+      onEmptyActionTap: _sendQuickLike,
     );
   }
 
