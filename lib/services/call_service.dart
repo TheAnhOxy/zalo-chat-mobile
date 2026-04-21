@@ -463,6 +463,24 @@ class CallService {
       final stream = event.streams[0];
 
       _remoteStream = stream;
+      if (!_isGroupCall) {
+        onRemoteStream?.call(stream);
+
+        if (_state == CallState.calling) {
+          // ✅ onTrack cũng có thể emit call_connected nếu onConnectionState chưa emit
+          if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
+            _callConnectedEmitted = true;
+            socketService.emit('call_connected', {
+              'callId': _currentCallId,
+              'conversationId': _currentConversationId,
+              'userId': authService.userId,
+            });
+          }
+          _setState(CallState.connected);
+        }
+        return;
+      }
+
       if (_mixedRemoteStream == null) {
         try {
           _mixedRemoteStream = await createLocalMediaStream('mixed_remote');

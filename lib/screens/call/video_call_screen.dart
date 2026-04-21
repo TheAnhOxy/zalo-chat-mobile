@@ -53,6 +53,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
+      _remoteRenderer.muted = false;
       setState(() => _remoteRenderer.srcObject = stream);
     };
     _init();

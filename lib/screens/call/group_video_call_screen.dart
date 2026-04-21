@@ -68,6 +68,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
+      _remoteRenderer.muted = false;
       setState(() => _remoteRenderer.srcObject = stream);
     };
     callService.onParticipantLeft = _onParticipantLeft;
