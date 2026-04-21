@@ -907,7 +907,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final otherUserId = _getOtherUserId(c);
     final isOnline = !c.isGroup && (_onlineStates[otherUserId] ?? false);
     final bool hasUnread = c.unreadCount > 0;
-    String lastContent = last?.content ?? 'Bắt đầu cuộc trò chuyện';
+    String lastContent =
+      last?.content ??
+      'Xin chào, ${name.trim().isEmpty ? 'bạn' : name}';
     if (last != null) {
       lastContent = _buildMessagePreview(content: last.content);
     }

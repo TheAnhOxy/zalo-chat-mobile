@@ -421,22 +421,6 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
               ],
             ),
           ),
-          const Spacer(),
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.keyboard_arrow_down,
-                color: Colors.white.withOpacity(0.8),
-              ),
-            ),
-          ),
         ],
       ),
     );
