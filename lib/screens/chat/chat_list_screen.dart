@@ -528,6 +528,54 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  void _markConversationReadLocally(String conversationId) {
+    final idx = _conversations.indexWhere((c) => c.id == conversationId);
+    if (idx == -1) return;
+    final conv = _conversations[idx];
+    if (conv.unreadCount == 0) return;
+
+    setState(() {
+      _conversations[idx] = ConversationModel(
+        id: conv.id,
+        type: conv.type,
+        name: conv.name,
+        avatar: conv.avatar,
+        members: conv.members,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        unreadCount: 0,
+        lastMessage: conv.lastMessage,
+      );
+    });
+  }
+
+  void _emitSeenConversation(String conversationId) {
+    final userId = authService.userId;
+    if (userId == null || userId.isEmpty || conversationId.isEmpty) return;
+    socketService.emit('seen_conversation', {
+      'conversationId': conversationId,
+      'userId': userId,
+    });
+  }
+
+  Future<void> _openConversation(ConversationModel conversation) async {
+    _markConversationReadLocally(conversation.id);
+    _emitSeenConversation(conversation.id);
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => conversation.isGroup
+            ? GroupChatScreen(group: _toApiGroupModel(conversation))
+            : ChatDetailScreen(
+                conversationId: conversation.id,
+                otherUser: _getOtherUser(conversation),
+                conversation: conversation,
+              ),
+      ),
+    );
+  }
+
   Future<void> _openActiveUserChat(String userId) async {
     final myId = authService.userId ?? '';
     if (myId.isEmpty || userId.isEmpty || userId == myId) return;
@@ -563,6 +611,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
           avatar: known?.avatar ?? '',
           phone: '',
         );
+
+    _markConversationReadLocally(target.id);
+    _emitSeenConversation(target.id);
 
     await Navigator.push(
       context,
@@ -868,18 +919,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final isPinned = _pinnedConversationIds.contains(c.id);
 
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => c.isGroup
-              ? GroupChatScreen(group: _toApiGroupModel(c))
-              : ChatDetailScreen(
-                  conversationId: c.id,
-                  otherUser: _getOtherUser(c),
-                  conversation: c,
-                ),
-        ),
-      ),
+      onTap: () => _openConversation(c),
       onLongPress: () => _showContextMenu(c),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
