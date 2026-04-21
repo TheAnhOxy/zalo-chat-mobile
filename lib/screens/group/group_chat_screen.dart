@@ -155,6 +155,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     return userId;
   }
 
+  String? _resolveMemberAvatar(String userId) {
+    if (userId == authService.userId) return null;
+    final profile = _memberProfiles[userId];
+    return profile?.avatar;
+  }
+
+  String? _resolveMemberFullName(String userId) {
+    if (userId == authService.userId) return null;
+    final profile = _memberProfiles[userId];
+    return profile?.fullName;
+  }
+
   void _startVoiceCall() {
     Navigator.push(
       context,
@@ -1386,6 +1398,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             senderLabel: isMe
                                 ? null
                                 : _resolveMemberName(msg.senderId),
+                            senderAvatar: isMe
+                                ? null
+                                : _resolveMemberAvatar(msg.senderId),
+                            senderName: isMe
+                                ? null
+                                : _resolveMemberFullName(msg.senderId),
                             onLongPress: () {
                               _showMessageActions(msg);
                             },

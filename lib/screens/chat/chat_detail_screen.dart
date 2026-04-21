@@ -1404,11 +1404,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   Widget _buildMessageBubble(MessageModel msg, int i) {
     final lastOutgoingMessageId = _lastOutgoingMessageId();
+    final isCurrentUserMessage = msg.senderId.toString() == authService.userId.toString();
 
     return CommonMessageBubble(
       msg: msg,
-      isMe: msg.senderId.toString() == authService.userId.toString(),
+      isMe: isCurrentUserMessage,
       isGroup: false,
+      senderAvatar: !isCurrentUserMessage ? widget.otherUser?.avatar : null,
+      senderName: !isCurrentUserMessage ? widget.otherUser?.fullName : null,
       showSeenLabel: msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
       replyToMsg: msg.replyToId != null
           ? _messages.firstWhere(
