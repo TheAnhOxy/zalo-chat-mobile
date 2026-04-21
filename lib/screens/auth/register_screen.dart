@@ -156,7 +156,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 20),
               const Text(
-                'Đăng ký như Zalo/Messenger',
+                'Đăng ký tài khoản mới QuickChat',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
@@ -166,7 +166,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'Yêu cầu bắt buộc: số điện thoại unique + email',
+                'Kết nối mọi lúc mọi nơi với mọi người',
                 style: TextStyle(
                   fontSize: 13,
                   color: AppColors.textSecondary,
@@ -192,8 +192,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 14),
                     _buildInput(
                       controller: _phoneCtrl,
-                      hint: '0901234567',
-                      label: 'Số điện thoại (unique)',
+                      hint: '0000000',
+                      label: 'Số điện thoại ',
                       icon: Icons.phone_iphone_outlined,
                       keyboardType: TextInputType.phone,
                     ),
@@ -208,7 +208,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 14),
                     _buildInput(
                       controller: _passCtrl,
-                      hint: 'Demo@123',
+                      hint: 'password',
                       label: 'Mật khẩu',
                       icon: Icons.lock_outline,
                       obscure: _obscurePass,

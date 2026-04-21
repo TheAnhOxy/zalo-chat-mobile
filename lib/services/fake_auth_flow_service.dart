@@ -57,6 +57,44 @@ class LoginResult {
   const LoginResult({required this.user, required this.tokens});
 }
 
+class LoginChallengeInfo {
+  final String challengeId;
+  final String email;
+  final DateTime challengeExpiredAt;
+
+  const LoginChallengeInfo({
+    required this.challengeId,
+    required this.email,
+    required this.challengeExpiredAt,
+  });
+}
+
+class LoginAttemptResult {
+  final LoginResult? loginResult;
+  final LoginChallengeInfo? challenge;
+
+  const LoginAttemptResult({this.loginResult, this.challenge});
+
+  bool get requiresEmailConfirmation => challenge != null;
+}
+
+class LoginChallengeStatusResult {
+  final String challengeId;
+  final String status;
+  final LoginResult? loginResult;
+  final bool revokedOldSessions;
+
+  const LoginChallengeStatusResult({
+    required this.challengeId,
+    required this.status,
+    this.loginResult,
+    this.revokedOldSessions = false,
+  });
+
+  bool get isPending => status == 'pending';
+  bool get isConsumed => status == 'consumed' && loginResult != null;
+}
+
 class FakeAuthFlowService {
   FakeAuthFlowService._internal();
 
@@ -121,7 +159,7 @@ class FakeAuthFlowService {
     return value.toLowerCase().startsWith('image/');
   }
 
-  Future<LoginResult> login({
+  Future<LoginAttemptResult> login({
     required String identifier,
     required String password,
     String device = 'web',
@@ -134,9 +172,56 @@ class FakeAuthFlowService {
       'deviceName': deviceName,
     });
 
-    return LoginResult(
-      user: _parseUser(_extractMap(data['user'])),
-      tokens: _parseTokens(_extractMap(data['tokens'])),
+    final requiresChallenge = data['requiresEmailConfirmation'] == true;
+    if (requiresChallenge) {
+      final challengeId = (data['challengeId'] ?? '').toString().trim();
+      final email = (data['email'] ?? '').toString().trim();
+      final expiredAt = _parseDateTime(data['challengeExpiredAt']);
+      if (challengeId.isEmpty || expiredAt == null) {
+        throw const FakeAuthException('Khong nhan duoc challenge hop le tu backend.');
+      }
+      return LoginAttemptResult(
+        challenge: LoginChallengeInfo(
+          challengeId: challengeId,
+          email: email,
+          challengeExpiredAt: expiredAt,
+        ),
+      );
+    }
+
+    return LoginAttemptResult(
+      loginResult: LoginResult(
+        user: _parseUser(_extractMap(data['user'])),
+        tokens: _parseTokens(_extractMap(data['tokens'])),
+      ),
+    );
+  }
+
+  Future<LoginChallengeStatusResult> getLoginChallengeStatus(
+    String challengeId,
+  ) async {
+    final data = await _post('/auth/login/challenge-status', {
+      'challengeId': challengeId.trim(),
+    });
+
+    final id = (data['challengeId'] ?? challengeId).toString().trim();
+    final status = (data['status'] ?? '').toString().toLowerCase().trim();
+
+    if (status == 'consumed') {
+      return LoginChallengeStatusResult(
+        challengeId: id,
+        status: status,
+        loginResult: LoginResult(
+          user: _parseUser(_extractMap(data['user'])),
+          tokens: _parseTokens(_extractMap(data['tokens'])),
+        ),
+        revokedOldSessions: data['revokedOldSessions'] == true,
+      );
+    }
+
+    return LoginChallengeStatusResult(
+      challengeId: id,
+      status: status.isEmpty ? 'pending' : status,
     );
   }
 
@@ -208,6 +293,10 @@ class FakeAuthFlowService {
         ? _extractMap(data['tokens'])
         : data;
     return _parseTokens(tokenMap);
+  }
+
+  Future<AuthTokens> refreshToken(String refreshToken) {
+    return refreshAccessToken(refreshToken);
   }
 
   Future<void> logout(String refreshToken) async {
@@ -282,10 +371,15 @@ class FakeAuthFlowService {
   }) async {
     final body = <String, dynamic>{'fullName': fullName.trim()};
 
-    if (bio != null && bio.trim().isNotEmpty) body['bio'] = bio.trim();
-    if (gender != null && gender.trim().isNotEmpty)
+    if (bio != null && bio.trim().isNotEmpty) {
+      body['bio'] = bio.trim();
+    }
+    if (gender != null && gender.trim().isNotEmpty) {
       body['gender'] = gender.trim();
-    if (dob != null && dob.trim().isNotEmpty) body['dob'] = dob.trim();
+    }
+    if (dob != null && dob.trim().isNotEmpty) {
+      body['dob'] = dob.trim();
+    }
     if (isBlocked != null) {
       body['isBlocked'] = isBlocked;
     }

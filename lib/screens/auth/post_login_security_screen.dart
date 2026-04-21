@@ -43,6 +43,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
       widget.args.loginResult.user,
       token: widget.args.loginResult.tokens.accessToken,
       refreshToken: widget.args.loginResult.tokens.refreshToken,
+      accessExpiredAt: widget.args.loginResult.tokens.accessExpiredAt,
     );
 
     if (!mounted) return;
