@@ -1,14 +1,21 @@
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
-import 'package:http_parser/http_parser.dart';
+import 'package:flutter/material.dart';
 import '../data/models/models.dart';
 import '../core/config/app_config.dart';
+import '../navigation/app_navigator.dart';
+import '../navigation/app_router.dart';
+import 'auth_service.dart';
+import 'fake_auth_flow_service.dart';
+import 'socket_service.dart';
 import 'dart:developer';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
-  ApiService._internal();
+  ApiService._internal() {
+    _configureInterceptors();
+  }
 
   String get baseUrl => AppConfig.baseUrl;
 
@@ -19,6 +26,145 @@ class ApiService {
       receiveTimeout: const Duration(seconds: 10),
     ),
   );
+
+  Future<AuthTokens>? _refreshFuture;
+  bool _isForceLogoutHandling = false;
+
+  void _configureInterceptors() {
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          final token = authService.accessToken;
+          if (token != null && token.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+          handler.next(options);
+        },
+        onError: (error, handler) async {
+          final statusCode = error.response?.statusCode;
+          final alreadyRetried = error.requestOptions.extra['retried'] == true;
+
+          if (statusCode != 401 || alreadyRetried) {
+            handler.next(error);
+            return;
+          }
+
+          if (_isSessionRevoked(error)) {
+            await _handleForcedLogout();
+            handler.next(error);
+            return;
+          }
+
+          final refreshed = await _refreshAccessTokenOnce();
+          if (refreshed == null) {
+            authService.logout();
+            handler.next(error);
+            return;
+          }
+
+          final retryOptions = error.requestOptions;
+          retryOptions.headers['Authorization'] =
+              'Bearer ${refreshed.accessToken}';
+          retryOptions.extra['retried'] = true;
+
+          try {
+            final response = await _dio.fetch(retryOptions);
+            handler.resolve(response);
+            return;
+          } catch (retryError) {
+            handler.next(error);
+            return;
+          }
+        },
+      ),
+    );
+  }
+
+  bool _isSessionRevoked(DioException error) {
+    final data = error.response?.data;
+
+    String? code;
+    String? message;
+
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      final errorMapRaw = map['error'];
+      final errorMap = errorMapRaw is Map
+          ? Map<String, dynamic>.from(errorMapRaw)
+          : <String, dynamic>{};
+
+      code =
+          (errorMap['code'] ?? map['code'] ?? '').toString().trim().toUpperCase();
+      message =
+          (errorMap['message'] ?? map['message'] ?? '').toString().trim();
+    }
+
+    if (code == 'SESSION_REVOKED') return true;
+    return message?.toLowerCase().contains('session has been revoked') == true;
+  }
+
+  Future<void> _handleForcedLogout() async {
+    if (_isForceLogoutHandling) return;
+    _isForceLogoutHandling = true;
+
+    authService.logout();
+    socketService.disconnect();
+
+    final navigator = AppNavigator.navigatorKey.currentState;
+    navigator?.pushNamedAndRemoveUntil(AppRouter.login, (route) => false);
+
+    final context = AppNavigator.navigatorKey.currentContext;
+    if (context != null) {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Phiên đăng nhập đã bị thu hồi'),
+            content: const Text(
+              'Tài khoản của bạn đã đăng nhập ở thiết bị khác. Vui lòng đăng nhập lại.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Đăng nhập lại'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    _isForceLogoutHandling = false;
+  }
+
+  Future<AuthTokens?> _refreshAccessTokenOnce() async {
+    if (_refreshFuture != null) return _refreshFuture!;
+
+    final refreshToken = authService.refreshToken;
+    if (refreshToken == null || refreshToken.isEmpty) return null;
+
+    _refreshFuture = fakeAuthFlowService.refreshToken(refreshToken);
+    try {
+      final refreshed = await _refreshFuture!;
+      final currentUser = authService.currentUser;
+      if (currentUser != null) {
+        authService.setUser(
+          currentUser,
+          token: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          accessExpiredAt: refreshed.accessExpiredAt,
+        );
+      }
+      return refreshed;
+    } catch (_) {
+      return null;
+    } finally {
+      _refreshFuture = null;
+    }
+  }
 
   // --- USERS ---
 
@@ -48,8 +194,9 @@ class ApiService {
   static String _extractId(dynamic raw) {
     if (raw == null) return '';
     if (raw is String) return raw;
-    if (raw is Map)
+    if (raw is Map) {
       return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+    }
     return raw.toString();
   }
 
@@ -313,7 +460,6 @@ class ApiService {
         'file': MultipartFile.fromBytes(
           bytes,
           filename: fileName,
-          contentType: MediaType.parse(contentType),
         ),
       });
 

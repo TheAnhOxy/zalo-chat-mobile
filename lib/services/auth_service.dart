@@ -14,6 +14,7 @@ class AuthService {
   UserModel? _currentUser;
   String? _accessToken;
   String? _refreshToken;
+  DateTime? _accessExpiredAt;
   final List<AuthListener> _listeners = [];
 
   // ── Public Getters ────────────────────────────────────────────
@@ -21,6 +22,7 @@ class AuthService {
   String?    get userId      => _currentUser?.id;
   String?    get accessToken => _accessToken;
   String?    get refreshToken => _refreshToken;
+  DateTime?  get accessExpiredAt => _accessExpiredAt;
   bool       get isLoggedIn  => _currentUser != null;
 
   // ── Subscribe / Unsubscribe ───────────────────────────────────
@@ -74,6 +76,7 @@ class AuthService {
   static const _keyUser         = 'auth_user';
   static const _keyAccessToken  = 'auth_access_token';
   static const _keyRefreshToken = 'auth_refresh_token';
+  static const _keyAccessExpiredAt = 'auth_access_expired_at';
 
   /// Lưu session vào SharedPreferences
   Future<void> _saveSession() async {
@@ -92,6 +95,9 @@ class AuthService {
     }));
     if (_accessToken != null)  await prefs.setString(_keyAccessToken,  _accessToken!);
     if (_refreshToken != null) await prefs.setString(_keyRefreshToken, _refreshToken!);
+    if (_accessExpiredAt != null) {
+      await prefs.setString(_keyAccessExpiredAt, _accessExpiredAt!.toIso8601String());
+    }
   }
 
   /// Xóa session khỏi SharedPreferences
@@ -100,6 +106,7 @@ class AuthService {
     await prefs.remove(_keyUser);
     await prefs.remove(_keyAccessToken);
     await prefs.remove(_keyRefreshToken);
+    await prefs.remove(_keyAccessExpiredAt);
   }
 
   /// Khôi phục session từ SharedPreferences khi app khởi động.
@@ -124,6 +131,9 @@ class AuthService {
       );
       _accessToken  = prefs.getString(_keyAccessToken);
       _refreshToken = prefs.getString(_keyRefreshToken);
+        final rawExpiredAt = prefs.getString(_keyAccessExpiredAt);
+        _accessExpiredAt =
+          rawExpiredAt == null ? null : DateTime.tryParse(rawExpiredAt);
       _notify();
       return _currentUser!.id.isNotEmpty;
     } catch (_) {
@@ -133,10 +143,28 @@ class AuthService {
 
   // ── Stub cho NGƯỜI 1 (AUTH) implement sau ─────────────────────
   /// Gọi sau khi decode JWT thành công
-  void setUser(UserModel user, {String? token, String? refreshToken}) {
+  void setUser(
+    UserModel user, {
+    String? token,
+    String? refreshToken,
+    DateTime? accessExpiredAt,
+  }) {
     _currentUser = user;
     if (token != null) _accessToken = token;
     if (refreshToken != null) _refreshToken = refreshToken;
+    if (accessExpiredAt != null) _accessExpiredAt = accessExpiredAt;
+    _saveSession();
+    _notify();
+  }
+
+  void updateTokens({
+    required String accessToken,
+    required String refreshToken,
+    required DateTime accessExpiredAt,
+  }) {
+    _accessToken = accessToken;
+    _refreshToken = refreshToken;
+    _accessExpiredAt = accessExpiredAt;
     _saveSession();
     _notify();
   }
@@ -151,6 +179,7 @@ class AuthService {
     _currentUser = null;
     _accessToken = null;
     _refreshToken = null;
+    _accessExpiredAt = null;
     _clearSession();
     _notify();
   }
