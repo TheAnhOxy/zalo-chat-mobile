@@ -25,6 +25,9 @@ import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:photo_view/photo_view.dart';
 import '../../data/models/chat_item.dart';
+import '../../widgets/chat/conversation_composer_bar.dart';
+import '../../widgets/chat/conversation_shared_bubbles.dart';
+import '../../widgets/chat/conversation_timeline.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -167,7 +170,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     }
 
     if (_typingPulseTimer == null || !_typingPulseTimer!.isActive) {
-      _typingPulseTimer = Timer(const Duration(milliseconds: 2500), _typingPulse);
+      _typingPulseTimer = Timer(
+        const Duration(milliseconds: 2500),
+        _typingPulse,
+      );
     }
 
     _typingIdleTimer = Timer(const Duration(seconds: 2), () {
@@ -243,7 +249,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       'userId': authService.userId,
     });
 
-    socketService.on('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.on(
+      'conversation_call_updated',
+      _handleConversationCallUpdated,
+    );
     socketService.on('call_ended', _handleCallTerminalEvent);
     socketService.on('call_rejected', _handleCallTerminalEvent);
     socketService.on('new_message', _handleNewMessage);
@@ -320,7 +329,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
       final oldIds = _calls.map((c) => c.id).toSet();
       final newIds = latestCalls.map((c) => c.id).toSet();
-      final hasNewCall = newIds.length > oldIds.length || !newIds.containsAll(oldIds);
+      final hasNewCall =
+          newIds.length > oldIds.length || !newIds.containsAll(oldIds);
 
       setState(() {
         _calls = latestCalls;
@@ -337,7 +347,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   List<CallModel> _upsertCall(List<CallModel> source, CallModel next) {
     final idx = source.indexWhere((c) => c.id == next.id);
-    if (idx == -1) return [...source, next]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (idx == -1)
+      return [...source, next]
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final updated = [...source];
     updated[idx] = next;
     updated.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -437,7 +449,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     socketService.off('message_recalled', _handleMessageRecalled);
     socketService.off('conversation_theme_changed', _handleThemeEvent);
     socketService.off('theme_changed', _handleThemeEvent);
-    socketService.off('conversation_call_updated', _handleConversationCallUpdated);
+    socketService.off(
+      'conversation_call_updated',
+      _handleConversationCallUpdated,
+    );
     socketService.off('call_ended', _handleCallTerminalEvent);
     socketService.off('call_rejected', _handleCallTerminalEvent);
     socketService.off('user_status_changed', _handlePeerStatusChanged);
@@ -835,16 +850,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     try {
       hasPermission = await _voiceRecorder.hasPermission();
     } catch (e, st) {
-      log(
-        '❌ hasPermission() lỗi: $e',
-        error: e,
-        stackTrace: st,
-      );
+      log('❌ hasPermission() lỗi: $e', error: e, stackTrace: st);
     }
     if (!hasPermission) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ứng dụng chưa có quyền dùng microphone.')),
+        const SnackBar(
+          content: Text('Ứng dụng chưa có quyền dùng microphone.'),
+        ),
       );
       return;
     }
@@ -879,10 +892,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               numChannels: 1,
             );
 
-      await _voiceRecorder.start(
-        recordConfig,
-        path: recordPath,
-      );
+      await _voiceRecorder.start(recordConfig, path: recordPath);
 
       _voiceTimer?.cancel();
       _voiceTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -901,11 +911,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             setState(() => _voiceWave = next);
           });
     } catch (e, st) {
-      log(
-        '❌ Bắt đầu ghi âm thất bại: $e',
-        error: e,
-        stackTrace: st,
-      );
+      log('❌ Bắt đầu ghi âm thất bại: $e', error: e, stackTrace: st);
       _resetVoiceState();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -952,8 +958,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       final bytes = await XFile(voicePath).readAsBytes();
       if (bytes.isEmpty) throw Exception('Voice rỗng');
 
-      final fileName =
-          'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       final signed = await apiService.getPresignedUrl(fileName, 'audio/mpeg');
       if (signed == null) throw Exception('Không lấy được presigned URL');
 
@@ -1101,7 +1106,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       final bytes = await picked.readAsBytes();
       final rawFileName = picked.name.isNotEmpty
           ? picked.name
-          : (picked.path.isNotEmpty ? picked.path.split('/').last : 'image.jpg');
+          : (picked.path.isNotEmpty
+                ? picked.path.split('/').last
+                : 'image.jpg');
       final fileName = _normalizeImageFileName(rawFileName);
       final contentType = _detectImageContentType(fileName);
       await _uploadToS3AndSendMessage(
@@ -1524,41 +1531,17 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         _focusNode.unfocus();
                         setState(() => _showEmoji = false);
                       },
-                      child: ListView.builder(
+                      child: ConversationTimeline(
                         controller: _scrollCtrl,
+                        items: _chatItems,
+                        showTypingIndicator: _isTyping,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 8,
                         ),
-                        itemCount: _chatItems.length + (_isTyping ? 1 : 0),
-                        itemBuilder: (_, i) {
-                          if (i == _chatItems.length)
-                            return _buildTypingIndicator();
-
-                          final item = _chatItems[i];
-                          final prevItem = i > 0 ? _chatItems[i - 1] : null;
-                          final showDate =
-                              prevItem == null ||
-                              !du.DateUtils.isSameDay(
-                                prevItem.createdAt,
-                                item.createdAt,
-                              );
-
-                          return Column(
-                            children: [
-                              if (showDate)
-                                ChatDateDivider(
-                                  label: du.DateUtils.formatDateSeparator(
-                                    item.createdAt,
-                                  ),
-                                ),
-                              if (item.type == ChatItemType.call)
-                                _buildCallBubble(item.call!)
-                              else
-                                _buildMessageBubble(item.message!, i),
-                            ],
-                          );
-                        },
+                        messageBuilder: _buildMessageBubble,
+                        callBuilder: (call) =>
+                            ConversationCallBubble(call: call),
                       ),
                     ),
                   ),
@@ -1610,90 +1593,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Widget _buildCallBubble(CallModel call) {
-    final isMe = call.callerId == authService.userId;
-    final isVideo = call.isVideo;
-    final isMissed = call.isMissed;
-    Color iconColor;
-    Color bgColor;
-    String label;
-    IconData icon;
-    if (isMissed) {
-      iconColor = Colors.red;
-      bgColor = Colors.red.withOpacity(0.1);
-      label = isMe ? 'Người nhận không bắt máy' : 'Cuộc gọi nhỡ';
-      icon = isVideo ? Icons.videocam_off : Icons.phone_missed;
-    } else {
-      iconColor = AppColors.primary;
-      bgColor = isMe
-          ? AppColors.primary.withOpacity(0.15)
-          : Colors.grey.withOpacity(0.15);
-      label = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
-      icon = isVideo ? Icons.videocam : Icons.phone;
-    }
-    return Padding(
-      padding: EdgeInsets.only(
-        top: 6,
-        bottom: 6,
-        left: isMe ? 60 : 34,
-        right: isMe ? 6 : 60,
-      ),
-      child: Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Column(
-          crossAxisAlignment: isMe
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          children: [
-            Container(
-              constraints: const BoxConstraints(maxWidth: 260),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(18),
-                  topRight: const Radius.circular(18),
-                  bottomLeft: isMe ? const Radius.circular(18) : Radius.zero,
-                  bottomRight: isMe ? Radius.zero : const Radius.circular(18),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: iconColor, size: 16),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isMissed ? Colors.red : AppColors.textPrimary,
-                        ),
-                      ),
-                      if (call.isEnded && call.duration > 0)
-                        Text(
-                          call.durationLabel,
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              du.DateUtils.formatMessageTime(call.createdAt),
-              style: const TextStyle(
-                fontSize: 10,
-                color: AppColors.textHint,
-                fontFamily: 'Inter',
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return ConversationCallBubble(call: call);
   }
 
   // ── Header mới: style giống GroupChatScreen ──────────────────────────────
@@ -1834,26 +1734,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Widget _buildTypingIndicator() {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(left: 0, bottom: 8, top: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: const BoxDecoration(
-          color: AppColors.bubbleOther,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(4),
-            topRight: Radius.circular(18),
-            bottomLeft: Radius.circular(18),
-            bottomRight: Radius.circular(18),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(3, (i) => _DotAnimation(delay: i * 200)),
-        ),
-      ),
-    );
+    return const ConversationTypingIndicator();
   }
 
   Widget _buildReplyPreview() {
@@ -1969,151 +1850,48 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   // ── Input Bar mới: style giống GroupChatScreen ───────────────────────────
   Widget _buildInputBar() {
     final isEditing = _editingMessage != null;
-    final hasText = _textCtrl.text.trim().isNotEmpty;
 
     if (_isRecordingVoice) {
       return _buildVoiceRecordingBar();
     }
-
-    Widget actionIcon(
-      IconData icon, {
-      VoidCallback? onTap,
-      bool disabled = false,
-    }) {
-      return InkResponse(
-        onTap: disabled ? null : onTap,
-        radius: 22,
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(
-            icon,
-            color: disabled ? AppColors.textHint : AppColors.primary,
-            size: 24,
-          ),
+    return ConversationComposerBar(
+      controller: _textCtrl,
+      focusNode: _focusNode,
+      hintText: isEditing ? 'Sửa tin nhắn...' : 'Nhắn tin',
+      actions: [
+        ConversationComposerAction(
+          icon: Icons.add_circle,
+          onTap: () => setState(() => _showEmoji = !_showEmoji),
         ),
-      );
-    }
-
-    return Container(
-      color: AppColors.bgCard,
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-      child: Row(
-        children: [
-          // Plus action button (giống GroupChatScreen)
-          InkResponse(
-            onTap: () => setState(() => _showEmoji = !_showEmoji),
-            radius: 22,
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(
-                Icons.add_circle,
-                color: AppColors.primary,
-                size: 24,
-              ),
-            ),
-          ),
-          actionIcon(
-            Icons.camera_alt_rounded,
-            onTap: _pickAndSendImage,
-            disabled: _isUploading,
-          ),
-          actionIcon(
-            Icons.image_rounded,
-            onTap: _pickAndSendImage,
-            disabled: _isUploading,
-          ),
-          GestureDetector(
-            onLongPressStart: _isUploading
-                ? null
-                : (_) => _startVoiceRecording(),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(
-                Icons.mic_none_rounded,
-                color: _isUploading ? AppColors.textHint : AppColors.primary,
-                size: 24,
-              ),
-            ),
-          ),
-          actionIcon(
-            Icons.attach_file,
-            onTap: _pickAndSendFile,
-            disabled: _isUploading,
-          ),
-          actionIcon(
-            Icons.videocam_outlined,
-            onTap: _pickAndSendVideo,
-            disabled: _isUploading,
-          ),
-          const SizedBox(width: 6),
-
-          // Text field
-          Expanded(
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 38, maxHeight: 120),
-              decoration: BoxDecoration(
-                color: AppColors.bgInput,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: TextField(
-                controller: _textCtrl,
-                focusNode: _focusNode,
-                maxLines: null,
-                style: const TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 14,
-                  color: AppColors.textPrimary,
-                ),
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  hintText: isEditing ? 'Sửa tin nhắn...' : 'Nhắn tin',
-                  hintStyle: const TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 14,
-                    color: AppColors.textHint,
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  suffixIcon: InkResponse(
-                    onTap: () => setState(() => _showEmoji = !_showEmoji),
-                    radius: 22,
-                    child: Icon(
-                      Icons.sentiment_satisfied_alt_outlined,
-                      color: AppColors.primary,
-                      size: 22,
-                    ),
-                  ),
-                  suffixIconConstraints: const BoxConstraints(
-                    minWidth: 40,
-                    minHeight: 40,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 10),
-
-          // Send / like button
-          InkResponse(
-            onTap: hasText ? _sendMessage : () {},
-            radius: 24,
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(
-                hasText
-                    ? (isEditing ? Icons.check_rounded : Icons.send_rounded)
-                    : Icons.thumb_up,
-                color: AppColors.primary,
-                size: 24,
-              ),
-            ),
-          ),
-        ],
-      ),
+        ConversationComposerAction(
+          icon: Icons.camera_alt_rounded,
+          onTap: _pickAndSendImage,
+          enabled: !_isUploading,
+        ),
+        ConversationComposerAction(
+          icon: Icons.image_rounded,
+          onTap: _pickAndSendImage,
+          enabled: !_isUploading,
+        ),
+        ConversationComposerAction(
+          icon: Icons.mic_none_rounded,
+          onLongPressStart: _isUploading ? null : (_) => _startVoiceRecording(),
+          enabled: !_isUploading,
+        ),
+        ConversationComposerAction(
+          icon: Icons.attach_file,
+          onTap: _pickAndSendFile,
+          enabled: !_isUploading,
+        ),
+        ConversationComposerAction(
+          icon: Icons.videocam_outlined,
+          onTap: _pickAndSendVideo,
+          enabled: !_isUploading,
+        ),
+      ],
+      onEmojiTap: () => setState(() => _showEmoji = !_showEmoji),
+      onSend: _sendMessage,
+      onEmptyActionTap: () {},
     );
   }
 
@@ -2132,7 +1910,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 : 'Vuốt sang trái để hủy, hoặc bấm gửi để gửi',
             style: TextStyle(
               fontSize: 13,
-              color: _voiceCancelHint ? AppColors.error : AppColors.textSecondary,
+              color: _voiceCancelHint
+                  ? AppColors.error
+                  : AppColors.textSecondary,
               fontFamily: 'Inter',
             ),
           ),
@@ -2164,7 +1944,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     });
                   },
                   onHorizontalDragEnd: (_) {
-                    final shouldCancel = _voiceCancelHint || _voiceDragDx < -100;
+                    final shouldCancel =
+                        _voiceCancelHint || _voiceDragDx < -100;
                     if (shouldCancel) {
                       _finishVoiceRecording(shouldSend: false);
                       return;
@@ -2181,7 +1962,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       0,
                       0,
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.bgInput,
                       borderRadius: BorderRadius.circular(36),
@@ -2219,7 +2003,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                   (v) => Container(
                                     width: 3,
                                     height: 8 + (v * 20),
-                                    margin: const EdgeInsets.symmetric(horizontal: 1.2),
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 1.2,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: waveColor.withOpacity(0.9),
                                       borderRadius: BorderRadius.circular(2),
@@ -3103,8 +2889,12 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
                 SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 3,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 5,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 10,
+                    ),
                     activeTrackColor: fg,
                     inactiveTrackColor: dim.withOpacity(0.35),
                     thumbColor: fg,
