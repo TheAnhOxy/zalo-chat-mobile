@@ -85,10 +85,8 @@ class ChatController extends ChangeNotifier {
     );
     if (unread.isEmpty) return;
 
-    final latest = unread.last;
-    socketService.emit('seen_message', {
+    socketService.emit('seen_conversation', {
       'conversationId': conversationId,
-      'messageId': latest.id,
       'userId': currentUserId,
     });
   }

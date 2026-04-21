@@ -1059,29 +1059,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _emitSeenForLatest() {
-    final currentUserId = authService.userId;
-    if (currentUserId == null || currentUserId.isEmpty) return;
-
-    MessageModel? latestUnread;
-    for (var i = _messages.length - 1; i >= 0; i--) {
-      final m = _messages[i];
-      if (m.senderId == currentUserId) continue;
-      if (m.isRecalled) continue;
-      if (_isSeenByCurrentUser(m)) continue;
-      latestUnread = m;
-      break;
-    }
-
-    if (latestUnread == null) return;
-    if (_lastEmittedSeenMessageId == latestUnread.id) return;
-
-    _lastEmittedSeenMessageId = latestUnread.id;
-
-    socketService.emit('seen_message', {
-      'conversationId': widget.conversationId,
-      'messageId': latestUnread.id,
-      'userId': currentUserId,
-    });
+    _chatController.markLatestSeen();
   }
 
   bool _isSeenByCurrentUser(MessageModel msg) {

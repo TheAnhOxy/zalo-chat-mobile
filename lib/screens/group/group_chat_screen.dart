@@ -119,6 +119,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _rebuildChatItems();
     setState(() {});
 
+    if (hasNewMessage) {
+      _chatController.markLatestSeen();
+    }
+
     if (hasNewMessage || typingStarted) {
       _scrollToBottomBurst();
     }

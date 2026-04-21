@@ -711,7 +711,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
           ),
           const Spacer(),
-          _HeaderIconBtn(icon: Icons.search, onTap: () {}),
           const SizedBox(width: 4),
           _HeaderIconBtn(icon: Icons.add, onTap: () {}, filled: true),
         ],
