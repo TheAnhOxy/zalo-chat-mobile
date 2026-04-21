@@ -26,6 +26,7 @@ import '../../widgets/chat/conversation_header.dart';
 import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
 import '../../widgets/chat/conversation_voice_recording_bar.dart';
+import '../ai/ai_screen.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -44,6 +45,8 @@ class ChatDetailScreen extends StatefulWidget {
 }
 
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
+  static const Duration _avatarClusterWindow = Duration(minutes: 30);
+
   final _textCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _focusNode = FocusNode();
@@ -755,6 +758,25 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _scrollToBottomBurst();
   }
 
+  void _sendQuickLike() {
+    if (_isUploading) return;
+    final userId = authService.userId;
+    if (userId == null || userId.isEmpty) return;
+
+    socketService.sendMessage({
+      'conversationId': widget.conversationId,
+      'senderId': userId,
+      'content': '👍',
+      'type': 'TEXT',
+    });
+
+    setState(() {
+      _replyTo = null;
+      _showEmoji = false;
+    });
+    _scrollToBottomBurst();
+  }
+
   String _formatClock(int totalSeconds) {
     final m = (totalSeconds ~/ 60).toString().padLeft(1, '0');
     final s = (totalSeconds % 60).toString().padLeft(2, '0');
@@ -1057,29 +1079,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _emitSeenForLatest() {
-    final currentUserId = authService.userId;
-    if (currentUserId == null || currentUserId.isEmpty) return;
-
-    MessageModel? latestUnread;
-    for (var i = _messages.length - 1; i >= 0; i--) {
-      final m = _messages[i];
-      if (m.senderId == currentUserId) continue;
-      if (m.isRecalled) continue;
-      if (_isSeenByCurrentUser(m)) continue;
-      latestUnread = m;
-      break;
-    }
-
-    if (latestUnread == null) return;
-    if (_lastEmittedSeenMessageId == latestUnread.id) return;
-
-    _lastEmittedSeenMessageId = latestUnread.id;
-
-    socketService.emit('seen_message', {
-      'conversationId': widget.conversationId,
-      'messageId': latestUnread.id,
-      'userId': currentUserId,
-    });
+    _chatController.markLatestSeen();
   }
 
   bool _isSeenByCurrentUser(MessageModel msg) {
@@ -1180,6 +1180,85 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     ),
                   );
                 }),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showComposerActionsSheet() {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.auto_awesome, color: AppColors.primary),
+                title: const Text('Trợ lý AI'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    useSafeArea: false,
+                    builder: (_) => Container(
+                      height: MediaQuery.of(context).size.height * 0.92,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      child: const ClipRRect(
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                        child: AiScreen(),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.textPrimary),
+                title: const Text('Chụp ảnh'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendImage();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.image_rounded, color: AppColors.textPrimary),
+                title: const Text('Chọn ảnh'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendImage();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file, color: AppColors.textPrimary),
+                title: const Text('Đính kèm file'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendFile();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined, color: AppColors.textPrimary),
+                title: const Text('Gửi video'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndSendVideo();
+                },
               ),
             ],
           ),
@@ -1376,8 +1455,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           vertical: 8,
                         ),
                         messageBuilder: _buildMessageBubble,
-                        callBuilder: (call) =>
-                            ConversationCallBubble(call: call),
+                        callBuilder: (call, index) {
+                          final isMe = call.callerId.toString() == authService.userId.toString();
+                          return ConversationCallBubble(
+                            call: call,
+                            callerAvatar: !isMe ? widget.otherUser?.avatar : null,
+                            callerName: !isMe ? widget.otherUser?.fullName : null,
+                            showAvatar: _shouldShowAvatarAtIndex(index),
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -1404,11 +1490,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   Widget _buildMessageBubble(MessageModel msg, int i) {
     final lastOutgoingMessageId = _lastOutgoingMessageId();
+    final isCurrentUserMessage = msg.senderId.toString() == authService.userId.toString();
+    final showAvatar = _shouldShowAvatarAtIndex(i);
 
     return CommonMessageBubble(
       msg: msg,
-      isMe: msg.senderId.toString() == authService.userId.toString(),
+      isMe: isCurrentUserMessage,
       isGroup: false,
+      senderAvatar: !isCurrentUserMessage ? widget.otherUser?.avatar : null,
+      senderName: !isCurrentUserMessage ? widget.otherUser?.fullName : null,
+      showAvatar: showAvatar,
       showSeenLabel: msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
       replyToMsg: msg.replyToId != null
           ? _messages.firstWhere(
@@ -1431,8 +1522,40 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
+  String? _senderIdForChatItem(ChatItem item) {
+    if (item.type == ChatItemType.call) {
+      return item.call?.callerId.toString();
+    }
+    return item.message?.senderId.toString();
+  }
+
+  bool _shouldShowAvatarAtIndex(int index) {
+    if (index < 0 || index >= _chatItems.length) return false;
+
+    final current = _chatItems[index];
+    final currentSender = _senderIdForChatItem(current);
+    final currentUserId = authService.userId?.toString() ?? '';
+    if (currentSender == null || currentSender.isEmpty || currentSender == currentUserId) {
+      return false;
+    }
+
+    if (index == _chatItems.length - 1) return true;
+
+    final next = _chatItems[index + 1];
+    final nextSender = _senderIdForChatItem(next);
+    if (nextSender != currentSender) return true;
+
+    final gap = next.createdAt.difference(current.createdAt).abs();
+    return gap > _avatarClusterWindow;
+  }
+
   Widget _buildCallBubble(CallModel call) {
-    return ConversationCallBubble(call: call);
+    final isMe = call.callerId.toString() == authService.userId.toString();
+    return ConversationCallBubble(
+      call: call,
+      callerAvatar: !isMe ? widget.otherUser?.avatar : null,
+      callerName: !isMe ? widget.otherUser?.fullName : null,
+    );
   }
 
   Widget _buildTypingIndicator() {
@@ -1589,8 +1712,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       hintText: isEditing ? 'Sửa tin nhắn...' : 'Nhắn tin',
       actions: [
         ConversationComposerAction(
-          icon: Icons.add_circle,
-          onTap: () => setState(() => _showEmoji = !_showEmoji),
+          icon: Icons.add_circle_outline,
+          onTap: _showComposerActionsSheet,
         ),
         ConversationComposerAction(
           icon: Icons.camera_alt_rounded,
@@ -1620,7 +1743,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ],
       onEmojiTap: () => setState(() => _showEmoji = !_showEmoji),
       onSend: _sendMessage,
-      onEmptyActionTap: () {},
+      onEmptyActionTap: _sendQuickLike,
     );
   }
 

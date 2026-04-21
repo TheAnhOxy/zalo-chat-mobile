@@ -12,6 +12,9 @@ class CommonMessageBubble extends StatelessWidget {
   final bool isMe;
   final bool isGroup;
   final String? senderLabel;
+  final String? senderAvatar;
+  final String? senderName;
+  final bool showAvatar;
   final bool showSeenLabel;
   final MessageModel? replyToMsg;
   final VoidCallback? onLongPress;
@@ -27,6 +30,9 @@ class CommonMessageBubble extends StatelessWidget {
     required this.isMe,
     this.isGroup = false,
     this.senderLabel,
+    this.senderAvatar,
+    this.senderName,
+    this.showAvatar = true,
     this.showSeenLabel = false,
     this.replyToMsg,
     this.onLongPress,
@@ -46,9 +52,10 @@ class CommonMessageBubble extends StatelessWidget {
       onDoubleTap: onDoubleTap,
       child: Padding(
         padding: EdgeInsets.only(
+          top: !isMe && showAvatar ? 8 : 0,
           bottom: 6,
-          left: isMe ? 50 : 3,
-          right: isMe ? 3 : 50,
+          left: isMe ? 50 : 8,
+          right: isMe ? 8 : 50,
         ),
         child: Row(
           mainAxisAlignment: isMe
@@ -56,6 +63,41 @@ class CommonMessageBubble extends StatelessWidget {
               : MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            if (!isMe)
+              (showAvatar && (senderAvatar ?? '').isNotEmpty)
+                  ? Padding(
+                      padding: const EdgeInsets.only(right: 8, bottom: 2),
+                      child: ClipOval(
+                        child: Image.network(
+                          senderAvatar!,
+                          width: 32,
+                          height: 32,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 32,
+                            height: 32,
+                            decoration: const BoxDecoration(
+                              color: AppColors.bgCardLight,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                (senderName ?? 'U').isNotEmpty
+                                    ? (senderName ?? 'U')[0].toUpperCase()
+                                    : 'U',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color.fromARGB(255, 43, 44, 44),
+                                  fontFamily: 'Inter',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : const SizedBox(width: 40),
             ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.68,
@@ -67,7 +109,7 @@ class CommonMessageBubble extends StatelessWidget {
                 children: [
                   if (isGroup && !isMe && (senderLabel ?? '').isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 2, left: 4),
+                      padding: const EdgeInsets.only(bottom: 4, left: 4),
                       child: Text(
                         senderLabel!,
                         style: const TextStyle(

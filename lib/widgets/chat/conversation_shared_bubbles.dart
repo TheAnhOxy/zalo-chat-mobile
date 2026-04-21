@@ -38,8 +38,19 @@ class ConversationTypingIndicator extends StatelessWidget {
 
 class ConversationCallBubble extends StatelessWidget {
   final CallModel call;
+  final String? callerAvatar;
+  final String? callerName;
+  final String? senderLabel;
+  final bool showAvatar;
 
-  const ConversationCallBubble({super.key, required this.call});
+  const ConversationCallBubble({
+    super.key,
+    required this.call,
+    this.callerAvatar,
+    this.callerName,
+    this.senderLabel,
+    this.showAvatar = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -67,66 +78,120 @@ class ConversationCallBubble extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.only(
-        top: 6,
+        top: !isMe && showAvatar ? 8 : 6,
         bottom: 6,
-        left: isMe ? 60 : 34,
-        right: isMe ? 6 : 60,
+        left: isMe ? 60 : 8,
+        right: isMe ? 8 : 60,
       ),
-      child: Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Column(
-          crossAxisAlignment: isMe
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          children: [
-            Container(
-              constraints: const BoxConstraints(maxWidth: 260),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(18),
-                  topRight: const Radius.circular(18),
-                  bottomLeft: isMe ? const Radius.circular(18) : Radius.zero,
-                  bottomRight: isMe ? Radius.zero : const Radius.circular(18),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: iconColor, size: 16),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isMissed ? Colors.red : AppColors.textPrimary,
+      child: Row(
+        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Avatar for non-me calls
+          if (!isMe)
+            (showAvatar && (callerAvatar ?? '').isNotEmpty)
+                ? Padding(
+                    padding: const EdgeInsets.only(right: 8, bottom: 2),
+                    child: ClipOval(
+                      child: Image.network(
+                        callerAvatar!,
+                        width: 32,
+                        height: 32,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 32,
+                          height: 32,
+                          decoration: const BoxDecoration(
+                            color: AppColors.bgCardLight,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              (callerName ?? 'U').isNotEmpty
+                                  ? (callerName ?? 'U')[0].toUpperCase()
+                                  : 'U',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textSecondary,
+                                fontFamily: 'Inter',
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                      if (call.isEnded && call.duration > 0)
-                        Text(
-                          call.durationLabel,
-                          style: const TextStyle(fontSize: 11),
-                        ),
+                    ),
+                  )
+                : const SizedBox(width: 40),
+          Align(
+            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            child: Column(
+              crossAxisAlignment: isMe
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                if (!isMe && (senderLabel ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 4),
+                    child: Text(
+                      senderLabel!,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'Inter',
+                      ),
+                    ),
+                  ),
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 260),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: bgColor,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: isMe ? const Radius.circular(18) : Radius.zero,
+                      bottomRight: isMe ? Radius.zero : const Radius.circular(18),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, color: iconColor, size: 16),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isMissed ? Colors.red : AppColors.textPrimary,
+                            ),
+                          ),
+                          if (call.isEnded && call.duration > 0)
+                            Text(
+                              call.durationLabel,
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  du.DateUtils.formatMessageTime(call.createdAt),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textHint,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 2),
-            Text(
-              du.DateUtils.formatMessageTime(call.createdAt),
-              style: const TextStyle(
-                fontSize: 10,
-                color: AppColors.textHint,
-                fontFamily: 'Inter',
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

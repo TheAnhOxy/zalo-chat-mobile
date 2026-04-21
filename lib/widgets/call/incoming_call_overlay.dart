@@ -113,21 +113,58 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Icon loại cuộc gọi
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: isVideo
-                      ? const Color(0xFF388E3C).withOpacity(0.15)
-                      : Colors.green.withOpacity(0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  isVideo ? Icons.videocam_rounded : Icons.call_rounded,
-                  color: isVideo ? const Color(0xFF388E3C) : Colors.green,
-                  size: 32,
-                ),
+              // Avatar với icon loại call overlay
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: 84,
+                    height: 84,
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.08),
+                      shape: BoxShape.circle,
+                      image: (callerAvatar.isNotEmpty)
+                          ? DecorationImage(
+                              image: NetworkImage(callerAvatar),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
+                    ),
+                    child: (callerAvatar.isEmpty)
+                        ? Icon(
+                            isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                            color: Colors.green,
+                            size: 36,
+                          )
+                        : null,
+                  ),
+                  // Icon loại call ở góc dưới phải
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isVideo
+                            ? const Color(0xFF388E3C)
+                            : Colors.green,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                        color: Colors.white,
+                        size: 14,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
               Text(

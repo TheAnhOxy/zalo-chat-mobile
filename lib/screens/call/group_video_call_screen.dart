@@ -68,6 +68,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
+      _remoteRenderer.muted = false;
       setState(() => _remoteRenderer.srcObject = stream);
     };
     callService.onParticipantLeft = _onParticipantLeft;
@@ -596,22 +597,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              ),
+              const SizedBox(width: 38, height: 38),
               const Spacer(),
               Column(
                 children: [
