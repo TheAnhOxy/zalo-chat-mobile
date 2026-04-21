@@ -151,7 +151,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   children: [
                     _buildInput(
                       controller: _emailCtrl,
-                      hint: 'theanh199405023@gmail.com',
+                      hint: 'name@gmail.com',
                       label: 'Email tài khoản',
                       icon: Icons.email_outlined,
                       keyboardType: TextInputType.emailAddress,

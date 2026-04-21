@@ -101,6 +101,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
           result.user,
           token: result.tokens.accessToken,
           refreshToken: result.tokens.refreshToken,
+          accessExpiredAt: result.tokens.accessExpiredAt,
         );
         if (!mounted) return;
         Navigator.pushNamedAndRemoveUntil(

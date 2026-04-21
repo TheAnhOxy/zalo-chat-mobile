@@ -12,6 +12,7 @@ import '../widgets/call/incoming_call_overlay.dart';
 
 import '../screens/auth/otp_verify_screen.dart';
 import '../screens/auth/post_login_security_screen.dart';
+import '../screens/auth/login_challenge_waiting_screen.dart';
 import '../screens/setting/account_security_screen.dart';
 import '../screens/setting/device_sessions_screen.dart';
 import '../screens/setting/edit_profile_screen.dart';
@@ -51,6 +52,7 @@ class AppRouter {
   static const String forgotPassword = '/forgot-password';
   static const String otpVerify = '/otp-verify';
   static const String postLoginSecurity = '/post-login-security';
+  static const String loginChallengeWaiting = '/auth/login-challenge-waiting';
   static const String accountSecurity = '/settings/account-security';
   static const String deviceSessions = '/settings/device-sessions';
   static const String editProfile = '/settings/edit-profile';
@@ -82,6 +84,10 @@ class AppRouter {
       case postLoginSecurity:
         final args = settings.arguments as PostLoginSecurityArguments;
         return _fade(PostLoginSecurityScreen(args: args));
+
+      case loginChallengeWaiting:
+        final args = settings.arguments as LoginChallengeWaitingArguments;
+        return _fade(LoginChallengeWaitingScreen(args: args));
 
       case accountSecurity:
         return _fade(const AccountSecurityScreen());
