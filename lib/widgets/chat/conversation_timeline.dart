@@ -32,7 +32,7 @@ class ConversationTimeline extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final totalCount = items.length + (showTypingIndicator ? 1 : 0);
+    final totalCount = items.length + 1;
     final typingWidget =
         typingIndicatorBuilder ?? () => const ConversationTypingIndicator();
 
@@ -41,8 +41,30 @@ class ConversationTimeline extends StatelessWidget {
       padding: padding,
       itemCount: totalCount,
       itemBuilder: (_, index) {
-        if (showTypingIndicator && index == items.length) {
-          return typingWidget();
+        if (index == items.length) {
+          return AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 0.08),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: showTypingIndicator
+                ? KeyedSubtree(
+                    key: const ValueKey('typing_on'),
+                    child: typingWidget(),
+                  )
+                : const SizedBox(key: ValueKey('typing_off')),
+          );
         }
 
         final item = items[index];
