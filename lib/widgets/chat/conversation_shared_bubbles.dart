@@ -40,6 +40,7 @@ class ConversationCallBubble extends StatelessWidget {
   final CallModel call;
   final String? callerAvatar;
   final String? callerName;
+  final String? senderLabel;
   final bool showAvatar;
 
   const ConversationCallBubble({
@@ -47,6 +48,7 @@ class ConversationCallBubble extends StatelessWidget {
     required this.call,
     this.callerAvatar,
     this.callerName,
+    this.senderLabel,
     this.showAvatar = true,
   });
 
@@ -76,7 +78,7 @@ class ConversationCallBubble extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.only(
-        top: 6,
+        top: !isMe && showAvatar ? 8 : 6,
         bottom: 6,
         left: isMe ? 60 : 8,
         right: isMe ? 8 : 60,
@@ -128,6 +130,18 @@ class ConversationCallBubble extends StatelessWidget {
                   ? CrossAxisAlignment.end
                   : CrossAxisAlignment.start,
               children: [
+                if (!isMe && (senderLabel ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 4),
+                    child: Text(
+                      senderLabel!,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'Inter',
+                      ),
+                    ),
+                  ),
                 Container(
                   constraints: const BoxConstraints(maxWidth: 260),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

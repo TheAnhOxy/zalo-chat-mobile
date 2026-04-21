@@ -1453,6 +1453,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           call: call,
                           callerAvatar: _resolveMemberAvatar(call.callerId),
                           callerName: _resolveMemberFullName(call.callerId),
+                          senderLabel: _resolveMemberName(call.callerId),
                           showAvatar: _shouldShowAvatarAtIndex(index),
                         ),
                       ),

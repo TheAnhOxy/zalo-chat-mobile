@@ -52,6 +52,7 @@ class CommonMessageBubble extends StatelessWidget {
       onDoubleTap: onDoubleTap,
       child: Padding(
         padding: EdgeInsets.only(
+          top: !isMe && showAvatar ? 8 : 0,
           bottom: 6,
           left: isMe ? 50 : 8,
           right: isMe ? 8 : 50,
@@ -106,9 +107,9 @@ class CommonMessageBubble extends StatelessWidget {
                     ? CrossAxisAlignment.end
                     : CrossAxisAlignment.start,
                 children: [
-                  if (isGroup && !isMe && showAvatar && (senderLabel ?? '').isNotEmpty)
+                  if (isGroup && !isMe && (senderLabel ?? '').isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 2, left: 4),
+                      padding: const EdgeInsets.only(bottom: 4, left: 4),
                       child: Text(
                         senderLabel!,
                         style: const TextStyle(
