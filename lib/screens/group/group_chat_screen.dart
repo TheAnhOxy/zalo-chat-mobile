@@ -1,22 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:developer';
-import 'package:file_picker/file_picker.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/constants/app_colors.dart';
-import '../../core/utils/date_utils.dart' as du;
 import '../../core/utils/image_utils.dart';
 import '../../data/models/chat_item.dart';
 import '../../data/models/models.dart';
 import '../../services/api_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../services/auth_service.dart';
+import '../../controllers/chat_controller.dart';
+import '../../services/chat_media_service.dart';
 import '../../services/socket_service.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_options_screen.dart';
@@ -24,9 +24,11 @@ import '../call/group_voice_call_screen.dart';
 import '../call/group_video_call_screen.dart';
 import '../ai/ai_screen.dart';
 import '../../widgets/chat/conversation_composer_bar.dart';
+import '../../widgets/chat/common_message_bubble.dart';
 import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
-import '../../core/utils/thumbnail_helper.dart';
+import '../chat/video_player_screen.dart';
+import '../chat/forward_message_screen.dart';
 
 class GroupChatScreen extends StatefulWidget {
   final ApiGroupModel group;
@@ -40,19 +42,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final TextEditingController _textCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
-  final ImagePicker _imagePicker = ImagePicker();
   final AudioRecorder _voiceRecorder = AudioRecorder();
+  final ChatMediaService _chatMediaService = ChatMediaService();
+  late final ChatController _chatController;
 
   late ApiGroupModel _group;
-  List<MessageModel> _messages = [];
   List<CallModel> _calls = [];
   List<ChatItem> _chatItems = [];
   bool _isLoading = true;
   bool _isSending = false;
-  bool _isTyping = false;
-  bool _selfTypingEmitted = false;
-  Timer? _typingPulseTimer;
-  Timer? _typingIdleTimer;
   final Map<String, ApiUserModel> _memberProfiles = {};
   int _bgIndex = 0;
   String? _bgCustomBase64;
@@ -72,12 +70,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Timer? _voiceTimer;
   StreamSubscription<Amplitude>? _voiceAmplitudeSub;
   List<double> _voiceWave = List.filled(20, 0.2);
+  int _lastKnownMessageCount = 0;
+  bool _lastKnownTyping = false;
+
+  List<MessageModel> get _messages => _chatController.messages;
+  bool get _isTyping => _chatController.isPeerTyping;
 
   @override
   void initState() {
     super.initState();
     _group = widget.group;
+    _chatController = ChatController(
+      conversationId: _group.id,
+      currentUserId: authService.userId ?? '',
+    );
+    _chatController.addListener(_onChatControllerChanged);
     _textCtrl.addListener(_onTextInputChanged);
+    _chatController.attach();
     _loadBackgroundPref();
     _loadMemberProfiles();
     _initSocket();
@@ -94,8 +103,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       'conversation_call_updated',
       _handleConversationCallUpdated,
     );
-    socketService.on('typing', _handleTypingEvent);
-    socketService.on('stop_typing', _handleStopTypingEvent);
+  }
+
+  void _onChatControllerChanged() {
+    if (!mounted) return;
+
+    final hasNewMessage = _messages.length > _lastKnownMessageCount;
+    final typingStarted = _isTyping && !_lastKnownTyping;
+
+    _lastKnownMessageCount = _messages.length;
+    _lastKnownTyping = _isTyping;
+
+    _rebuildChatItems();
+    setState(() {});
+
+    if (hasNewMessage || typingStarted) {
+      _scrollToBottomBurst();
+    }
   }
 
   // ── Helpers để build GroupCallParticipant từ members ─────────────────────
@@ -165,68 +189,19 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _emitTypingEvent() {
-    final userId = authService.userId;
-    if (userId == null || userId.isEmpty) return;
-
-    socketService.emit('typing', {
-      'conversationId': _group.id,
-      'userId': userId,
-    });
-    _selfTypingEmitted = true;
+    _chatController.onTextChanged(_textCtrl.text);
   }
 
   void _emitStopTypingEvent() {
-    if (!_selfTypingEmitted) return;
-    final userId = authService.userId;
-    if (userId == null || userId.isEmpty) return;
-
-    socketService.emit('stop_typing', {
-      'conversationId': _group.id,
-      'userId': userId,
-    });
-    _selfTypingEmitted = false;
+    _chatController.onTextChanged('');
   }
 
   void _typingPulse() {
-    if (!mounted) return;
-    if (_textCtrl.text.trim().isEmpty) {
-      _typingPulseTimer = null;
-      return;
-    }
-    _emitTypingEvent();
-    _typingPulseTimer = Timer(const Duration(milliseconds: 2500), _typingPulse);
+    _chatController.onTextChanged(_textCtrl.text);
   }
 
   void _onTextInputChanged() {
-    if (!mounted) return;
-    setState(() {});
-
-    final text = _textCtrl.text.trim();
-    _typingIdleTimer?.cancel();
-
-    if (text.isEmpty) {
-      _typingPulseTimer?.cancel();
-      _typingPulseTimer = null;
-      _emitStopTypingEvent();
-      return;
-    }
-
-    if (!_selfTypingEmitted) {
-      _emitTypingEvent();
-    }
-
-    if (_typingPulseTimer == null || !_typingPulseTimer!.isActive) {
-      _typingPulseTimer = Timer(
-        const Duration(milliseconds: 2500),
-        _typingPulse,
-      );
-    }
-
-    _typingIdleTimer = Timer(const Duration(seconds: 2), () {
-      _typingPulseTimer?.cancel();
-      _typingPulseTimer = null;
-      _emitStopTypingEvent();
-    });
+    _chatController.onTextChanged(_textCtrl.text);
   }
 
   // ── Background loading (giữ nguyên) ──────────────────────────────────────
@@ -282,8 +257,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   @override
   void dispose() {
-    _typingPulseTimer?.cancel();
-    _typingIdleTimer?.cancel();
     _emitStopTypingEvent();
     _voiceTimer?.cancel();
     _voiceAmplitudeSub?.cancel();
@@ -293,11 +266,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       'conversation_call_updated',
       _handleConversationCallUpdated,
     );
-    socketService.off('typing', _handleTypingEvent);
-    socketService.off('stop_typing', _handleStopTypingEvent);
-    socketService.off('new_message', _handleNewMessageEvent);
     socketService.off('message_edited', _handleMessageUpdatedEvent);
-    socketService.off('message_recalled', _handleMessageUpdatedEvent);
+    socketService.off('message_recalled', _handleMessageRecalledEvent);
+    socketService.off('message_updated', _handleMessageUpdatedEvent);
+    socketService.off('message_deleted_me', _handleMessageRealtimeEvent);
+    socketService.off('message_deleted_for_me', _handleMessageRealtimeEvent);
+    socketService.off('message_deleted', _handleMessageRealtimeEvent);
+    _chatController.removeListener(_onChatControllerChanged);
+    _chatController.dispose();
     _textCtrl.removeListener(_onTextInputChanged);
     _textCtrl.dispose();
     _scrollCtrl.dispose();
@@ -306,10 +282,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _initSocket() {
+    log('🔌 [SOCKET] Initializing socket listeners for group ${_group.id}');
     socketService.joinConversation(_group.id);
-    socketService.on('new_message', _handleNewMessageEvent);
     socketService.on('message_edited', _handleMessageUpdatedEvent);
-    socketService.on('message_recalled', _handleMessageUpdatedEvent);
+    socketService.on('message_recalled', _handleMessageRecalledEvent);
+    socketService.on('message_updated', _handleMessageUpdatedEvent);
+    socketService.on('message_deleted_me', _handleMessageRealtimeEvent);
+    socketService.on('message_deleted_for_me', _handleMessageRealtimeEvent);
+    socketService.on('message_deleted', _handleMessageRealtimeEvent);
+    log('✅ [SOCKET] All listeners registered for group ${_group.id}');
   }
 
   void _emitSeenForLatest() {
@@ -336,14 +317,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       final calls = (results[1] as List<Map<String, dynamic>>)
           .map((e) => CallModel.fromJson(e))
           .toList();
+      _chatController.setMessages(messages);
+      _lastKnownMessageCount = messages.length;
+      _lastKnownTyping = _isTyping;
       setState(() {
-        _messages = messages;
         _calls = calls;
         _rebuildChatItems();
         _isLoading = false;
       });
-      _emitSeenForLatest();
-      _scrollToBottom(animated: false);
+      _chatController.markLatestSeen();
+      _scrollToBottomBurst(animated: false);
     } catch (_) {
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -351,17 +334,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _handleNewMessageEvent(dynamic data) {
-    final map = _tryMap(data);
-    if (map == null) return;
-    final messageMap = _extractMessageMap(map);
-    if (messageMap == null) return;
-    final msg = MessageModel.fromJson(messageMap);
-    if (msg.conversationId != _group.id) return;
-    setState(() {
-      _messages = _upsertMessage(_messages, msg);
-      _rebuildChatItems();
-    });
-    _emitSeenForLatest();
+    _chatController.handleNewMessage(data);
     _scrollToBottom();
   }
 
@@ -370,7 +343,138 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (map == null) return;
     final convId = map['conversationId']?.toString();
     if (convId != null && convId != _group.id) return;
-    _loadConversationData();
+    _handleMessageRealtimeEvent(data);
+  }
+
+  void _handleMessageRealtimeEvent(dynamic data) {
+    log('🔍 [REALTIME] Handling delete/update event');
+    final map = _tryMap(data);
+    if (map == null) {
+      log('🔍 [REALTIME] Map is null, returning');
+      return;
+    }
+
+    final nestedMessage = _tryMap(map['message']);
+    final convId =
+        map['conversationId']?.toString() ??
+        nestedMessage?['conversationId']?.toString();
+    log('🔍 [REALTIME] convId: $convId, _group.id: ${_group.id}');
+    if (convId != null && convId.isNotEmpty && convId != _group.id) {
+      log('🔍 [REALTIME] Conversation mismatch, returning');
+      return;
+    }
+
+    final messageId =
+        map['messageId']?.toString() ??
+        map['id']?.toString() ??
+        map['_id']?.toString() ??
+        nestedMessage?['id']?.toString() ??
+        nestedMessage?['_id']?.toString();
+    log('🔍 [REALTIME] messageId: $messageId');
+    if (messageId == null || messageId.isEmpty) {
+      log('🔍 [REALTIME] messageId is empty, returning');
+      return;
+    }
+
+    final currentUserId = authService.userId ?? '';
+    final deletedByRaw = map['deletedBy'] ?? nestedMessage?['deletedBy'];
+    if (deletedByRaw is List &&
+        currentUserId.isNotEmpty &&
+        deletedByRaw.map((e) => e.toString()).contains(currentUserId)) {
+      log('🔍 [REALTIME] Delete-for-me detected, removing message');
+      _chatController.removeMessageById(messageId);
+      return;
+    }
+
+    if (nestedMessage != null) {
+      try {
+        final updated = MessageModel.fromJson(nestedMessage);
+        log('🔍 [REALTIME] Parsed full message');
+        _chatController.updateMessageById(messageId, (_) => updated);
+        return;
+      } catch (e) {
+        log('🔍 [REALTIME] Failed to parse full message: $e, using lightweight merge');
+      }
+    }
+
+    final newContent = map['content']?.toString();
+    final newStatus = map['status']?.toString();
+    log('🔍 [REALTIME] Lightweight merge: content=$newContent, status=$newStatus');
+
+    _chatController.updateMessageById(messageId, (old) {
+      return MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: newContent ?? old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: newStatus ?? old.status,
+        isRecalled: old.isRecalled,
+        deletedBy: old.deletedBy,
+        reactions: old.reactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      );
+    });
+  }
+
+  void _handleMessageRecalledEvent(dynamic data) {
+    log('🔍 [RECALL] Handling message_recalled event');
+    final map = _tryMap(data);
+    if (map == null) {
+      log('🔍 [RECALL] Map is null');
+      return;
+    }
+
+    final convId = map['conversationId']?.toString();
+    if (convId != null && convId.isNotEmpty && convId != _group.id) {
+      log('🔍 [RECALL] Conversation mismatch: $convId vs ${_group.id}');
+      return;
+    }
+
+    // Check if message data is nested
+    final messageData = _tryMap(map['message']);
+    if (messageData != null) {
+      try {
+        final recalled = MessageModel.fromJson(messageData);
+        log('🔍 [RECALL] Parsed full message: isRecalled=${recalled.isRecalled}');
+        _chatController.updateMessageById(recalled.id, (_) => recalled);
+        return;
+      } catch (e) {
+        log('🔍 [RECALL] Failed to parse nested message: $e');
+      }
+    }
+
+    // Extract messageId
+    final messageId =
+        map['messageId']?.toString() ??
+        map['id']?.toString() ??
+        map['_id']?.toString();
+    if (messageId == null || messageId.isEmpty) {
+      log('🔍 [RECALL] No messageId found');
+      return;
+    }
+
+    log('🔍 [RECALL] Marking message $messageId as recalled');
+    _chatController.updateMessageById(messageId, (old) {
+      return MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: true,
+        deletedBy: old.deletedBy,
+        reactions: old.reactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      );
+    });
   }
 
   void _handleParticipantLeftEvent(dynamic data) {
@@ -410,32 +514,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _handleTypingEvent(dynamic data) {
-    final map = _tryMap(data);
-    if (map == null) return;
-    final conversationId = map['conversationId']?.toString() ?? '';
-    final userId = map['userId']?.toString() ?? '';
-    if (conversationId != _group.id ||
-        userId.isEmpty ||
-        userId == authService.userId) {
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _isTyping = true);
+    _chatController.handleTypingEvent(data);
     _scrollToBottom();
   }
 
   void _handleStopTypingEvent(dynamic data) {
-    final map = _tryMap(data);
-    if (map == null) return;
-    final conversationId = map['conversationId']?.toString() ?? '';
-    final userId = map['userId']?.toString() ?? '';
-    if (conversationId != _group.id ||
-        userId.isEmpty ||
-        userId == authService.userId) {
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _isTyping = false);
+    _chatController.handleStopTypingEvent(data);
   }
 
   Map<String, dynamic>? _tryMap(dynamic data) {
@@ -520,19 +604,36 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (_) {}
   }
 
-  void _scrollToBottom({bool animated = true}) {
+  void _scrollToBottom({bool animated = true, int retry = 0}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollCtrl.hasClients) return;
+      if (!_scrollCtrl.hasClients) {
+        if (retry < 8) {
+          Future.delayed(const Duration(milliseconds: 45), () {
+            _scrollToBottom(animated: animated, retry: retry + 1);
+          });
+        }
+        return;
+      }
       if (animated) {
         _scrollCtrl.animateTo(
           _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 280),
           curve: Curves.easeOut,
         );
       } else {
         _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
       }
     });
+  }
+
+  void _scrollToBottomBurst({bool animated = true}) {
+    _scrollToBottom(animated: animated);
+    for (final ms in const [90, 180, 320, 520]) {
+      Future.delayed(Duration(milliseconds: ms), () {
+        if (!mounted) return;
+        _scrollToBottom(animated: animated);
+      });
+    }
   }
 
   Future<void> _openOptions() async {
@@ -568,6 +669,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       _textCtrl.clear();
       _showEmoji = false;
     });
+    _scrollToBottomBurst();
   }
 
   String _formatClock(int totalSeconds) {
@@ -689,8 +791,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
-  Future<void> _uploadVoiceAndSend(String voicePath, int durationSec) async {
-    if (_isUploading) return;
+  Future<T?> _runMediaUpload<T>(Future<T> Function() action) async {
+    if (_isUploading) return null;
 
     setState(() {
       _isUploading = true;
@@ -698,295 +800,336 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
 
     try {
-      final bytes = await XFile(voicePath).readAsBytes();
-      if (bytes.isEmpty) throw Exception('Voice rỗng');
-
-      final fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-      final signed = await apiService.getPresignedUrl(fileName, 'audio/mpeg');
-      if (signed == null) throw Exception('Không lấy được presigned URL');
-
-      final uploadUrl = signed['uploadUrl']?.toString();
-      final fileUrl = signed['fileUrl']?.toString();
-      if (uploadUrl == null || uploadUrl.isEmpty) {
-        throw Exception('Thiếu uploadUrl');
+      return await action();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+          _uploadProgress = 0;
+        });
       }
-      if (fileUrl == null || fileUrl.isEmpty) throw Exception('Thiếu fileUrl');
+    }
+  }
 
-      final uploaded = await apiService.uploadFileToS3(
-        uploadUrl,
-        bytes,
-        'audio/mpeg',
-        onSendProgress: (sent, total) {
-          if (!mounted || total <= 0) return;
-          setState(() => _uploadProgress = sent / total);
+  Future<void> _uploadVoiceAndSend(String voicePath, int durationSec) async {
+    await _runMediaUpload(() async {
+      final uploaded = await _chatMediaService.uploadVoiceRecording(
+        voicePath,
+        durationSec,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress);
         },
       );
-
-      if (!uploaded) throw Exception('Upload voice thất bại');
 
       socketService.sendMessage({
         'conversationId': _group.id,
         'senderId': authService.userId!,
         'type': 'VOICE',
-        'content': fileUrl,
+        'content': uploaded.fileUrl,
         'metadata': {
           'duration': durationSec,
-          'fileName': fileName,
-          'fileSize': bytes.length,
+          'fileName': uploaded.fileName,
+          'fileSize': uploaded.fileSize,
         },
       });
-    } catch (e) {
-      log('❌ Upload voice thất bại: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Gửi tin nhắn thoại thất bại, vui lòng thử lại.'),
-        ),
-      );
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        _isUploading = false;
-        _uploadProgress = 0;
-      });
-    }
-  }
-
-  String _detectContentType(String fileName) {
-    final lower = fileName.toLowerCase();
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.gif')) return 'image/gif';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    if (lower.endsWith('.pdf')) return 'application/pdf';
-    if (lower.endsWith('.doc')) return 'application/msword';
-    if (lower.endsWith('.docx')) {
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    }
-    if (lower.endsWith('.xls')) return 'application/vnd.ms-excel';
-    if (lower.endsWith('.xlsx')) {
-      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    }
-    if (lower.endsWith('.zip')) return 'application/zip';
-    if (lower.endsWith('.txt')) return 'text/plain';
-    return 'application/octet-stream';
-  }
-
-  String _detectImageContentType(String fileName) {
-    final lower = fileName.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    return 'image/jpeg';
-  }
-
-  String _normalizeImageFileName(String fileName) {
-    final lower = fileName.toLowerCase();
-    if (lower.endsWith('.png')) return fileName;
-
-    final dot = fileName.lastIndexOf('.');
-    final baseName = dot > 0 ? fileName.substring(0, dot) : fileName;
-    return '$baseName.jpg';
-  }
-
-  Future<void> _uploadToS3AndSendMessage({
-    required Uint8List bytes,
-    required String fileName,
-    required int fileSize,
-    required String type,
-    required String contentType,
-  }) async {
-    if (_isUploading) return;
-    setState(() {
-      _isUploading = true;
-      _uploadProgress = 0;
+      _scrollToBottomBurst();
+      return null;
     });
-    try {
-      final fileUrl = await apiService.uploadFileAndGetUrl(
-        fileName: fileName,
-        bytes: bytes,
-        contentType: contentType,
-        onSendProgress: (sent, total) {
-          if (!mounted || total <= 0) return;
-          setState(() => _uploadProgress = sent / total);
+  }
+
+  Future<void> _pickAndSendImage() async {
+    await _runMediaUpload(() async {
+      final picked = await _chatMediaService.pickImage();
+      if (picked == null) return null;
+      final uploaded = await _chatMediaService.uploadPickedImage(
+        picked,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress);
         },
       );
-      if (fileUrl == null || fileUrl.isEmpty) {
-        throw Exception('Upload file thất bại');
-      }
 
       socketService.sendMessage({
         'conversationId': _group.id,
         'senderId': authService.userId!,
-        'type': type,
-        'content': fileUrl,
-        'metadata': {'fileName': fileName, 'fileSize': fileSize},
+        'type': 'IMAGE',
+        'content': uploaded.fileUrl,
+        'metadata': {
+          'fileName': uploaded.fileName,
+          'fileSize': uploaded.fileSize,
+        },
       });
-    } catch (e) {
-      log('❌ Upload file thất bại: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Tải file lên thất bại, vui lòng thử lại.'),
-          ),
-        );
-      }
-    } finally {
-      if (mounted)
-        setState(() {
-          _isUploading = false;
-          _uploadProgress = 0;
-        });
-    }
-  }
-
-  Future<void> _pickAndSendImage() async {
-    try {
-      final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
-      final rawFileName = picked.name.isNotEmpty
-          ? picked.name
-          : (picked.path.isNotEmpty
-                ? picked.path.split('/').last
-                : 'image.jpg');
-      final fileName = _normalizeImageFileName(rawFileName);
-      final contentType = _detectImageContentType(fileName);
-      await _uploadToS3AndSendMessage(
-        bytes: bytes,
-        fileName: fileName,
-        fileSize: bytes.length,
-        type: 'IMAGE',
-        contentType: contentType,
-      );
-    } catch (e) {
-      log('❌ Chọn ảnh thất bại: $e');
-    }
+      _scrollToBottomBurst();
+      return null;
+    });
   }
 
   Future<void> _pickAndSendFile() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(withData: true);
-      if (result == null || result.files.isEmpty) return;
-      final file = result.files.first;
-      Uint8List? bytes = file.bytes;
-      if (bytes == null && file.path != null)
-        bytes = await XFile(file.path!).readAsBytes();
-      if (bytes == null) throw Exception('Không đọc được dữ liệu file');
-      await _uploadToS3AndSendMessage(
-        bytes: bytes,
-        fileName: file.name,
-        fileSize: file.size,
-        type: 'FILE',
-        contentType: _detectContentType(file.name),
+    await _runMediaUpload(() async {
+      final file = await _chatMediaService.pickFile();
+      if (file == null) return null;
+      final uploaded = await _chatMediaService.uploadPickedFile(
+        file,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress);
+        },
       );
-    } catch (e) {
-      log('❌ Chọn file thất bại: $e');
-    }
-  }
 
-  String _safeFileExtension(String fileName, {String fallback = 'bin'}) {
-    final dot = fileName.lastIndexOf('.');
-    if (dot < 0 || dot == fileName.length - 1) return fallback;
-    return fileName.substring(dot + 1).toLowerCase();
-  }
-
-  Future<Uint8List?> _generateVideoThumbnail(
-    String videoPath,
-    Uint8List videoBytes,
-  ) async {
-    log('🎞 [Thumbnail] Generating... path=$videoPath');
-    final bytes = await generateVideoThumbnail(videoPath, videoBytes);
-    if (bytes != null) {
-      log('✅ [Thumbnail] OK (${bytes.length} bytes)');
-    } else {
-      log('⚠️ [Thumbnail] null');
-    }
-    return bytes;
+      socketService.sendMessage({
+        'conversationId': _group.id,
+        'senderId': authService.userId!,
+        'type': 'FILE',
+        'content': uploaded.fileUrl,
+        'metadata': {
+          'fileName': uploaded.fileName,
+          'fileSize': uploaded.fileSize,
+        },
+      });
+      _scrollToBottomBurst();
+      return null;
+    });
   }
 
   Future<void> _pickAndSendVideo() async {
-    if (_isUploading) return;
-    try {
-      final picked = await _imagePicker.pickVideo(source: ImageSource.gallery);
-      if (picked == null) return;
-      final videoBytes = await picked.readAsBytes();
-      if (videoBytes.isEmpty) throw Exception('Video rỗng');
-
-      setState(() {
-        _isUploading = true;
-        _uploadProgress = 0;
-      });
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final videoExt = _safeFileExtension(picked.name, fallback: 'mp4');
-      final videoFileName = picked.name.isNotEmpty
-          ? picked.name
-          : 'video_$now.$videoExt';
-      final thumbnailBytes = await _generateVideoThumbnail(
-        picked.path,
-        videoBytes,
-      );
-
-      String? thumbnailUrl;
-      if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
-        final thumbnailFileName = 'video_thumb_$now.jpg';
-        thumbnailUrl = await apiService.uploadFileAndGetUrl(
-          fileName: thumbnailFileName,
-          bytes: thumbnailBytes,
-          contentType: 'image/jpeg',
-          onSendProgress: (sent, total) {
-            if (!mounted || total <= 0) return;
-            setState(() => _uploadProgress = (sent / total) * 0.3);
-          },
-        );
-      }
-
-      final videoProgressStart = thumbnailUrl != null ? 0.3 : 0.0;
-      final videoUrl = await apiService.uploadFileAndGetUrl(
-        fileName: videoFileName,
-        bytes: videoBytes,
-        contentType: 'video/mp4',
-        onSendProgress: (sent, total) {
-          if (!mounted || total <= 0) return;
-          setState(
-            () => _uploadProgress =
-                videoProgressStart + (sent / total) * (1 - videoProgressStart),
-          );
+    await _runMediaUpload(() async {
+      final picked = await _chatMediaService.pickVideo();
+      if (picked == null) return null;
+      final uploaded = await _chatMediaService.uploadPickedVideo(
+        picked,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress);
         },
       );
-      if (videoUrl == null || videoUrl.isEmpty)
-        throw Exception('Upload video thất bại');
 
       socketService.sendMessage({
         'conversationId': _group.id,
         'senderId': authService.userId!,
         'type': 'VIDEO',
-        'content': videoUrl,
+        'content': uploaded.fileUrl,
         'metadata': {
-          'fileName': videoFileName,
-          'fileSize': videoBytes.length,
-          if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
-          if (thumbnailUrl != null) 'thumbnail': thumbnailUrl,
+          'fileName': uploaded.fileName,
+          'fileSize': uploaded.fileSize,
+          if (uploaded.thumbnailUrl != null) 'thumbnailUrl': uploaded.thumbnailUrl,
+          if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
         },
       });
 
-      if (!mounted) return;
+      if (!mounted) return null;
       setState(() => _uploadProgress = 1);
-    } catch (e) {
-      log('❌ Gửi video thất bại: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Gửi video thất bại, vui lòng thử lại.'),
+      _scrollToBottomBurst();
+      return null;
+    });
+  }
+
+  void _openImageViewer(MessageModel msg) {
+    if (!msg.isImage) return;
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.pop(context),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            child: Center(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 3,
+                child: Image.network(msg.content, fit: BoxFit.contain),
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadFile(MessageModel msg) async {
+    if (msg.type != 'FILE') return;
+    try {
+      final uri = Uri.parse(msg.content);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Không thể mở file đính kèm.')),
         );
       }
-    } finally {
-      if (mounted)
-        setState(() {
-          _isUploading = false;
-          _uploadProgress = 0;
-        });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lỗi khi mở file đính kèm.')),
+      );
     }
+  }
+
+  void _openVideoPlayer(MessageModel msg) {
+    if (msg.type != 'VIDEO' || msg.content.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(
+          videoUrl: msg.content,
+          title: msg.metadata?.fileName ?? 'Video',
+        ),
+      ),
+    );
+  }
+
+  void _addReaction(MessageModel msg, String type) {
+    final me = authService.userId ?? '';
+    if (me.isEmpty) return;
+
+    _chatController.updateMessageById(msg.id, (old) {
+      final nextReactions = old.reactions.where((r) => r.userId != me).toList()
+        ..add(Reaction(userId: me, type: type));
+      return MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: old.isRecalled,
+        deletedBy: old.deletedBy,
+        reactions: nextReactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      );
+    });
+
+    socketService.sendReaction(msg.id, me, type, _group.id);
+  }
+
+  void _deleteMessageForMe(MessageModel msg) {
+    socketService.deleteMessageMe(msg.id, authService.userId ?? '');
+    _chatController.removeMessageById(msg.id);
+    _rebuildChatItems();
+    if (mounted) setState(() {});
+  }
+
+  void _recallMessage(MessageModel msg) {
+    socketService.recallMessage(msg.id, _group.id);
+    _chatController.updateMessageById(msg.id, (old) {
+      return MessageModel(
+        id: old.id,
+        conversationId: old.conversationId,
+        senderId: old.senderId,
+        type: old.type,
+        content: old.content,
+        metadata: old.metadata,
+        replyToId: old.replyToId,
+        status: old.status,
+        isRecalled: true,
+        deletedBy: old.deletedBy,
+        reactions: old.reactions,
+        seenBy: old.seenBy,
+        createdAt: old.createdAt,
+      );
+    });
+  }
+
+  void _showMessageActions(MessageModel msg) {
+    HapticFeedback.mediumImpact();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      showDragHandle: true,
+      builder: (sheetContext) {
+        const reactions = [
+          ('LIKE', '👍'),
+          ('LOVE', '❤️'),
+          ('HAHA', '😂'),
+          ('WOW', '😮'),
+          ('SAD', '😢'),
+          ('ANGRY', '😠'),
+        ];
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: reactions.map((item) {
+                  return InkResponse(
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _addReaction(msg, item.$1);
+                    },
+                    radius: 28,
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: Text(item.$2, style: const TextStyle(fontSize: 30)),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(
+                  Icons.forward_to_inbox_outlined,
+                  color: AppColors.textPrimary,
+                  size: 22,
+                ),
+                title: const Text(
+                  'Chuyển tiếp',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ForwardMessageScreen(message: msg),
+                    ),
+                  );
+                },
+              ),
+              if (msg.senderId == authService.userId && !msg.isRecalled)
+                ListTile(
+                  leading: const Icon(Icons.undo, color: AppColors.error, size: 22),
+                  title: const Text(
+                    'Thu hồi',
+                    style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _recallMessage(msg);
+                  },
+                ),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline,
+                  color: AppColors.error,
+                  size: 22,
+                ),
+                title: const Text(
+                  'Xóa phía tôi',
+                  style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _deleteMessageForMe(msg);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildVoiceRecordingBar() {
@@ -1236,10 +1379,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         ),
                         messageBuilder: (msg, _) {
                           final isMe = msg.senderId == authService.userId;
-                          return _GroupMessageBubble(
+                          return CommonMessageBubble(
                             msg: msg,
                             isMe: isMe,
-                            senderLabel: _resolveMemberName(msg.senderId),
+                            isGroup: true,
+                            senderLabel: isMe
+                                ? null
+                                : _resolveMemberName(msg.senderId),
+                            onLongPress: () {
+                              _showMessageActions(msg);
+                            },
+                            onDoubleTap: () {
+                              _addReaction(msg, 'LIKE');
+                            },
+                            onImageTap: () => _openImageViewer(msg),
+                            onFileTap: () => _downloadFile(msg),
+                            onVideoTap: () => _openVideoPlayer(msg),
                           );
                         },
                         callBuilder: (call) =>
@@ -1561,77 +1716,6 @@ class _EmptyChat extends StatelessWidget {
                 fontSize: 14,
                 color: AppColors.textSecondary,
                 height: 1.5,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _GroupMessageBubble extends StatelessWidget {
-  final MessageModel msg;
-  final bool isMe;
-  final String senderLabel;
-
-  const _GroupMessageBubble({
-    required this.msg,
-    required this.isMe,
-    required this.senderLabel,
-  });
-
-  String _previewContent() {
-    final type = msg.type.toUpperCase();
-    if (type == 'IMAGE') return '[Ảnh]';
-    if (type == 'VIDEO') return '[Video]';
-    if (type == 'FILE') return '[File]';
-    return msg.content;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: EdgeInsets.only(
-          top: 4,
-          bottom: 4,
-          left: isMe ? 56 : 0,
-          right: isMe ? 0 : 56,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: isMe ? AppColors.primary : AppColors.bubbleOther,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!isMe)
-              Text(
-                senderLabel,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textSecondary,
-                  fontFamily: 'Inter',
-                ),
-              ),
-            Text(
-              _previewContent(),
-              style: TextStyle(
-                color: isMe ? Colors.white : AppColors.bubbleOtherText,
-                fontSize: 14,
-                fontFamily: 'Inter',
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              du.DateUtils.formatMessageTime(msg.createdAt),
-              style: TextStyle(
-                fontSize: 10,
-                color: isMe ? Colors.white70 : AppColors.textHint,
-                fontFamily: 'Inter',
               ),
             ),
           ],
