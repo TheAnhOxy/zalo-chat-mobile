@@ -132,20 +132,51 @@ class ConversationCallBubble extends StatelessWidget {
   }
 }
 
-class _DotAnimation extends StatelessWidget {
+class _DotAnimation extends StatefulWidget {
   final int delay;
 
   const _DotAnimation({required this.delay});
 
   @override
+  State<_DotAnimation> createState() => _DotAnimationState();
+}
+
+class _DotAnimationState extends State<_DotAnimation>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _value;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _value = Tween<double>(begin: 0.35, end: 1).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+
+    Future.delayed(Duration(milliseconds: widget.delay), () {
+      if (!mounted) return;
+      _controller.repeat(reverse: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0.35, end: 1),
-        duration: Duration(milliseconds: 700 + delay),
-        curve: Curves.easeInOut,
-        builder: (context, value, child) {
+      child: AnimatedBuilder(
+        animation: _value,
+        builder: (context, child) {
+          final value = _value.value;
           return Opacity(
             opacity: value,
             child: Transform.translate(
