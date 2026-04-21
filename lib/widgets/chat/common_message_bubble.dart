@@ -14,6 +14,7 @@ class CommonMessageBubble extends StatelessWidget {
   final String? senderLabel;
   final String? senderAvatar;
   final String? senderName;
+  final bool showAvatar;
   final bool showSeenLabel;
   final MessageModel? replyToMsg;
   final VoidCallback? onLongPress;
@@ -31,6 +32,7 @@ class CommonMessageBubble extends StatelessWidget {
     this.senderLabel,
     this.senderAvatar,
     this.senderName,
+    this.showAvatar = true,
     this.showSeenLabel = false,
     this.replyToMsg,
     this.onLongPress,
@@ -60,39 +62,41 @@ class CommonMessageBubble extends StatelessWidget {
               : MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            if (!isMe && (senderAvatar ?? '').isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(right: 8, bottom: 2),
-                child: ClipOval(
-                  child: Image.network(
-                    senderAvatar!,
-                    width: 32,
-                    height: 32,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 32,
-                      height: 32,
-                      decoration: const BoxDecoration(
-                        color: AppColors.bgCardLight,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text(
-                          (senderName ?? 'U').isNotEmpty
-                              ? (senderName ?? 'U')[0].toUpperCase()
-                              : 'U',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textSecondary,
-                            fontFamily: 'Inter',
+            if (!isMe)
+              (showAvatar && (senderAvatar ?? '').isNotEmpty)
+                  ? Padding(
+                      padding: const EdgeInsets.only(right: 8, bottom: 2),
+                      child: ClipOval(
+                        child: Image.network(
+                          senderAvatar!,
+                          width: 32,
+                          height: 32,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 32,
+                            height: 32,
+                            decoration: const BoxDecoration(
+                              color: AppColors.bgCardLight,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                (senderName ?? 'U').isNotEmpty
+                                    ? (senderName ?? 'U')[0].toUpperCase()
+                                    : 'U',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color.fromARGB(255, 43, 44, 44),
+                                  fontFamily: 'Inter',
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-              ),
+                    )
+                  : const SizedBox(width: 40),
             ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.68,
@@ -102,7 +106,7 @@ class CommonMessageBubble extends StatelessWidget {
                     ? CrossAxisAlignment.end
                     : CrossAxisAlignment.start,
                 children: [
-                  if (isGroup && !isMe && (senderLabel ?? '').isNotEmpty)
+                  if (isGroup && !isMe && showAvatar && (senderLabel ?? '').isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2, left: 4),
                       child: Text(

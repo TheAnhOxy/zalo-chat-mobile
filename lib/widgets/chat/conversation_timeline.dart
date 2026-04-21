@@ -12,7 +12,7 @@ class ConversationTimeline extends StatelessWidget {
   final bool showTypingIndicator;
   final EdgeInsets padding;
   final Widget Function(MessageModel message, int index) messageBuilder;
-  final Widget Function(CallModel call) callBuilder;
+  final Widget Function(CallModel call, int index) callBuilder;
   final Widget Function()? typingIndicatorBuilder;
 
   const ConversationTimeline({
@@ -80,7 +80,7 @@ class ConversationTimeline extends StatelessWidget {
                 label: du.DateUtils.formatDateSeparator(item.createdAt),
               ),
             if (item.type == ChatItemType.call)
-              callBuilder(item.call!)
+              callBuilder(item.call!, index)
             else
               messageBuilder(item.message!, index),
           ],

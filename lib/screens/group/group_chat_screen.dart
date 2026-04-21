@@ -39,6 +39,8 @@ class GroupChatScreen extends StatefulWidget {
 }
 
 class _GroupChatScreenState extends State<GroupChatScreen> {
+  static const Duration _avatarClusterWindow = Duration(minutes: 30);
+
   final TextEditingController _textCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
@@ -165,6 +167,33 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (userId == authService.userId) return null;
     final profile = _memberProfiles[userId];
     return profile?.fullName;
+  }
+
+  String? _senderIdForChatItem(ChatItem item) {
+    if (item.type == ChatItemType.call) {
+      return item.call?.callerId.toString();
+    }
+    return item.message?.senderId.toString();
+  }
+
+  bool _shouldShowAvatarAtIndex(int index) {
+    if (index < 0 || index >= _chatItems.length) return false;
+
+    final current = _chatItems[index];
+    final currentSender = _senderIdForChatItem(current);
+    final currentUserId = authService.userId?.toString() ?? '';
+    if (currentSender == null || currentSender.isEmpty || currentSender == currentUserId) {
+      return false;
+    }
+
+    if (index == _chatItems.length - 1) return true;
+
+    final next = _chatItems[index + 1];
+    final nextSender = _senderIdForChatItem(next);
+    if (nextSender != currentSender) return true;
+
+    final gap = next.createdAt.difference(current.createdAt).abs();
+    return gap > _avatarClusterWindow;
   }
 
   void _startVoiceCall() {
@@ -1389,7 +1418,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           horizontal: 12,
                           vertical: 12,
                         ),
-                        messageBuilder: (msg, _) {
+                        messageBuilder: (msg, index) {
                           final isMe = msg.senderId == authService.userId;
                           return CommonMessageBubble(
                             msg: msg,
@@ -1404,6 +1433,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             senderName: isMe
                                 ? null
                                 : _resolveMemberFullName(msg.senderId),
+                            showAvatar: _shouldShowAvatarAtIndex(index),
                             onLongPress: () {
                               _showMessageActions(msg);
                             },
@@ -1415,8 +1445,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             onVideoTap: () => _openVideoPlayer(msg),
                           );
                         },
-                        callBuilder: (call) =>
-                            ConversationCallBubble(call: call),
+                        callBuilder: (call, index) => ConversationCallBubble(
+                          call: call,
+                          callerAvatar: _resolveMemberAvatar(call.callerId),
+                          callerName: _resolveMemberFullName(call.callerId),
+                          showAvatar: _shouldShowAvatarAtIndex(index),
+                        ),
                       ),
               ),
             ),

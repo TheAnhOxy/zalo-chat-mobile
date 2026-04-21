@@ -44,6 +44,8 @@ class ChatDetailScreen extends StatefulWidget {
 }
 
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
+  static const Duration _avatarClusterWindow = Duration(minutes: 30);
+
   final _textCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _focusNode = FocusNode();
@@ -1376,8 +1378,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           vertical: 8,
                         ),
                         messageBuilder: _buildMessageBubble,
-                        callBuilder: (call) =>
-                            ConversationCallBubble(call: call),
+                        callBuilder: (call, index) {
+                          final isMe = call.callerId.toString() == authService.userId.toString();
+                          return ConversationCallBubble(
+                            call: call,
+                            callerAvatar: !isMe ? widget.otherUser?.avatar : null,
+                            callerName: !isMe ? widget.otherUser?.fullName : null,
+                            showAvatar: _shouldShowAvatarAtIndex(index),
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -1405,6 +1414,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   Widget _buildMessageBubble(MessageModel msg, int i) {
     final lastOutgoingMessageId = _lastOutgoingMessageId();
     final isCurrentUserMessage = msg.senderId.toString() == authService.userId.toString();
+    final showAvatar = _shouldShowAvatarAtIndex(i);
 
     return CommonMessageBubble(
       msg: msg,
@@ -1412,6 +1422,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       isGroup: false,
       senderAvatar: !isCurrentUserMessage ? widget.otherUser?.avatar : null,
       senderName: !isCurrentUserMessage ? widget.otherUser?.fullName : null,
+      showAvatar: showAvatar,
       showSeenLabel: msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
       replyToMsg: msg.replyToId != null
           ? _messages.firstWhere(
@@ -1434,8 +1445,40 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
+  String? _senderIdForChatItem(ChatItem item) {
+    if (item.type == ChatItemType.call) {
+      return item.call?.callerId.toString();
+    }
+    return item.message?.senderId.toString();
+  }
+
+  bool _shouldShowAvatarAtIndex(int index) {
+    if (index < 0 || index >= _chatItems.length) return false;
+
+    final current = _chatItems[index];
+    final currentSender = _senderIdForChatItem(current);
+    final currentUserId = authService.userId?.toString() ?? '';
+    if (currentSender == null || currentSender.isEmpty || currentSender == currentUserId) {
+      return false;
+    }
+
+    if (index == _chatItems.length - 1) return true;
+
+    final next = _chatItems[index + 1];
+    final nextSender = _senderIdForChatItem(next);
+    if (nextSender != currentSender) return true;
+
+    final gap = next.createdAt.difference(current.createdAt).abs();
+    return gap > _avatarClusterWindow;
+  }
+
   Widget _buildCallBubble(CallModel call) {
-    return ConversationCallBubble(call: call);
+    final isMe = call.callerId.toString() == authService.userId.toString();
+    return ConversationCallBubble(
+      call: call,
+      callerAvatar: !isMe ? widget.otherUser?.avatar : null,
+      callerName: !isMe ? widget.otherUser?.fullName : null,
+    );
   }
 
   Widget _buildTypingIndicator() {
