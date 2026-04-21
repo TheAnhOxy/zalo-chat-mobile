@@ -93,10 +93,11 @@ class ApiService {
           ? Map<String, dynamic>.from(errorMapRaw)
           : <String, dynamic>{};
 
-      code =
-          (errorMap['code'] ?? map['code'] ?? '').toString().trim().toUpperCase();
-      message =
-          (errorMap['message'] ?? map['message'] ?? '').toString().trim();
+      code = (errorMap['code'] ?? map['code'] ?? '')
+          .toString()
+          .trim()
+          .toUpperCase();
+      message = (errorMap['message'] ?? map['message'] ?? '').toString().trim();
     }
 
     if (code == 'SESSION_REVOKED') return true;
@@ -265,9 +266,10 @@ class ApiService {
   /// [userId] là tham số bắt buộc để Backend lọc bỏ các tin nhắn người dùng đã nhấn "Xóa phía tôi"
   Future<List<MessageModel>> getMessages(
     String conversationId,
-    String userId,
-    {int limit = 50, int skip = 0}
-  ) async {
+    String userId, {
+    int limit = 50,
+    int skip = 0,
+  }) async {
     try {
       final response = await _dio.get(
         '$baseUrl/messages/conversation/$conversationId',
@@ -381,11 +383,6 @@ class ApiService {
       if (normalizedFileName.isEmpty || normalizedContentType.isEmpty) {
         throw ArgumentError('fileName/contentType không được rỗng');
       }
-      if (!normalizedContentType.startsWith('audio/')) {
-        throw ArgumentError(
-          'upload/presigned-url chỉ hỗ trợ audio/*, hiện tại là $normalizedContentType',
-        );
-      }
 
       final response = await _dio.get(
         '$baseUrl/upload/presigned-url',
@@ -432,9 +429,7 @@ class ApiService {
         presignedUrl,
         data: fileBytes,
         options: Options(
-          headers: {
-            'Content-Type': contentType,
-          },
+          headers: {'Content-Type': contentType},
           contentType: contentType,
         ),
         onSendProgress: onSendProgress,
@@ -457,10 +452,7 @@ class ApiService {
   }) async {
     try {
       final formData = FormData.fromMap({
-        'file': MultipartFile.fromBytes(
-          bytes,
-          filename: fileName,
-        ),
+        'file': MultipartFile.fromBytes(bytes, filename: fileName),
       });
 
       final response = await _dio.post(
