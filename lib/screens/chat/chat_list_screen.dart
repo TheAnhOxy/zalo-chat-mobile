@@ -285,6 +285,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
         if (index == -1) return;
 
         final conv = _conversations[index];
+        final senderId =
+            lastMsgMap['senderId']?.toString() ??
+            map['senderId']?.toString() ??
+            conv.lastMessage?.senderId ??
+            '';
         final updatedConv = ConversationModel(
           id: conv.id,
           type: conv.type,
@@ -297,7 +302,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           lastMessage: LastMessagePreview(
             messageId: '',
             content: lastMsgMap['content']?.toString() ?? '',
-            senderId: lastMsgMap['senderId']?.toString() ?? '',
+            senderId: senderId,
             createdAt:
                 DateTime.tryParse(lastMsgMap['createdAt']?.toString() ?? '') ??
                 DateTime.now(),
