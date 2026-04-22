@@ -73,7 +73,11 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
         _pendingRemoteStream = stream;
         return;
       }
-      setState(() => _remoteRenderer.srcObject = stream);
+      setState(() {
+        _remoteRenderer
+          ..srcObject = stream
+          ..muted = false;
+      });
     };
     callService.onParticipantLeft = _onParticipantLeft;
     callService.onCallStarted = _onCallStarted;
@@ -94,6 +98,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     final remote = _pendingRemoteStream ?? callService.remoteStream;
     if (remote != null) {
       _remoteRenderer.srcObject = remote;
+      _remoteRenderer.muted = false;
       _pendingRemoteStream = null;
     }
 
@@ -398,6 +403,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
       final latestRemote = callService.remoteStream;
       if (latestRemote != null) {
         _remoteRenderer.srcObject = latestRemote;
+        _remoteRenderer.muted = false;
       }
     }
 
