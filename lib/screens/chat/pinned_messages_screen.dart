@@ -29,6 +29,7 @@ class PinnedMessagesScreen extends StatefulWidget {
 
 class _PinnedMessagesScreenState extends State<PinnedMessagesScreen> {
   List<MessageModel> _items = const [];
+  bool _actionBusy = false;
 
   @override
   void initState() {
@@ -109,12 +110,89 @@ class _PinnedMessagesScreenState extends State<PinnedMessagesScreen> {
     );
   }
 
+  String _senderName(MessageModel msg) {
+    final name = widget.memberNames[msg.senderId]?.trim() ?? '';
+    if (name.isNotEmpty) return name;
+    return 'Người dùng';
+  }
+
+  Future<void> _openPinnedActions(MessageModel msg) async {
+    if (_actionBusy) return;
+    final sender = _senderName(msg);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: false,
+      builder: (ctx) {
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                  child: Text(
+                    'Tin nhắn của $sender',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
+                    ),
+                  ),
+                ),
+                const Divider(height: 1, color: Color(0xFFEEEEEE)),
+                _ActionTile(
+                  label: 'Xóa khỏi bảng tin nhắn ghim',
+                  onTap: () async {
+                    if (_actionBusy) return;
+                    setState(() => _actionBusy = true);
+                    Navigator.pop(ctx);
+                    try {
+                      await widget.controller.unpinMessage(msg.id);
+                      await widget.controller.loadPinnedMessages(
+                        replaceExisting: true,
+                      );
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Đã bỏ ghim tin nhắn',
+                            style: TextStyle(fontFamily: 'Inter', color: Colors.white),
+                          ),
+                          backgroundColor: AppColors.primary,
+                          behavior: SnackBarBehavior.floating,
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    } finally {
+                      if (mounted) setState(() => _actionBusy = false);
+                    }
+                  },
+                ),
+                const SizedBox(height: 6),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bgDark,
       appBar: AppBar(
-        backgroundColor: AppColors.bgDark,
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         elevation: 0,
         title: Text(
@@ -169,7 +247,7 @@ class _PinnedMessagesScreenState extends State<PinnedMessagesScreen> {
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        widget.memberNames[msg.senderId] ?? 'Người dùng',
+                                        _senderName(msg),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
@@ -236,13 +314,16 @@ class _PinnedMessagesScreenState extends State<PinnedMessagesScreen> {
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: Icon(
-                              Icons.chevron_right_rounded,
-                              color: AppColors.textHint,
-                              size: 24,
+                          const SizedBox(width: 6),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: IconButton(
+                              onPressed: _actionBusy ? null : () => _openPinnedActions(msg),
+                              icon: const Icon(
+                                Icons.more_horiz_rounded,
+                                color: AppColors.textHint,
+                              ),
+                              tooltip: 'Tùy chọn',
                             ),
                           ),
                         ],
@@ -252,6 +333,31 @@ class _PinnedMessagesScreenState extends State<PinnedMessagesScreen> {
                 },
               ),
             ),
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _ActionTile({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            fontSize: 15,
+            color: Colors.black,
+          ),
+        ),
+      ),
     );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'dart:async';
 import '../../core/constants/app_colors.dart';
 import '../../data/models/models.dart';
 import '../../services/api_service.dart';
@@ -33,22 +35,50 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
   final List<MessageModel> _media = [];
   final List<MessageModel> _files = [];
   final List<_LinkItem> _links = [];
+  final List<MessageModel> _voices = [];
   final Set<String> _seenLinkUrls = {};
 
   final ScrollController _scrollCtrl = ScrollController();
 
+  // Voice player (1 player dùng chung)
+  final AudioPlayer _voicePlayer = AudioPlayer();
+  StreamSubscription<Duration>? _voicePosSub;
+  StreamSubscription<Duration>? _voiceDurSub;
+  StreamSubscription<PlayerState>? _voiceStateSub;
+  Duration _voicePos = Duration.zero;
+  Duration _voiceDur = Duration.zero;
+  PlayerState _voiceState = PlayerState.stopped;
+  String? _playingMessageId;
+
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 3, vsync: this);
+    _tabCtrl = TabController(length: 4, vsync: this);
     _scrollCtrl.addListener(_onScroll);
     _loadFirst();
+
+    _voicePosSub = _voicePlayer.onPositionChanged.listen((p) {
+      if (!mounted) return;
+      setState(() => _voicePos = p);
+    });
+    _voiceDurSub = _voicePlayer.onDurationChanged.listen((d) {
+      if (!mounted) return;
+      setState(() => _voiceDur = d);
+    });
+    _voiceStateSub = _voicePlayer.onPlayerStateChanged.listen((s) {
+      if (!mounted) return;
+      setState(() => _voiceState = s);
+    });
   }
 
   @override
   void dispose() {
     _scrollCtrl.dispose();
     _tabCtrl.dispose();
+    _voicePosSub?.cancel();
+    _voiceDurSub?.cancel();
+    _voiceStateSub?.cancel();
+    _voicePlayer.dispose();
     super.dispose();
   }
 
@@ -70,6 +100,7 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
       _media.clear();
       _files.clear();
       _links.clear();
+      _voices.clear();
       _seenLinkUrls.clear();
     });
     await _loadMore();
@@ -135,6 +166,10 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
         _files.add(m);
         continue;
       }
+      if (t == 'VOICE') {
+        if (m.content.trim().isNotEmpty) _voices.add(m);
+        continue;
+      }
       if (t == 'TEXT') {
         final found = _extractUrls(m.content);
         for (final u in found) {
@@ -161,6 +196,51 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
     final uri = Uri.tryParse(url);
     if (uri == null) return;
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  String _fmtClock(Duration d) {
+    final total = d.inSeconds.clamp(0, 24 * 3600);
+    final m = (total ~/ 60).toString();
+    final s = (total % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  Duration _voiceTotalFor(MessageModel m) {
+    final sec = m.metadata?.duration;
+    if (sec != null && sec > 0) return Duration(seconds: sec);
+    return _voiceDur;
+  }
+
+  Future<void> _toggleVoice(MessageModel m) async {
+    final url = m.content.trim();
+    if (url.isEmpty) return;
+    try {
+      final isSame = _playingMessageId == m.id;
+      final isPlaying = _voiceState == PlayerState.playing;
+      if (isSame && isPlaying) {
+        await _voicePlayer.pause();
+        return;
+      }
+      if (!isSame) {
+        _playingMessageId = m.id;
+        _voicePos = Duration.zero;
+        _voiceDur = Duration.zero;
+        await _voicePlayer.stop();
+        await _voicePlayer.setSourceUrl(url);
+      }
+      await _voicePlayer.resume();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không phát được tin nhắn thoại.')),
+      );
+    }
+  }
+
+  Future<void> _seekVoice(Duration target) async {
+    try {
+      await _voicePlayer.seek(target);
+    } catch (_) {}
   }
 
   String _fileLabel(MessageModel m) {
@@ -238,6 +318,7 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
             Tab(text: 'Ảnh/Video'),
             Tab(text: 'File'),
             Tab(text: 'Link'),
+            Tab(text: 'Thoại'),
           ],
         ),
         actions: [
@@ -258,6 +339,7 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
                 _buildMediaTab(),
                 _buildFilesTab(),
                 _buildLinksTab(),
+                _buildVoicesTab(),
               ],
             ),
     );
@@ -431,6 +513,103 @@ class _GroupMediaScreenState extends State<GroupMediaScreen>
             ),
           ),
           onTap: () => _openUrl(item.url),
+        );
+      },
+    );
+  }
+
+  Widget _buildVoicesTab() {
+    if (_voices.isEmpty && !_loadingMore) {
+      return _empty('Chưa có tin nhắn thoại trong nhóm này.');
+    }
+    return ListView.separated(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _voices.length + 1,
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, color: AppColors.divider),
+      itemBuilder: (_, i) {
+        if (i == _voices.length) return _buildLoadingMore();
+        final m = _voices[i];
+        final isCurrent = _playingMessageId == m.id;
+        final total = _voiceTotalFor(m);
+        final pos = isCurrent ? _voicePos : Duration.zero;
+        final maxSec = total.inSeconds > 0 ? total.inSeconds : 1;
+        final value = (pos.inSeconds.clamp(0, maxSec)).toDouble();
+        final isPlaying = isCurrent && _voiceState == PlayerState.playing;
+
+        return ListTile(
+          leading: InkWell(
+            onTap: () => _toggleVoice(m),
+            borderRadius: BorderRadius.circular(99),
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+          title: const Text(
+            'Tin nhắn thoại',
+            style: TextStyle(
+              fontFamily: 'Inter',
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3,
+                  thumbShape:
+                      const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape:
+                      const RoundSliderOverlayShape(overlayRadius: 10),
+                ),
+                child: Slider(
+                  min: 0,
+                  max: maxSec.toDouble(),
+                  value: value,
+                  onChanged: isCurrent
+                      ? (v) => _seekVoice(Duration(seconds: v.toInt()))
+                      : null,
+                  activeColor: AppColors.primary,
+                  inactiveColor: AppColors.border,
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _fmtClock(pos),
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      color: AppColors.textHint,
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    _fmtClock(total),
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      color: AppColors.textHint,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          onTap: () => _toggleVoice(m),
         );
       },
     );
