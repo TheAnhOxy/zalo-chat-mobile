@@ -11,7 +11,6 @@ import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
 import '../group/group_chat_screen.dart';
 import '../ai/ai_screen.dart';
-import '../../widgets/story/story_list_widget.dart';
 import 'dart:developer';
 
 class ChatListScreen extends StatefulWidget {
@@ -888,7 +887,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: [
                           _buildAiCard(),
-                          _buildStoryRow(),
 
                           if (filteredConversations.isEmpty)
                             _buildEmptyState()
@@ -1125,14 +1123,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  Widget _buildStoryRow() {
-    return const Column(
-      children: [
-        StoryListWidget(),
-        SizedBox(height: 12),
-      ],
-    );
-  }
 
   Widget _buildConvTile(ConversationModel c) {
     final name = _getDisplayName(c);
