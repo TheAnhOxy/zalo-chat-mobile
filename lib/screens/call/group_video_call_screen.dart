@@ -79,6 +79,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
           ..muted = false;
       });
     };
+    callService.onParticipantJoined = _onParticipantJoined;
     callService.onParticipantLeft = _onParticipantLeft;
     callService.onCallStarted = _onCallStarted;
     _init();
@@ -115,11 +116,24 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
         _startTimer();
         _scheduleHideControls();
       }
-      setState(() {
-        for (final p in _participants) p.isConnected = true;
-      });
     }
     if (state == CallState.ended) _onCallEnded();
+  }
+
+  void _onParticipantJoined(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final userId = data['userId']?.toString() ?? '';
+    if (userId.isEmpty) return;
+
+    final myId = authService.userId;
+    if (myId != null && userId == myId) return;
+
+    final idx = _participants.indexWhere((p) => p.userId == userId);
+    if (idx >= 0) {
+      setState(() {
+        _participants[idx].isConnected = true;
+      });
+    }
   }
 
   // ✅ Đồng bộ timer từ server
@@ -209,6 +223,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     _remoteRenderer.dispose();
     callService.removeStateListener(_onCallStateChanged);
     callService.onRemoteStream = null;
+    callService.onParticipantJoined = null;
     callService.onParticipantLeft = null;
     callService.onCallStarted = null;
     super.dispose();
@@ -532,6 +547,9 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
 
   /// Hàng nhỏ hiển thị avatar của các participant (khi đã connected).
   Widget _buildParticipantsStrip() {
+    final connected = _participants.where((p) => p.isConnected).toList();
+    if (connected.isEmpty) return const SizedBox.shrink();
+
     return Positioned(
       bottom: 140,
       left: 0,
@@ -544,10 +562,10 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _participants.length,
+            itemCount: connected.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (_, i) {
-              final p = _participants[i];
+              final p = connected[i];
               return Column(
                 children: [
                   Stack(
@@ -794,7 +812,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
         ),
         _VideoBtn(
           icon: Icons.people_outline_rounded,
-          label: '${_participants.length + 1} người',
+          label: '${_participants.where((p) => p.isConnected).length + 1} người',
           onTap: () {},
         ),
       ],

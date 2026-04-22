@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
 import '../../data/models/models.dart';
 import '../../screens/call/voice_call_screen.dart';
@@ -68,14 +70,52 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     final callerAvatar = data['callerAvatar']?.toString() ?? '';
     final groupName = data['groupName']?.toString() ?? '';
     final groupAvatar = data['groupAvatar']?.toString();
-    final participants = ((data['participants'] as List?) ?? [])
+    final rawParticipantIds = ((data['participants'] as List?) ?? [])
         .map((item) => item?.toString() ?? '')
         .where((userId) => userId.isNotEmpty)
-        .map(
-          (userId) =>
-              GroupCallParticipant(userId: userId, name: '', avatar: null),
-        )
         .toList();
+
+    final myId = authService.userId;
+    final me = authService.currentUser;
+
+    final participantSet = LinkedHashSet<String>();
+    if (callerId.isNotEmpty) participantSet.add(callerId);
+    participantSet.addAll(rawParticipantIds);
+    if (myId != null && myId.isNotEmpty) participantSet.remove(myId);
+    final participantIds = participantSet.toList();
+
+    final profiles = participantIds.isEmpty
+      ? <String, ApiUserModel>{}
+      : await ContactsApiService.instance.fetchUsersByIds(participantIds);
+
+    final participants = participantIds.map((userId) {
+      final profile = profiles[userId];
+      final isMe = myId != null && userId == myId;
+
+      final fallbackName = isMe
+          ? ((me?.fullName.trim().isNotEmpty ?? false) ? me!.fullName : 'Bạn')
+          : 'Thành viên';
+
+      final resolvedName =
+          (profile?.fullName.trim().isNotEmpty ?? false)
+          ? profile!.fullName
+          : fallbackName;
+
+      final fallbackAvatar =
+          isMe && (me?.avatar.trim().isNotEmpty ?? false) ? me!.avatar : null;
+
+      final resolvedAvatar =
+          (profile?.avatar.trim().isNotEmpty ?? false)
+          ? profile!.avatar
+          : fallbackAvatar;
+
+      return GroupCallParticipant(
+        userId: userId,
+        name: resolvedName,
+        avatar: resolvedAvatar,
+        isConnected: userId == callerId,
+      );
+    }).toList();
 
     final callerUser = UserModel(
       id: callerId,

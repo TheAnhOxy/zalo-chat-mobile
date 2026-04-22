@@ -111,6 +111,7 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
       _remoteRenderer.muted = false;
     };
     callService.addStateListener(_onCallStateChanged);
+    callService.onParticipantJoined = _onParticipantJoined;
     callService.onParticipantLeft = _onParticipantLeft;
     callService.onCallStarted = _onCallStarted;
     _init();
@@ -125,15 +126,24 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
         _callWasConnected = true;
         _startTimer();
       }
-      // Đánh dấu tất cả participants là đã kết nối (đơn giản hoá — backend
-      // có thể push event chi tiết hơn nếu cần).
-      setState(() {
-        for (final p in _participants) {
-          p.isConnected = true;
-        }
-      });
     }
     if (state == CallState.ended) _onCallEnded();
+  }
+
+  void _onParticipantJoined(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final userId = data['userId']?.toString() ?? '';
+    if (userId.isEmpty) return;
+
+    final myId = authService.userId;
+    if (myId != null && userId == myId) return;
+
+    final idx = _participants.indexWhere((p) => p.userId == userId);
+    if (idx >= 0) {
+      setState(() {
+        _participants[idx].isConnected = true;
+      });
+    }
   }
 
   // ✅ Xử lý khi có người rời khỏi cuộc gọi nhóm
@@ -233,6 +243,7 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
     _timer?.cancel();
     callService.removeStateListener(_onCallStateChanged);
     callService.onRemoteStream = null;
+    callService.onParticipantJoined = null;
     callService.onParticipantLeft = null;
     callService.onCallStarted = null;
     super.dispose();
@@ -488,15 +499,18 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
 
   /// Grid hiển thị avatar của từng participant.
   Widget _buildParticipantsGrid() {
-    // Thêm bản thân vào đầu danh sách hiển thị.
-    final me = GroupCallParticipant(
-      userId: authService.userId ?? '',
-      name: authService.currentUser?.fullName ?? 'Bạn',
-      avatar: authService.currentUser?.avatar,
-      isConnected: true,
-      isMuted: _isMuted,
-    );
-    final all = [me, ..._participants];
+    final connected = _participants.where((p) => p.isConnected).toList();
+
+    if (connected.isEmpty) {
+      return Text(
+        'Đang chờ thành viên tham gia...',
+        style: TextStyle(
+          color: Colors.white.withOpacity(0.65),
+          fontSize: 13,
+          fontFamily: 'Inter',
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -504,7 +518,7 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
         spacing: 16,
         runSpacing: 16,
         alignment: WrapAlignment.center,
-        children: all.map((p) => _ParticipantTile(participant: p)).toList(),
+        children: connected.map((p) => _ParticipantTile(participant: p)).toList(),
       ),
     );
   }

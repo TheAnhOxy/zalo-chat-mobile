@@ -7,6 +7,7 @@ import 'auth_service.dart';
 enum CallState { idle, calling, incoming, connected, ended }
 
 typedef IncomingCallData = void Function(Map<String, dynamic> data);
+typedef ParticipantJoinedData = void Function(Map<String, dynamic> data);
 typedef ParticipantLeftData = void Function(Map<String, dynamic> data);
 typedef CallStartedData = void Function(Map<String, dynamic> data);
 
@@ -42,6 +43,7 @@ class CallService {
 
   final List<void Function(CallState)> _stateListeners = [];
   IncomingCallData? onIncomingCall;
+  ParticipantJoinedData? onParticipantJoined;
   ParticipantLeftData? onParticipantLeft;
   CallStartedData? onCallStarted;
   void Function(MediaStream)? onRemoteStream;
@@ -117,7 +119,9 @@ class CallService {
     socketService.off('call_ended');
     socketService.off('call_rejected');
     socketService.off('call_created'); // ✅ thêm
+    socketService.off('participant_joined'); // ✅ thêm
     socketService.off('participant_left'); // ✅ thêm
+    socketService.off('active_participants'); // ✅ thêm
     socketService.off('call_started'); // ✅ thêm
 
     socketService.on('incoming_call', (data) {
@@ -253,11 +257,32 @@ class CallService {
       _setState(CallState.ended);
     });
 
+    socketService.on('participant_joined', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      dev.log(
+        '👥 Participant joined: ${map['userId']}, Total: ${map['activeParticipantsCount']}',
+      );
+      onParticipantJoined?.call(map);
+    });
+
     // ✅ Xử lý khi 1 người rời khỏi cuộc gọi nhóm (call vẫn tiếp tục nếu còn 2+ người)
     socketService.on('participant_left', (data) {
       final map = Map<String, dynamic>.from(data as Map);
       dev.log('👤 Participant left: ${map['userId']}, Remaining: ${map['activeParticipantsCount']}');
       onParticipantLeft?.call(map);
+    });
+
+    socketService.on('active_participants', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final ids = ((map['activeParticipants'] as List?) ?? [])
+          .map((id) => id?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      for (final id in ids) {
+        if (id == authService.userId) continue;
+        onParticipantJoined?.call({'userId': id});
+      }
     });
     // ✅ Đồng bộ thời gian cuộc gọi từ server
     socketService.on('call_started', (data) {
@@ -765,7 +790,9 @@ class CallService {
     socketService.off('call_ended');
     socketService.off('call_rejected');
     socketService.off('call_created');
+    socketService.off('participant_joined');
     socketService.off('participant_left');
+    socketService.off('active_participants');
     socketService.off('call_started');
     _cleanUp();
   }
