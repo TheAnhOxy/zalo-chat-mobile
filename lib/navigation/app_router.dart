@@ -24,6 +24,9 @@ import '../screens/contacts/birthday_screen.dart';
 import '../screens/contacts/send_friend_request_screen.dart';
 import '../screens/contacts/qr_scan_screen.dart';
 import '../services/contacts_api_service.dart';
+import '../data/models/story_model.dart';
+import '../screens/story/create_story_screen.dart';
+import '../screens/story/story_viewer_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppRouter — Tập trung tất cả route vào 1 chỗ
@@ -63,6 +66,8 @@ class AppRouter {
   static const String friendRequests = '/contacts/friend-requests';
   static const String birthday = '/contacts/birthday';
   static const String qrScan = '/contacts/qr-scan';
+  static const String createStory = '/create-story';
+  static const String storyViewer = '/story-viewer';
 
   // ── Route Generator ─────────────────────────────────────────
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -162,6 +167,19 @@ class AppRouter {
         return _slide(
           GroupDetailScreen(
             conversation: args['conversation'] as ConversationModel,
+          ),
+        );
+
+      // ── Story ─────────────────────────────────────────────────
+      case createStory:
+        return _slide(const CreateStoryScreen());
+        
+      case storyViewer:
+        final args = settings.arguments as Map<String, dynamic>;
+        return _fullscreen(
+          StoryViewerScreen(
+            stories: args['stories'] as List<ApiStoryModel>,
+            initialIndex: args['initialIndex'] as int? ?? 0,
           ),
         );
 

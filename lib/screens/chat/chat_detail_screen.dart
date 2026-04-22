@@ -9,6 +9,7 @@ import '../../core/constants/app_colors.dart';
 import '../../data/models/models.dart';
 import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
+import '../../services/contacts_api_service.dart';
 import '../../controllers/chat_controller.dart';
 import '../../services/chat_media_service.dart';
 import '../../services/socket_service.dart';
@@ -27,6 +28,8 @@ import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
 import '../../widgets/chat/conversation_voice_recording_bar.dart';
 import '../ai/ai_screen.dart';
+import 'pinned_messages_screen.dart';
+import '../group/group_options_screen.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -75,6 +78,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   int _lastKnownMessageCount = 0;
   bool _lastKnownTyping = false;
   String? _lastEmittedSeenMessageId;
+  String? _highlightedMessageId;
 
   List<MessageModel> get _messages => _chatController.messages;
   bool get _isTyping => _chatController.isPeerTyping;
@@ -124,6 +128,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _chatController = ChatController(
       conversationId: widget.conversationId,
       currentUserId: authService.userId ?? '',
+      initialPinnedMessageIds: widget.conversation.pinnedMessageIds,
+      initialPinnedMessages: widget.conversation.pinnedMessages,
+      scrollController: _scrollCtrl,
+      fetchMessagesAround: _fetchMessagesAroundTarget,
+      onJumpCompleted: _flashMessageHighlight,
+      estimateItemHeight: _estimateMessageItemHeight,
     );
     _chatController.addListener(_onChatControllerChanged);
     _textCtrl.addListener(_onTextInputChanged);
@@ -158,18 +168,71 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _chatController.onTextChanged(_textCtrl.text);
   }
 
+  double _estimateMessageItemHeight(MessageModel message) {
+    if (message.type == 'SYSTEM') return 44;
+    if (message.isImage || message.type == 'VIDEO') return 260;
+    if (message.type == 'FILE') return 128;
+    if (message.type == 'VOICE') return 112;
+    final chars = message.content.length;
+    if (chars <= 60) return 92;
+    if (chars <= 180) return 120;
+    return 150;
+  }
+
+  Future<List<MessageModel>> _fetchMessagesAroundTarget(
+    String messageId,
+  ) async {
+    final uid = authService.userId;
+    if (uid == null || uid.isEmpty) return const [];
+
+    const limit = 50;
+    for (var page = 0; page < 12; page++) {
+      final skip = page * limit;
+      final chunk = await apiService.getMessages(
+        widget.conversationId,
+        uid,
+        limit: limit,
+        skip: skip,
+      );
+      if (chunk.isEmpty) break;
+      if (chunk.any((m) => m.id == messageId)) {
+        return chunk;
+      }
+    }
+    return const [];
+  }
+
+  void _flashMessageHighlight(String messageId) {
+    if (!mounted) return;
+    setState(() => _highlightedMessageId = messageId);
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      if (!mounted) return;
+      if (_highlightedMessageId == messageId) {
+        setState(() => _highlightedMessageId = null);
+      }
+    });
+  }
+
   Future<void> _loadData() async {
     try {
       final results = await Future.wait<dynamic>([
         apiService.getMessages(widget.conversationId, authService.userId!),
         apiService.getCalls(widget.conversationId),
+        ContactsApiService.instance.fetchConversationRaw(widget.conversationId),
       ]);
 
-        final msgs = _normalizeMessages(results[0] as List<MessageModel>);
+      final msgs = _normalizeMessages(results[0] as List<MessageModel>);
       final calls = (results[1] as List<Map<String, dynamic>>)
           .map((e) => CallModel.fromJson(e))
           .toList();
-        final items =
+      final rawConversation =
+          results[2] as ContactsResult<Map<String, dynamic>>;
+      if (rawConversation.isSuccess) {
+        await _syncPinnedStateFromConversationRaw(
+          rawConversation.data ?? const <String, dynamic>{},
+        );
+      }
+      final items =
           <ChatItem>[...msgs.map(ChatItem.message), ...calls.map(ChatItem.call)]
             ..sort((a, b) {
               final cmp = a.createdAt.compareTo(b.createdAt);
@@ -196,6 +259,33 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     } catch (e) {
       log('❌ Lỗi tải: $e');
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _syncPinnedStateFromConversationRaw(
+    Map<String, dynamic> raw,
+  ) async {
+    final candidates = <Map<String, dynamic>>[
+      raw,
+      if (_tryMap(raw['conversation']) != null) _tryMap(raw['conversation'])!,
+      if (_tryMap(raw['data']) != null) _tryMap(raw['data'])!,
+    ];
+
+    for (final candidate in candidates) {
+      final cid = (candidate['_id'] ?? candidate['id'])?.toString() ?? '';
+      final hasPinnedFields =
+          candidate.containsKey('pinnedMessageIds') ||
+          candidate.containsKey('pinnedMessages');
+      if (!hasPinnedFields && cid != widget.conversationId) continue;
+
+      try {
+        final conversation = ConversationModel.fromJson(candidate);
+        await _chatController.initializePinnedState(
+          seedPinnedMessageIds: conversation.pinnedMessageIds,
+          seedPinnedMessages: conversation.pinnedMessages,
+        );
+        return;
+      } catch (_) {}
     }
   }
 
@@ -1040,8 +1130,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           'metadata': {
             'fileName': uploaded.fileName,
             'fileSize': uploaded.fileSize,
-            if (uploaded.thumbnailUrl != null) 'thumbnailUrl': uploaded.thumbnailUrl,
-            if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
+            if (uploaded.thumbnailUrl != null)
+              'thumbnailUrl': uploaded.thumbnailUrl,
+            if (uploaded.thumbnailUrl != null)
+              'thumbnail': uploaded.thumbnailUrl,
           },
         });
 
@@ -1205,7 +1297,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.auto_awesome, color: AppColors.primary),
+                leading: const Icon(
+                  Icons.auto_awesome,
+                  color: AppColors.primary,
+                ),
                 title: const Text('Trợ lý AI'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1218,10 +1313,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       height: MediaQuery.of(context).size.height * 0.92,
                       decoration: const BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(20),
+                        ),
                       ),
                       child: const ClipRRect(
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(16),
+                        ),
                         child: AiScreen(),
                       ),
                     ),
@@ -1229,7 +1328,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.camera_alt_rounded,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Chụp ảnh'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1237,7 +1339,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.image_rounded, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.image_rounded,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Chọn ảnh'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1245,7 +1350,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.attach_file, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.attach_file,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Đính kèm file'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1253,7 +1361,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.videocam_outlined, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.videocam_outlined,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Gửi video'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1403,11 +1514,132 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     }
   }
 
+  String _peerNameForOptions() {
+    final peerName = widget.otherUser?.fullName.trim() ?? '';
+    if (peerName.isNotEmpty) return peerName;
+    final convName = widget.conversation.name?.trim() ?? '';
+    if (convName.isNotEmpty) return convName;
+    return 'Người dùng';
+  }
+
+  ApiGroupModel _buildOptionsGroupModel() {
+    return ApiGroupModel(
+      id: widget.conversationId,
+      name: _peerNameForOptions(),
+      avatar: widget.otherUser?.avatar ?? (widget.conversation.avatar ?? ''),
+      members: widget.conversation.members
+          .map((m) => ApiGroupMember(userId: m.userId, role: m.role))
+          .toList(),
+      description: null,
+      lastMessageContent: widget.conversation.lastMessage?.content,
+      lastMessageAt: widget.conversation.lastMessage?.createdAt,
+      updatedAt: widget.conversation.updatedAt,
+    );
+  }
+
+  Future<void> _openOptions() async {
+    final result = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatOptionsScreen(
+          group: _buildOptionsGroupModel(),
+          isGroup: false,
+          peerName: _peerNameForOptions(),
+          chatController: _chatController,
+          memberNames: {
+            authService.userId ?? '': authService.currentUser?.displayName ?? 'Tôi',
+            widget.otherUser?.id ?? '': _peerNameForOptions(),
+          },
+          memberAvatars: {
+            authService.userId ?? '': authService.currentUser?.avatar ?? '',
+            widget.otherUser?.id ?? '': widget.conversation.avatar ?? '',
+          },
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (result != null && result.isNotEmpty) {
+      _chatController.jumpToMessage(result);
+    }
+  }
+
+  bool _isPinSystemMessage(MessageModel msg) {
+    final content = msg.content.trim();
+    if (content.isEmpty) return false;
+    if (content.startsWith('PIN_MESSAGE|')) return true;
+    if (content.startsWith('UNPIN_MESSAGE|')) return true;
+    if (content.contains('Bạn đã ghim một tin nhắn')) return true;
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.contains('ghim')) {
+      return true;
+    }
+    return false;
+  }
+
+  String _pinSystemDisplayText(MessageModel msg) {
+    final content = msg.content.trim();
+    if (content.startsWith('PIN_MESSAGE|')) return 'Đã ghim một tin nhắn';
+    if (content.startsWith('UNPIN_MESSAGE|')) return 'Đã bỏ ghim một tin nhắn';
+    return content;
+  }
+
+  Future<void> _openPinnedMessages() async {
+    final selectedMessageId = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PinnedMessagesScreen(
+          controller: _chatController,
+          chatTitle: _peerNameForOptions(),
+          chatAvatar: widget.conversation.avatar,
+          memberNames: {
+            authService.userId ?? '': authService.currentUser?.displayName ?? 'Tôi',
+            widget.otherUser?.id ?? '': _peerNameForOptions(),
+          },
+          memberAvatars: {
+            authService.userId ?? '': authService.currentUser?.avatar ?? '',
+            widget.otherUser?.id ?? '': widget.conversation.avatar ?? '',
+          },
+        ),
+      ),
+    );
+    if (selectedMessageId == null || selectedMessageId.isEmpty) return;
+    await _chatController.jumpToMessage(selectedMessageId);
+  }
+
+  Widget _buildPinSystemLine(MessageModel msg) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            _pinSystemDisplayText(msg),
+            style: const TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 12,
+              color: AppColors.textHint,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: _openPinnedMessages,
+            child: const Text(
+              'Xem tất cả',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 12,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final title = widget.otherUser?.fullName.isNotEmpty == true
-        ? widget.otherUser!.fullName
-        : 'Người dùng';
+    final title = _peerNameForOptions();
 
     return Scaffold(
       backgroundColor: AppColors.bgDark,
@@ -1426,7 +1658,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               onVoiceCallTap: _startVoiceCall,
               onVideoCallTap: _startVideoCall,
               onAppearanceTap: _showAppearanceSheet,
-              onInfoTap: () {},
+              onInfoTap: _openOptions,
             ),
           ),
 
@@ -1456,11 +1688,17 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         ),
                         messageBuilder: _buildMessageBubble,
                         callBuilder: (call, index) {
-                          final isMe = call.callerId.toString() == authService.userId.toString();
+                          final isMe =
+                              call.callerId.toString() ==
+                              authService.userId.toString();
                           return ConversationCallBubble(
                             call: call,
-                            callerAvatar: !isMe ? widget.otherUser?.avatar : null,
-                            callerName: !isMe ? widget.otherUser?.fullName : null,
+                            callerAvatar: !isMe
+                                ? widget.otherUser?.avatar
+                                : null,
+                            callerName: !isMe
+                                ? widget.otherUser?.fullName
+                                : null,
                             showAvatar: _shouldShowAvatarAtIndex(index),
                           );
                         },
@@ -1489,8 +1727,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Widget _buildMessageBubble(MessageModel msg, int i) {
+    if (_isPinSystemMessage(msg)) {
+      return _buildPinSystemLine(msg);
+    }
+
     final lastOutgoingMessageId = _lastOutgoingMessageId();
-    final isCurrentUserMessage = msg.senderId.toString() == authService.userId.toString();
+    final isCurrentUserMessage =
+        msg.senderId.toString() == authService.userId.toString();
     final showAvatar = _shouldShowAvatarAtIndex(i);
 
     return CommonMessageBubble(
@@ -1519,6 +1762,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       onImageTap: () => _openImageViewer(msg),
       onFileTap: () => _downloadFile(msg),
       onVideoTap: () => _openVideoPlayer(msg),
+      isPinned:
+          _chatController.isPinnedStateReady &&
+          _chatController.isMessagePinned(msg.id),
+      isHighlighted: _highlightedMessageId == msg.id,
     );
   }
 
@@ -1535,7 +1782,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final current = _chatItems[index];
     final currentSender = _senderIdForChatItem(current);
     final currentUserId = authService.userId?.toString() ?? '';
-    if (currentSender == null || currentSender.isEmpty || currentSender == currentUserId) {
+    if (currentSender == null ||
+        currentSender.isEmpty ||
+        currentSender == currentUserId) {
       return false;
     }
 
@@ -1716,11 +1965,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           onTap: _showComposerActionsSheet,
         ),
         ConversationComposerAction(
-          icon: Icons.camera_alt_rounded,
-          onTap: _pickAndSendImage,
-          enabled: !_isUploading,
-        ),
-        ConversationComposerAction(
           icon: Icons.image_rounded,
           onTap: _pickAndSendImage,
           enabled: !_isUploading,
@@ -1728,16 +1972,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ConversationComposerAction(
           icon: Icons.mic_none_rounded,
           onLongPressStart: _isUploading ? null : (_) => _startVoiceRecording(),
-          enabled: !_isUploading,
-        ),
-        ConversationComposerAction(
-          icon: Icons.attach_file,
-          onTap: _pickAndSendFile,
-          enabled: !_isUploading,
-        ),
-        ConversationComposerAction(
-          icon: Icons.videocam_outlined,
-          onTap: _pickAndSendVideo,
           enabled: !_isUploading,
         ),
       ],
@@ -1791,6 +2025,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   void _showMessageActions(MessageModel msg) {
     final isMe = msg.senderId == authService.userId;
+    final isPinned = _chatController.isMessagePinned(msg.id);
     HapticFeedback.mediumImpact();
     showModalBottomSheet(
       context: context,
@@ -1872,6 +2107,36 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     _recallMessage(msg);
                   },
                 ),
+              ListTile(
+                leading: const Icon(
+                  Icons.push_pin_outlined,
+                  color: AppColors.textPrimary,
+                  size: 22,
+                ),
+                title: Text(
+                  isPinned ? 'Bỏ ghim' : 'Ghim',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  final nowPinned = await _chatController.togglePinMessage(
+                    msg.id,
+                  );
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        nowPinned ? 'Đã ghim tin nhắn' : 'Đã bỏ ghim tin nhắn',
+                      ),
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
               ListTile(
                 leading: const Icon(
                   Icons.forward_to_inbox_outlined,

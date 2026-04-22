@@ -10,6 +10,7 @@ import '../../widgets/common/common_widgets.dart';
 import 'chat_detail_screen.dart';
 import '../group/group_chat_screen.dart';
 import '../ai/ai_screen.dart';
+import '../../widgets/story/story_list_widget.dart';
 import 'dart:developer';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -901,7 +902,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _buildStoryRow() {
-    return const SizedBox(height: 12); // Tạm thu nhỏ vì story đang dùng mock cũ
+    return const Column(
+      children: [
+        StoryListWidget(),
+        SizedBox(height: 12),
+      ],
+    );
   }
 
   Widget _buildConvTile(ConversationModel c) {

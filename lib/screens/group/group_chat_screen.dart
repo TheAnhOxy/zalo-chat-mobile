@@ -29,6 +29,7 @@ import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
 import '../chat/video_player_screen.dart';
 import '../chat/forward_message_screen.dart';
+import '../chat/pinned_messages_screen.dart';
 
 class GroupChatScreen extends StatefulWidget {
   final ApiGroupModel group;
@@ -74,6 +75,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   List<double> _voiceWave = List.filled(20, 0.2);
   int _lastKnownMessageCount = 0;
   bool _lastKnownTyping = false;
+  String? _highlightedMessageId;
 
   List<MessageModel> get _messages => _chatController.messages;
   bool get _isTyping => _chatController.isPeerTyping;
@@ -85,6 +87,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _chatController = ChatController(
       conversationId: _group.id,
       currentUserId: authService.userId ?? '',
+      initialPinnedMessageIds: const <String>[],
+      scrollController: _scrollCtrl,
+      fetchMessagesAround: _fetchMessagesAroundTarget,
+      onJumpCompleted: _flashMessageHighlight,
+      estimateItemHeight: _estimateMessageItemHeight,
     );
     _chatController.addListener(_onChatControllerChanged);
     _textCtrl.addListener(_onTextInputChanged);
@@ -186,7 +193,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final current = _chatItems[index];
     final currentSender = _senderIdForChatItem(current);
     final currentUserId = authService.userId?.toString() ?? '';
-    if (currentSender == null || currentSender.isEmpty || currentSender == currentUserId) {
+    if (currentSender == null ||
+        currentSender.isEmpty ||
+        currentSender == currentUserId) {
       return false;
     }
 
@@ -362,12 +371,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       final results = await Future.wait<dynamic>([
         apiService.getMessages(_group.id, myId),
         apiService.getCalls(_group.id),
+        ContactsApiService.instance.fetchConversationRaw(_group.id),
       ]);
       if (!mounted) return;
       final messages = _normalizeMessages(results[0] as List<MessageModel>);
       final calls = (results[1] as List<Map<String, dynamic>>)
           .map((e) => CallModel.fromJson(e))
           .toList();
+      final rawConversation =
+          results[2] as ContactsResult<Map<String, dynamic>>;
+      if (rawConversation.isSuccess) {
+        await _syncPinnedStateFromConversationRaw(
+          rawConversation.data ?? const <String, dynamic>{},
+        );
+      }
       _chatController.setMessages(messages);
       _lastKnownMessageCount = messages.length;
       _lastKnownTyping = _isTyping;
@@ -381,6 +398,33 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _syncPinnedStateFromConversationRaw(
+    Map<String, dynamic> raw,
+  ) async {
+    final candidates = <Map<String, dynamic>>[
+      raw,
+      if (_tryMap(raw['conversation']) != null) _tryMap(raw['conversation'])!,
+      if (_tryMap(raw['data']) != null) _tryMap(raw['data'])!,
+    ];
+
+    for (final candidate in candidates) {
+      final cid = (candidate['_id'] ?? candidate['id'])?.toString() ?? '';
+      final hasPinnedFields =
+          candidate.containsKey('pinnedMessageIds') ||
+          candidate.containsKey('pinnedMessages');
+      if (!hasPinnedFields && cid != _group.id) continue;
+
+      try {
+        final conversation = ConversationModel.fromJson(candidate);
+        await _chatController.initializePinnedState(
+          seedPinnedMessageIds: conversation.pinnedMessageIds,
+          seedPinnedMessages: conversation.pinnedMessages,
+        );
+        return;
+      } catch (_) {}
     }
   }
 
@@ -463,13 +507,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         _chatController.updateMessageById(messageId, (_) => updated);
         return;
       } catch (e) {
-        log('🔍 [REALTIME] Failed to parse full message: $e, using lightweight merge');
+        log(
+          '🔍 [REALTIME] Failed to parse full message: $e, using lightweight merge',
+        );
       }
     }
 
     final newContent = map['content']?.toString();
     final newStatus = map['status']?.toString();
-    log('🔍 [REALTIME] Lightweight merge: content=$newContent, status=$newStatus');
+    log(
+      '🔍 [REALTIME] Lightweight merge: content=$newContent, status=$newStatus',
+    );
 
     _chatController.updateMessageById(messageId, (old) {
       return MessageModel(
@@ -509,7 +557,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (messageData != null) {
       try {
         final recalled = MessageModel.fromJson(messageData);
-        log('🔍 [RECALL] Parsed full message: isRecalled=${recalled.isRecalled}');
+        log(
+          '🔍 [RECALL] Parsed full message: isRecalled=${recalled.isRecalled}',
+        );
         _chatController.updateMessageById(recalled.id, (_) => recalled);
         return;
       } catch (e) {
@@ -706,16 +756,140 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  double _estimateMessageItemHeight(MessageModel message) {
+    if (message.type == 'SYSTEM') return 44;
+    if (message.isImage || message.type == 'VIDEO') return 260;
+    if (message.type == 'FILE') return 128;
+    if (message.type == 'VOICE') return 112;
+    final chars = message.content.length;
+    if (chars <= 60) return 92;
+    if (chars <= 180) return 120;
+    return 150;
+  }
+
+  Future<List<MessageModel>> _fetchMessagesAroundTarget(
+    String messageId,
+  ) async {
+    final myId = authService.userId;
+    if (myId == null || myId.isEmpty) return const [];
+
+    const limit = 50;
+    for (var page = 0; page < 12; page++) {
+      final chunk = await apiService.getMessages(
+        _group.id,
+        myId,
+        limit: limit,
+        skip: page * limit,
+      );
+      if (chunk.isEmpty) break;
+      if (chunk.any((m) => m.id == messageId)) {
+        return chunk;
+      }
+    }
+    return const [];
+  }
+
+  void _flashMessageHighlight(String messageId) {
+    if (!mounted) return;
+    setState(() => _highlightedMessageId = messageId);
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      if (!mounted) return;
+      if (_highlightedMessageId == messageId) {
+        setState(() => _highlightedMessageId = null);
+      }
+    });
+  }
+
+  bool _isPinSystemMessage(MessageModel msg) {
+    final content = msg.content.trim();
+    if (content.isEmpty) return false;
+    if (content.startsWith('PIN_MESSAGE|')) return true;
+    if (content.startsWith('UNPIN_MESSAGE|')) return true;
+    if (content.contains('Bạn đã ghim một tin nhắn')) return true;
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.contains('ghim')) {
+      return true;
+    }
+    return false;
+  }
+
+  String _pinSystemDisplayText(MessageModel msg) {
+    final content = msg.content.trim();
+    if (content.startsWith('PIN_MESSAGE|')) return 'Đã ghim một tin nhắn';
+    if (content.startsWith('UNPIN_MESSAGE|')) {
+      return 'Đã bỏ ghim một tin nhắn';
+    }
+    return content;
+  }
+
+  Future<void> _openPinnedMessages() async {
+    final selectedMessageId = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PinnedMessagesScreen(
+          controller: _chatController,
+          chatTitle: _group.name.isNotEmpty ? _group.name : 'Nhóm',
+          chatAvatar: _group.avatar,
+        ),
+      ),
+    );
+    if (selectedMessageId == null || selectedMessageId.isEmpty) return;
+    await _chatController.jumpToMessage(selectedMessageId);
+  }
+
+  Widget _buildPinSystemLine(MessageModel msg) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            _pinSystemDisplayText(msg),
+            style: const TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 12,
+              color: AppColors.textHint,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: _openPinnedMessages,
+            child: const Text(
+              'Xem tất cả',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 12,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openOptions() async {
     final result = await Navigator.push<Object?>(
       context,
-      MaterialPageRoute(builder: (_) => GroupOptionsScreen(group: _group)),
+      MaterialPageRoute(
+        builder: (_) => ChatOptionsScreen(
+          group: _group, 
+          isGroup: true,
+          chatController: _chatController,
+          memberNames: _memberProfiles.map((k, v) => MapEntry(k, v.fullName)),
+          memberAvatars: _memberProfiles.map((k, v) => MapEntry(k, v.avatar)),
+        ),
+      ),
     );
     if (!mounted) return;
     if (result == true) {
       Navigator.pop(context, true);
     } else if (result is ApiGroupModel) {
-      setState(() => _group = result);
+      if (mounted) {
+        setState(() => _group = result);
+      }
+    } else if (result is String) {
+      _chatController.jumpToMessage(result);
     }
     await _loadBackgroundPref();
   }
@@ -998,7 +1172,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         'metadata': {
           'fileName': uploaded.fileName,
           'fileSize': uploaded.fileSize,
-          if (uploaded.thumbnailUrl != null) 'thumbnailUrl': uploaded.thumbnailUrl,
+          if (uploaded.thumbnailUrl != null)
+            'thumbnailUrl': uploaded.thumbnailUrl,
           if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
         },
       });
@@ -1120,6 +1295,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _showMessageActions(MessageModel msg) {
+    final isPinned = _chatController.isMessagePinned(msg.id);
     HapticFeedback.mediumImpact();
     showModalBottomSheet(
       context: context,
@@ -1155,12 +1331,45 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     radius: 28,
                     child: Padding(
                       padding: const EdgeInsets.all(6),
-                      child: Text(item.$2, style: const TextStyle(fontSize: 30)),
+                      child: Text(
+                        item.$2,
+                        style: const TextStyle(fontSize: 30),
+                      ),
                     ),
                   );
                 }).toList(),
               ),
               const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(
+                  Icons.push_pin_outlined,
+                  color: AppColors.textPrimary,
+                  size: 22,
+                ),
+                title: Text(
+                  isPinned ? 'Bỏ ghim' : 'Ghim',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  final nowPinned = await _chatController.togglePinMessage(
+                    msg.id,
+                  );
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        nowPinned ? 'Đã ghim tin nhắn' : 'Đã bỏ ghim tin nhắn',
+                      ),
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
               ListTile(
                 leading: const Icon(
                   Icons.forward_to_inbox_outlined,
@@ -1186,10 +1395,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ),
               if (msg.senderId == authService.userId && !msg.isRecalled)
                 ListTile(
-                  leading: const Icon(Icons.undo, color: AppColors.error, size: 22),
+                  leading: const Icon(
+                    Icons.undo,
+                    color: AppColors.error,
+                    size: 22,
+                  ),
                   title: const Text(
                     'Thu hồi',
-                    style: TextStyle(color: AppColors.error, fontFamily: 'Inter'),
+                    style: TextStyle(
+                      color: AppColors.error,
+                      fontFamily: 'Inter',
+                    ),
                   ),
                   onTap: () {
                     Navigator.pop(sheetContext);
@@ -1235,7 +1451,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.auto_awesome, color: AppColors.primary),
+                leading: const Icon(
+                  Icons.auto_awesome,
+                  color: AppColors.primary,
+                ),
                 title: const Text('Trợ lý AI'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1249,7 +1468,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.camera_alt_rounded,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Chụp ảnh'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1257,7 +1479,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.image_rounded, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.image_rounded,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Chọn ảnh'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1265,7 +1490,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.attach_file, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.attach_file,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Đính kèm file'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1273,7 +1501,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.videocam_outlined, color: AppColors.textPrimary),
+                leading: const Icon(
+                  Icons.videocam_outlined,
+                  color: AppColors.textPrimary,
+                ),
                 title: const Text('Gửi video'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -1533,6 +1764,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           vertical: 12,
                         ),
                         messageBuilder: (msg, index) {
+                          if (_isPinSystemMessage(msg)) {
+                            return _buildPinSystemLine(msg);
+                          }
                           final isMe = msg.senderId == authService.userId;
                           return CommonMessageBubble(
                             msg: msg,
@@ -1557,6 +1791,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             onImageTap: () => _openImageViewer(msg),
                             onFileTap: () => _downloadFile(msg),
                             onVideoTap: () => _openVideoPlayer(msg),
+                            isPinned:
+                                _chatController.isPinnedStateReady &&
+                                _chatController.isMessagePinned(msg.id),
+                            isHighlighted: _highlightedMessageId == msg.id,
                           );
                         },
                         callBuilder: (call, index) => ConversationCallBubble(
@@ -1744,11 +1982,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           onTap: _showComposerActionsSheet,
         ),
         ConversationComposerAction(
-          icon: Icons.camera_alt_rounded,
-          onTap: _pickAndSendImage,
-          enabled: !_isUploading,
-        ),
-        ConversationComposerAction(
           icon: Icons.image_rounded,
           onTap: _pickAndSendImage,
           enabled: !_isUploading,
@@ -1756,16 +1989,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ConversationComposerAction(
           icon: Icons.mic_none_rounded,
           onLongPressStart: _isUploading ? null : (_) => _startVoiceRecording(),
-          enabled: !_isUploading,
-        ),
-        ConversationComposerAction(
-          icon: Icons.attach_file,
-          onTap: _pickAndSendFile,
-          enabled: !_isUploading,
-        ),
-        ConversationComposerAction(
-          icon: Icons.videocam_outlined,
-          onTap: _pickAndSendVideo,
           enabled: !_isUploading,
         ),
       ],
