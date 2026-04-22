@@ -1,8 +1,10 @@
 import 'dart:typed_data';
+import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // Thêm foundation.dart cho kIsWeb
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../services/story_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
@@ -136,6 +138,29 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       final contentType =
           _mediaType == _MediaType.image ? 'image/jpeg' : 'video/mp4';
 
+      // ─── Extract Thumbnail if VIDEO ───
+      String? thumbnailUrl;
+      if (_mediaType == _MediaType.video) {
+        try {
+          final thumbBytes = await VideoThumbnail.thumbnailData(
+            video: _pickedFile!.path,
+            imageFormat: ImageFormat.JPEG,
+            maxWidth: 512,
+            quality: 75,
+            timeMs: 1000, // 1 second mark
+          );
+          if (thumbBytes != null) {
+            thumbnailUrl = await apiService.uploadFileAndGetUrl(
+              fileName: 'thumb_${DateTime.now().millisecondsSinceEpoch}.jpg',
+              bytes: thumbBytes,
+              contentType: 'image/jpeg',
+            );
+          }
+        } catch (e) {
+          log('❌ Error generating thumbnail: $e');
+        }
+      }
+
       final mediaUrl = await apiService.uploadFileAndGetUrl(
         fileName: fileName,
         bytes: _previewBytes!,
@@ -155,6 +180,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
           type: _mediaType == _MediaType.image ? 'IMAGE' : 'VIDEO',
           caption: _captionController.text.trim(),
           expiresAt: expiresAt,
+          thumbnailUrl: thumbnailUrl,
         );
         if (newStory != null && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

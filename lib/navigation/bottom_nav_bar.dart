@@ -27,6 +27,11 @@ class BottomNavBar extends StatelessWidget {
       label: 'Danh bạ',
     ),
     _NavTab(
+      icon: Icons.amp_stories_outlined,
+      activeIcon: Icons.amp_stories_rounded,
+      label: 'Tin',
+    ),
+    _NavTab(
       icon: Icons.notifications_none_rounded,
       activeIcon: Icons.notifications_rounded,
       label: 'Thông báo',

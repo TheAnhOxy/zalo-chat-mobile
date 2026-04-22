@@ -7,6 +7,7 @@ class ApiStoryModel {
   final String type;
   final String caption;
   final List<String> viewers;
+  final String? thumbnailUrl;
   final DateTime expiresAt;
   final DateTime createdAt;
 
@@ -23,6 +24,7 @@ class ApiStoryModel {
     required this.viewers,
     required this.expiresAt,
     required this.createdAt,
+    this.thumbnailUrl,
     this.userName,
     this.userAvatar,
   });
@@ -38,6 +40,7 @@ class ApiStoryModel {
               ?.map((e) => e.toString())
               .toList() ??
           [],
+      thumbnailUrl: json['thumbnailUrl'],
       expiresAt: json['expiresAt'] != null
           ? DateTime.parse(json['expiresAt'])
           : DateTime.now(),
@@ -57,6 +60,7 @@ class ApiStoryModel {
       'type': type,
       'caption': caption,
       'viewers': viewers,
+      'thumbnailUrl': thumbnailUrl,
       'expiresAt': expiresAt.toIso8601String(),
       'createdAt': createdAt.toIso8601String(),
       'userName': userName,
