@@ -55,6 +55,8 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
 
   late RTCVideoRenderer _localRenderer;
   late RTCVideoRenderer _remoteRenderer;
+  final Map<String, RTCVideoRenderer> _peerRenderers = {};
+  final Map<String, MediaStream> _peerStreams = {};
   bool _renderersReady = false;
   MediaStream? _pendingRemoteStream;
 
@@ -79,9 +81,44 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
           ..muted = false;
       });
     };
+    callService.onPeerRemoteStream = _onPeerRemoteStream;
+    callService.onParticipantJoined = _onParticipantJoined;
     callService.onParticipantLeft = _onParticipantLeft;
     callService.onCallStarted = _onCallStarted;
     _init();
+  }
+
+  Future<void> _onPeerRemoteStream(String peerId, MediaStream stream) async {
+    if (!mounted || peerId.isEmpty) return;
+
+    RTCVideoRenderer renderer;
+    if (_peerRenderers.containsKey(peerId)) {
+      renderer = _peerRenderers[peerId]!;
+    } else {
+      renderer = RTCVideoRenderer();
+      await renderer.initialize();
+      _peerRenderers[peerId] = renderer;
+    }
+
+    final mergedStream = _peerStreams.putIfAbsent(peerId, () => stream);
+    if (!identical(mergedStream, stream)) {
+      for (final track in stream.getTracks()) {
+        if (!mergedStream.getTracks().any((t) => t.id == track.id)) {
+          await mergedStream.addTrack(track);
+        }
+      }
+    }
+
+    renderer
+      ..srcObject = mergedStream
+      ..muted = false;
+
+    final idx = _participants.indexWhere((p) => p.userId == peerId);
+    if (idx >= 0) {
+      _participants[idx].isConnected = true;
+    }
+
+    if (mounted) setState(() {});
   }
 
   Future<void> _initRenderers() async {
@@ -115,11 +152,24 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
         _startTimer();
         _scheduleHideControls();
       }
-      setState(() {
-        for (final p in _participants) p.isConnected = true;
-      });
     }
     if (state == CallState.ended) _onCallEnded();
+  }
+
+  void _onParticipantJoined(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final userId = data['userId']?.toString() ?? '';
+    if (userId.isEmpty) return;
+
+    final myId = authService.userId;
+    if (myId != null && userId == myId) return;
+
+    final idx = _participants.indexWhere((p) => p.userId == userId);
+    if (idx >= 0) {
+      setState(() {
+        _participants[idx].isConnected = true;
+      });
+    }
   }
 
   // ✅ Đồng bộ timer từ server
@@ -159,6 +209,10 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     }
 
     setState(() {
+      final renderer = _peerRenderers.remove(userId);
+      renderer?.srcObject = null;
+      renderer?.dispose();
+      _peerStreams.remove(userId);
       _participants.removeWhere((p) => p.userId == userId);
     });
 
@@ -207,8 +261,16 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     _hideTimer?.cancel();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
+    for (final r in _peerRenderers.values) {
+      r.srcObject = null;
+      r.dispose();
+    }
+    _peerRenderers.clear();
+    _peerStreams.clear();
     callService.removeStateListener(_onCallStateChanged);
     callService.onRemoteStream = null;
+    callService.onPeerRemoteStream = null;
+    callService.onParticipantJoined = null;
     callService.onParticipantLeft = null;
     callService.onCallStarted = null;
     super.dispose();
@@ -338,6 +400,16 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     Navigator.pop(context);
   }
 
+  bool _peerHasVideo(String userId) {
+    final stream = _peerStreams[userId] ?? _peerRenderers[userId]?.srcObject;
+    return stream?.getVideoTracks().isNotEmpty ?? false;
+  }
+
+  bool _remoteHasVideo() {
+    final stream = _remoteRenderer.srcObject;
+    return stream?.getVideoTracks().isNotEmpty ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -407,74 +479,326 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
       }
     }
 
-    if (_callState == CallState.connected &&
-        _renderersReady &&
-        _remoteRenderer.srcObject != null) {
-      return RTCVideoView(
-        _remoteRenderer,
-        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+    if (_callState == CallState.connected && _renderersReady) {
+      final connectedPeers = _participants.where((p) => p.isConnected).toList();
+      final anyPeerVideo = connectedPeers.any((p) => _peerHasVideo(p.userId));
+
+      if (connectedPeers.isNotEmpty && !anyPeerVideo && _remoteHasVideo()) {
+        return RTCVideoView(
+          _remoteRenderer,
+          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+        );
+      }
+
+      if (connectedPeers.length == 2) {
+        return _buildTwoUpLayout(connectedPeers);
+      }
+
+      if (connectedPeers.length == 3) {
+        return _buildThreeUpLayout(connectedPeers);
+      }
+
+      if (connectedPeers.length >= 4) {
+        return _buildVideoGridBackground(connectedPeers);
+      }
+
+      if (connectedPeers.length == 1) {
+        return _buildParticipantFullView(connectedPeers.first);
+      }
+
+      if (_remoteRenderer.srcObject != null) {
+        return RTCVideoView(
+          _remoteRenderer,
+          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+        );
+      }
+    }
+
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: AppColors.primary.withOpacity(0.4),
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.2),
+                  blurRadius: 30,
+                  spreadRadius: 5,
+                ),
+              ],
+            ),
+            child: ClipOval(
+              child: widget.groupAvatar != null && widget.groupAvatar!.isNotEmpty
+                  ? Image.network(
+                      widget.groupAvatar!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _defaultGroupAvatar(),
+                    )
+                  : _defaultGroupAvatar(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            widget.groupName,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _callState == CallState.calling
+                ? 'Đang gọi video nhóm...'
+                : _callState == CallState.incoming
+                ? 'Cuộc gọi video nhóm đến'
+                : 'Đang kết nối...',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.6),
+              fontSize: 14,
+              fontFamily: 'Inter',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoGridBackground(List<GroupCallParticipant> activePeers) {
+    final count = activePeers.length;
+    final crossAxisCount = count <= 4 ? 2 : 3;
+    final childAspectRatio = crossAxisCount == 2
+      ? (count == 2 ? 0.78 : 0.92)
+      : 0.76;
+
+    return GridView.builder(
+      padding: EdgeInsets.zero,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: count,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        childAspectRatio: childAspectRatio,
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+      ),
+      itemBuilder: (_, index) {
+        return _buildParticipantVideoTile(activePeers[index]);
+      },
+    );
+  }
+
+  Widget _buildTwoUpLayout(List<GroupCallParticipant> peers) {
+    return SizedBox.expand(
+      child: Row(
+        children: [
+          Expanded(child: _buildParticipantVideoTile(peers[0])),
+          const SizedBox(width: 2),
+          Expanded(child: _buildParticipantVideoTile(peers[1])),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThreeUpLayout(List<GroupCallParticipant> peers) {
+    return SizedBox.expand(
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildParticipantVideoTile(peers[0])),
+                const SizedBox(width: 2),
+                Expanded(child: _buildParticipantVideoTile(peers[1])),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Expanded(child: _buildParticipantVideoTile(peers[2])),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildParticipantFullView(GroupCallParticipant participant) {
+    final renderer = _peerRenderers[participant.userId];
+    final hasVideoTrack =
+        _peerStreams[participant.userId]?.getVideoTracks().isNotEmpty ??
+        renderer?.srcObject?.getVideoTracks().isNotEmpty ?? false;
+
+    if (hasVideoTrack && renderer != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          RTCVideoView(
+            renderer,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+          ),
+          Positioned(
+            left: 16,
+            bottom: 16,
+            child: _buildNamePill(participant.name),
+          ),
+        ],
       );
     }
-    // Placeholder: tên nhóm + avatar
+
     return Container(
-      color: const Color(0xFF0A1A0A),
+      color: const Color(0xFF172017),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 100,
-              height: 100,
+              width: 108,
+              height: 108,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: AppColors.primary.withOpacity(0.4),
+                  color: participant.isConnected ? AppColors.online : Colors.white24,
                   width: 2,
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.2),
-                    blurRadius: 30,
-                    spreadRadius: 5,
-                  ),
-                ],
               ),
               child: ClipOval(
-                child:
-                    widget.groupAvatar != null && widget.groupAvatar!.isNotEmpty
-                    ? Image.network(
-                        widget.groupAvatar!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _defaultGroupAvatar(),
-                      )
-                    : _defaultGroupAvatar(),
+                child: AvatarWidget(
+                  url: participant.avatar,
+                  name: participant.name,
+                  size: 108,
+                ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             Text(
-              widget.groupName,
+              participant.name,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: FontWeight.w600,
                 fontFamily: 'Inter',
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
-              _callState == CallState.calling
-                  ? 'Đang gọi video nhóm...'
-                  : _callState == CallState.incoming
-                  ? 'Cuộc gọi video nhóm đến'
-                  : 'Đang kết nối...',
+              participant.isConnected ? 'Đang ở trong cuộc gọi' : 'Chưa tham gia',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.6),
-                fontSize: 14,
+                fontSize: 13,
                 fontFamily: 'Inter',
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildParticipantVideoTile(GroupCallParticipant participant) {
+    final renderer = _peerRenderers[participant.userId];
+    final hasVideoTrack =
+        _peerStreams[participant.userId]?.getVideoTracks().isNotEmpty ??
+        renderer?.srcObject?.getVideoTracks().isNotEmpty ?? false;
+    final isConnected = participant.isConnected;
+
+    if (hasVideoTrack && renderer != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          RTCVideoView(
+            renderer,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+          ),
+          Positioned(
+            left: 8,
+            bottom: 8,
+            child: _buildNamePill(participant.name),
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      color: const Color(0xFF172017),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 84,
+                  height: 84,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isConnected ? AppColors.online : Colors.white24,
+                      width: 2,
+                    ),
+                  ),
+                  child: ClipOval(
+                    child: AvatarWidget(
+                      url: participant.avatar,
+                      name: participant.name,
+                      size: 84,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  participant.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isConnected ? 'Đã vào cuộc gọi' : 'Chưa tham gia',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 11,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 8,
+            top: 8,
+            child: _buildNamePill(participant.name),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNamePill(String name) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.45),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Text(
+        name,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontFamily: 'Inter',
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -532,6 +856,9 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
 
   /// Hàng nhỏ hiển thị avatar của các participant (khi đã connected).
   Widget _buildParticipantsStrip() {
+    final connected = _participants.where((p) => p.isConnected).toList();
+    if (connected.isEmpty) return const SizedBox.shrink();
+
     return Positioned(
       bottom: 140,
       left: 0,
@@ -544,10 +871,10 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _participants.length,
+            itemCount: connected.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (_, i) {
-              final p = _participants[i];
+              final p = connected[i];
               return Column(
                 children: [
                   Stack(
@@ -794,7 +1121,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
         ),
         _VideoBtn(
           icon: Icons.people_outline_rounded,
-          label: '${_participants.length + 1} người',
+          label: '${_participants.where((p) => p.isConnected).length + 1} người',
           onTap: () {},
         ),
       ],
