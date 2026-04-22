@@ -104,6 +104,24 @@ class SocketService {
     });
   }
 
+  /// Ghim tin nhắn
+  void pinMessage(String messageId, String conversationId, String userId) {
+    _socket?.emit('pin_message', {
+      'messageId': messageId,
+      'conversationId': conversationId,
+      'userId': userId,
+    });
+  }
+
+  /// Bỏ ghim tin nhắn
+  void unpinMessage(String messageId, String conversationId, String userId) {
+    _socket?.emit('unpin_message', {
+      'messageId': messageId,
+      'conversationId': conversationId,
+      'userId': userId,
+    });
+  }
+
   // --- LISTENER HELPERS ---
 
   /// Đăng ký lắng nghe một sự kiện từ server

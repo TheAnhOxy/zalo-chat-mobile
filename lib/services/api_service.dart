@@ -312,6 +312,22 @@ class ApiService {
     }
   }
 
+  /// Lấy chi tiết 1 tin nhắn theo ID
+  Future<MessageModel?> getMessageById(String messageId, String userId) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl/messages/$messageId',
+        queryParameters: {'userId': userId},
+      );
+      return MessageModel.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+    } catch (e) {
+      log('❌ Lỗi getMessageById: $e');
+      return null;
+    }
+  }
+
   /// Cập nhật trạng thái xóa tin nhắn ở phía người dùng (API dự phòng cho Socket)
   Future<bool> deleteMessageForMe(String messageId, String userId) async {
     try {

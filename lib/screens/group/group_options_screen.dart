@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../controllers/chat_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/image_utils.dart';
 import '../../data/models/models.dart';
@@ -10,22 +11,36 @@ import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../contacts/create_group_screen.dart';
 import 'group_chat_backgrounds.dart';
 import 'group_members_screen.dart';
 import 'group_media_screen.dart';
 import 'group_message_search_screen.dart';
-import 'group_pinned_messages_screen.dart';
+import '../chat/pinned_messages_screen.dart';
 
-class GroupOptionsScreen extends StatefulWidget {
+class ChatOptionsScreen extends StatefulWidget {
   final ApiGroupModel group;
+  final bool isGroup;
+  final String? peerName;
+  final ChatController? chatController;
+  final Map<String, String>? memberNames;
+  final Map<String, String>? memberAvatars;
 
-  const GroupOptionsScreen({super.key, required this.group});
+  const ChatOptionsScreen({
+    super.key,
+    required this.group,
+    this.isGroup = true,
+    this.peerName,
+    this.chatController,
+    this.memberNames,
+    this.memberAvatars,
+  });
 
   @override
-  State<GroupOptionsScreen> createState() => _GroupOptionsScreenState();
+  State<ChatOptionsScreen> createState() => _ChatOptionsScreenState();
 }
 
-class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
+class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   bool _isPinned = false;
   bool _isMuted = false;
   DateTime? _muteUntil;
@@ -182,6 +197,30 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
     } else if (result is ApiGroupModel) {
       setState(() => _group = result);
     }
+  }
+
+  String get _peerDisplayName {
+    final name = widget.peerName?.trim() ?? '';
+    return name.isEmpty ? 'người này' : name;
+  }
+
+  void _openPeerProfile() {
+    _showLeaveSnack('Trang cá nhân sẽ được bổ sung ở bản cập nhật tới');
+  }
+
+  Future<void> _createGroupWithPeer() async {
+    final created = await Navigator.push<Object?>(
+      context,
+      MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+    );
+    if (!mounted) return;
+    if (created is ApiGroupModel) {
+      Navigator.pop(context, created);
+    }
+  }
+
+  void _addPeerToGroup() {
+    _showLeaveSnack('Tính năng thêm thành viên vào nhóm sẽ sớm ra mắt');
   }
 
   Future<void> _showWallpaperPicker() async {
@@ -891,7 +930,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
           const SizedBox(height: 8),
 
           // ── Section 1: Mô tả / Ảnh-file / Lịch / Ghim / Bình chọn
-          _buildSection([
+          _ChatOptionsSection(children: [
             _buildDescriptionTile(),
             _buildDivider(),
             _buildMediaTile(),
@@ -899,50 +938,77 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
             _buildNavTile(
               icon: Icons.push_pin_outlined,
               label: 'Tin nhắn đã ghim',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => GroupPinnedMessagesScreen(
-                    conversationId: _group.id,
-                    groupName: _group.name.isEmpty ? 'Nhóm' : _group.name,
-                  ),
-                ),
-              ),
+              onTap: () async {
+                if (widget.chatController != null) {
+                  final msgId = await Navigator.push<String?>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PinnedMessagesScreen(
+                        controller: widget.chatController!,
+                        chatTitle: _group.name.isEmpty ? 'Nhóm' : _group.name,
+                        chatAvatar: _group.avatar,
+                        memberNames: widget.memberNames ?? const {},
+                        memberAvatars: widget.memberAvatars ?? const {},
+                      ),
+                    ),
+                  );
+                  if (msgId != null && mounted) {
+                    Navigator.pop(context, msgId);
+                  }
+                }
+              },
             ),
           ]),
 
           const SizedBox(height: 8),
 
           // ── Section 2: Thành viên / Link / Ghim CV / Ẩn / Cá nhân
-          _buildSection([
-            _buildNavTile(
-              icon: Icons.group_outlined,
-              label: 'Xem thành viên',
-              trailing: Text(
-                '($memberCount)',
-                style: const TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 13,
-                  color: AppColors.textHint,
+          _ChatOptionsSection(
+            children: [
+              if (widget.isGroup) ...[
+                _buildNavTile(
+                  icon: Icons.group_outlined,
+                  label: 'Xem thành viên',
+                  trailing: Text(
+                    '($memberCount)',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 13,
+                      color: AppColors.textHint,
+                    ),
+                  ),
+                  onTap: () => _showMembersSheet(),
                 ),
+                _buildDivider(),
+                _buildLinkTile(),
+                _buildDivider(),
+              ] else ...[
+                _buildNavTile(
+                  icon: Icons.group_add_outlined,
+                  label: 'Tạo nhóm với $_peerDisplayName',
+                  onTap: _createGroupWithPeer,
+                ),
+                _buildDivider(),
+                _buildNavTile(
+                  icon: Icons.group_add_outlined,
+                  label: 'Thêm $_peerDisplayName vào nhóm',
+                  onTap: _addPeerToGroup,
+                ),
+                _buildDivider(),
+              ],
+              _buildToggleTile(
+                icon: Icons.push_pin_outlined,
+                label: 'Ghim trò chuyện',
+                value: _isPinned,
+                onChanged: (v) => _setPinned(v),
               ),
-              onTap: () => _showMembersSheet(),
-            ),
-            _buildDivider(),
-            _buildLinkTile(),
-            _buildDivider(),
-            _buildToggleTile(
-              icon: Icons.push_pin_outlined,
-              label: 'Ghim trò chuyện',
-              value: _isPinned,
-              onChanged: (v) => _setPinned(v),
-            ),
-          ]),
+            ],
+          ),
 
           const SizedBox(height: 8),
 
           // ── Section 3: Báo xấu / Dung lượng
-          _buildSection([
+          _ChatOptionsSection(children: [
             _buildNavTile(
               icon: Icons.storage_outlined,
               label: 'Dung lượng trò chuyện',
@@ -953,7 +1019,7 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
           const SizedBox(height: 8),
 
           // ── Section 4: Xoá lịch sử / Rời nhóm (đỏ)
-          _buildSection([
+          _ChatOptionsSection(children: [
             _buildNavTile(
               icon: Icons.delete_outline_rounded,
               label: 'Xóa lịch sử trò chuyện',
@@ -961,23 +1027,25 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
               iconColor: AppColors.error,
               onTap: _confirmDeleteHistory,
             ),
-            _buildDivider(),
-            _buildNavTile(
-              icon: Icons.logout_rounded,
-              label: 'Rời nhóm',
-              labelColor: AppColors.error,
-              iconColor: AppColors.error,
-              onTap: _confirmLeave,
-            ),
-            if (_isAdmin) ...[
+            if (widget.isGroup) ...[
               _buildDivider(),
               _buildNavTile(
-                icon: Icons.delete_forever_rounded,
-                label: 'Giải tán nhóm',
+                icon: Icons.logout_rounded,
+                label: 'Rời nhóm',
                 labelColor: AppColors.error,
                 iconColor: AppColors.error,
-                onTap: _confirmDissolveGroup,
+                onTap: _confirmLeave,
               ),
+              if (_isAdmin) ...[
+                _buildDivider(),
+                _buildNavTile(
+                  icon: Icons.delete_forever_rounded,
+                  label: 'Giải tán nhóm',
+                  labelColor: AppColors.error,
+                  iconColor: AppColors.error,
+                  onTap: _confirmDissolveGroup,
+                ),
+              ],
             ],
           ]),
 
@@ -989,128 +1057,26 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
 
   // ── Header ────────────────────────────────────────────────────
   Widget _buildHeader() {
-    return Container(
-      color: AppColors.bgCard,
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      child: Column(
-        children: [
-          // Avatar: chạm / icon máy ảnh — QTV; upload S3 + PATCH (create_group_screen)
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: _isAdmin ? _changeGroupAvatar : null,
-              borderRadius: BorderRadius.circular(48),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  _group.avatar.isNotEmpty
-                      ? ClipOval(
-                          child: Image.network(
-                            webSafeImageUrl(_group.avatar),
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                _defaultGroupAvatar(80),
-                          ),
-                        )
-                      : _defaultGroupAvatar(80),
-                  if (_isAdmin)
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Material(
-                        color: AppColors.bgDark,
-                        shape: const CircleBorder(
-                          side: BorderSide(color: AppColors.bgCard, width: 2),
-                        ),
-                        child: InkWell(
-                          customBorder: const CircleBorder(),
-                          onTap: _changeGroupAvatar,
-                          child: const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(
-                              Icons.camera_alt_outlined,
-                              size: 14,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 10),
-
-          // Tên nhóm + nút edit
-          GestureDetector(
-            onTap: _isAdmin ? _showRenameDialog : null,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Flexible(
-                  child: Text(
-                    _group.name.isEmpty ? 'Nhóm' : _group.name,
-                    style: const TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                if (_isAdmin) ...[
-                  const SizedBox(width: 6),
-                  const Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: AppColors.textSecondary,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
+    return _ChatOptionsHeader(
+      title: _group.name.isEmpty ? 'Nhóm' : _group.name,
+      avatarUrl: _group.avatar,
+      canEdit: _isAdmin && widget.isGroup,
+      onAvatarTap: _changeGroupAvatar,
+      onTitleTap: _showRenameDialog,
+      defaultAvatarBuilder: _defaultGroupAvatar,
     );
   }
 
   // ── 4 nút hành động ──────────────────────────────────────────
   Widget _buildActionRow() {
-    return Container(
-      color: AppColors.bgCard,
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _ActionButton(
-            icon: Icons.search_rounded,
-            label: 'Tìm\ntin nhắn',
-            onTap: _openSearchMessages,
-          ),
-          _ActionButton(
-            icon: Icons.person_add_alt_1_outlined,
-            label: 'Thêm\nthành viên',
-            onTap: _openAddMembers,
-          ),
-          _ActionButton(
-            icon: Icons.wallpaper_rounded,
-            label: 'Đổi\nhình nền',
-            onTap: _showWallpaperPicker,
-          ),
-          _ActionButton(
-            icon: _isMuted
-                ? Icons.notifications_off_outlined
-                : Icons.notifications_outlined,
-            label: _muteLabelForAction(),
-            onTap: _onMuteTap,
-          ),
-        ],
-      ),
+    return _ChatOptionsActionRow(
+      isGroup: widget.isGroup,
+      isMuted: _isMuted,
+      muteLabel: _muteLabelForAction(),
+      onSearchTap: _openSearchMessages,
+      onSecondaryActionTap: widget.isGroup ? _openAddMembers : _openPeerProfile,
+      onWallpaperTap: _showWallpaperPicker,
+      onMuteTap: _onMuteTap,
     );
   }
 
@@ -1512,13 +1478,6 @@ class _GroupOptionsScreenState extends State<GroupOptionsScreen> {
   }
 
   // ── Helpers ──────────────────────────────────────────────────
-  Widget _buildSection(List<Widget> children) {
-    return Container(
-      color: AppColors.bgCard,
-      child: Column(mainAxisSize: MainAxisSize.min, children: children),
-    );
-  }
-
   Widget _buildDivider() => const Padding(
     padding: EdgeInsets.only(left: 62),
     child: Divider(height: 1, thickness: 1, color: AppColors.divider),
@@ -2972,6 +2931,181 @@ class _MembersSheetActionTile extends StatelessWidget {
               : AppColors.textPrimary,
         ),
       ),
+    );
+  }
+}
+
+class _ChatOptionsHeader extends StatelessWidget {
+  final String title;
+  final String avatarUrl;
+  final bool canEdit;
+  final VoidCallback onAvatarTap;
+  final VoidCallback onTitleTap;
+  final Widget Function(double size) defaultAvatarBuilder;
+
+  const _ChatOptionsHeader({
+    required this.title,
+    required this.avatarUrl,
+    required this.canEdit,
+    required this.onAvatarTap,
+    required this.onTitleTap,
+    required this.defaultAvatarBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.bgCard,
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Column(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: canEdit ? onAvatarTap : null,
+              borderRadius: BorderRadius.circular(48),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  avatarUrl.isNotEmpty
+                      ? ClipOval(
+                          child: Image.network(
+                            webSafeImageUrl(avatarUrl),
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                defaultAvatarBuilder(80),
+                          ),
+                        )
+                      : defaultAvatarBuilder(80),
+                  if (canEdit)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Material(
+                        color: AppColors.bgDark,
+                        shape: const CircleBorder(
+                          side: BorderSide(color: AppColors.bgCard, width: 2),
+                        ),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: onAvatarTap,
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.camera_alt_outlined,
+                              size: 14,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: canEdit ? onTitleTap : null,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                if (canEdit) ...[
+                  const SizedBox(width: 6),
+                  const Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: AppColors.textSecondary,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatOptionsActionRow extends StatelessWidget {
+  final bool isGroup;
+  final bool isMuted;
+  final String muteLabel;
+  final VoidCallback onSearchTap;
+  final VoidCallback onSecondaryActionTap;
+  final VoidCallback onWallpaperTap;
+  final VoidCallback onMuteTap;
+
+  const _ChatOptionsActionRow({
+    required this.isGroup,
+    required this.isMuted,
+    required this.muteLabel,
+    required this.onSearchTap,
+    required this.onSecondaryActionTap,
+    required this.onWallpaperTap,
+    required this.onMuteTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.bgCard,
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _ActionButton(
+            icon: Icons.search_rounded,
+            label: 'Tìm\ntin nhắn',
+            onTap: onSearchTap,
+          ),
+          _ActionButton(
+            icon: isGroup ? Icons.person_add_alt_1_outlined : Icons.person_outline,
+            label: isGroup ? 'Thêm\nthành viên' : 'Trang\ncá nhân',
+            onTap: onSecondaryActionTap,
+          ),
+          _ActionButton(
+            icon: Icons.wallpaper_rounded,
+            label: 'Đổi\nhình nền',
+            onTap: onWallpaperTap,
+          ),
+          _ActionButton(
+            icon: isMuted
+                ? Icons.notifications_off_outlined
+                : Icons.notifications_outlined,
+            label: muteLabel,
+            onTap: onMuteTap,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatOptionsSection extends StatelessWidget {
+  final List<Widget> children;
+
+  const _ChatOptionsSection({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.bgCard,
+      child: Column(mainAxisSize: MainAxisSize.min, children: children),
     );
   }
 }
