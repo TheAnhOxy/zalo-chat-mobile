@@ -44,6 +44,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   late RTCVideoRenderer _localRenderer;
   late RTCVideoRenderer _remoteRenderer;
   bool _renderersReady = false;
+  MediaStream? _pendingRemoteStream;
 
   @override
   void initState() {
@@ -53,7 +54,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
-      _remoteRenderer.muted = false;
+      if (!_renderersReady) {
+        _pendingRemoteStream = stream;
+        return;
+      }
+
       setState(() => _remoteRenderer.srcObject = stream);
     };
     _init();
@@ -64,7 +69,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _remoteRenderer = RTCVideoRenderer();
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
-    if (mounted) setState(() => _renderersReady = true);
+    if (!mounted) return;
+
+    if (callService.localStream != null) {
+      _localRenderer.srcObject = callService.localStream;
+    }
+
+    final remote = _pendingRemoteStream ?? callService.remoteStream;
+    if (remote != null) {
+      _remoteRenderer.srcObject = remote;
+      _pendingRemoteStream = null;
+    }
+
+    setState(() => _renderersReady = true);
   }
 
   void _onCallStateChanged(CallState state) {
@@ -298,6 +315,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Widget _buildRemoteView() {
+    // Hot-reload-safe sync: if callback missed, still bind latest remote stream.
+    if (_renderersReady && _remoteRenderer.srcObject == null) {
+      final latestRemote = callService.remoteStream;
+      if (latestRemote != null) {
+        _remoteRenderer.srcObject = latestRemote;
+      }
+    }
+
     if (_callState == CallState.connected &&
         _renderersReady &&
         _remoteRenderer.srcObject != null) {
@@ -683,6 +708,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   peerId: widget.otherUser.id,
                   offer: widget.offer ?? {},
                   isVideo: true,
+                  isGroup: false,
                 );
                 // Gán local stream sau khi answer
                 if (callService.localStream != null && mounted) {

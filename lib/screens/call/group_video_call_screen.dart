@@ -56,6 +56,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
   late RTCVideoRenderer _localRenderer;
   late RTCVideoRenderer _remoteRenderer;
   bool _renderersReady = false;
+  MediaStream? _pendingRemoteStream;
 
   late List<GroupCallParticipant> _participants;
 
@@ -68,7 +69,10 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
-      _remoteRenderer.muted = false;
+      if (!_renderersReady) {
+        _pendingRemoteStream = stream;
+        return;
+      }
       setState(() => _remoteRenderer.srcObject = stream);
     };
     callService.onParticipantLeft = _onParticipantLeft;
@@ -81,7 +85,19 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     _remoteRenderer = RTCVideoRenderer();
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
-    if (mounted) setState(() => _renderersReady = true);
+    if (!mounted) return;
+
+    if (callService.localStream != null) {
+      _localRenderer.srcObject = callService.localStream;
+    }
+
+    final remote = _pendingRemoteStream ?? callService.remoteStream;
+    if (remote != null) {
+      _remoteRenderer.srcObject = remote;
+      _pendingRemoteStream = null;
+    }
+
+    setState(() => _renderersReady = true);
   }
 
   void _onCallStateChanged(CallState state) {
@@ -377,6 +393,14 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
   }
 
   Widget _buildBackground() {
+    // Hot-reload-safe sync: if callback missed, still bind latest remote stream.
+    if (_renderersReady && _remoteRenderer.srcObject == null) {
+      final latestRemote = callService.remoteStream;
+      if (latestRemote != null) {
+        _remoteRenderer.srcObject = latestRemote;
+      }
+    }
+
     if (_callState == CallState.connected &&
         _renderersReady &&
         _remoteRenderer.srcObject != null) {
@@ -866,6 +890,7 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
                   peerId: widget.callerId,
                   offer: widget.offer ?? {},
                   isVideo: true,
+                  isGroup: true,
                 );
                 if (callService.localStream != null && mounted) {
                   setState(

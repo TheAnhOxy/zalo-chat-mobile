@@ -694,6 +694,7 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
                     peerId: widget.callerId,
                     offer: widget.offer ?? {},
                     isVideo: false,
+                    isGroup: true,
                   );
                 },
               ),
