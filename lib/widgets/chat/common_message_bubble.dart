@@ -23,6 +23,8 @@ class CommonMessageBubble extends StatelessWidget {
   final VoidCallback? onImageTap;
   final VoidCallback? onFileTap;
   final VoidCallback? onVideoTap;
+  final bool isPinned;
+  final bool isHighlighted;
 
   const CommonMessageBubble({
     super.key,
@@ -41,6 +43,8 @@ class CommonMessageBubble extends StatelessWidget {
     this.onImageTap,
     this.onFileTap,
     this.onVideoTap,
+    this.isPinned = false,
+    this.isHighlighted = false,
   });
 
   @override
@@ -231,7 +235,8 @@ class CommonMessageBubble extends StatelessWidget {
         child: Hero(tag: 'image_${msg.id}', child: imageContent),
       );
     } else if (msg.type == 'VIDEO') {
-      final thumbnailUrl = msg.metadata?.thumbnailUrl ?? msg.metadata?.thumbnail;
+      final thumbnailUrl =
+          msg.metadata?.thumbnailUrl ?? msg.metadata?.thumbnail;
       final title = msg.metadata?.fileName ?? 'Video';
       content = GestureDetector(
         onTap: onVideoTap,
@@ -304,7 +309,8 @@ class CommonMessageBubble extends StatelessWidget {
         ),
       );
     } else if (msg.type == 'FILE') {
-      final fileName = msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
+      final fileName =
+          msg.metadata?.fileName ?? _extractFileNameFromUrl(msg.content);
       content = GestureDetector(
         onTap: onFileTap,
         child: Row(
@@ -314,7 +320,9 @@ class CommonMessageBubble extends StatelessWidget {
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                color: (isMe ? Colors.white : AppColors.primary).withOpacity(0.15),
+                color: (isMe ? Colors.white : AppColors.primary).withOpacity(
+                  0.15,
+                ),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -343,7 +351,9 @@ class CommonMessageBubble extends StatelessWidget {
                       _formatFileSize(msg.metadata!.fileSize!),
                       style: TextStyle(
                         fontSize: 11,
-                        color: isMe ? AppColors.bubbleMeText : AppColors.textSecondary,
+                        color: isMe
+                            ? AppColors.bubbleMeText
+                            : AppColors.textSecondary,
                         fontFamily: 'Inter',
                       ),
                     ),
@@ -359,6 +369,14 @@ class CommonMessageBubble extends StatelessWidget {
         initialDurationSeconds: msg.metadata?.duration ?? 0,
         isMe: isMe,
       );
+    } else if (msg.type == 'TEXT' && msg.content == '👍') {
+      content = const Text(
+        '👍',
+        style: TextStyle(
+          fontSize: 56,
+          height: 1.0,
+        ),
+      );
     } else {
       content = Text(
         msg.content,
@@ -371,28 +389,61 @@ class CommonMessageBubble extends StatelessWidget {
       );
     }
 
-    return Container(
-      padding: msg.isImage || msg.type == 'VIDEO'
-          ? EdgeInsets.zero
-          : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: isMe ? null : AppColors.bubbleOther,
-        gradient: isMe ? AppColors.primaryGradient : null,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(18),
-          topRight: const Radius.circular(18),
-          bottomLeft: Radius.circular(isMe ? 18 : 4),
-          bottomRight: Radius.circular(isMe ? 4 : 18),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+    final isBigEmoji = msg.type == 'TEXT' && msg.content == '👍';
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 360),
+          curve: Curves.easeOut,
+          padding: msg.isImage || msg.type == 'VIDEO' || isBigEmoji
+              ? EdgeInsets.zero
+              : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: isBigEmoji ? null : BoxDecoration(
+            color: isMe ? null : AppColors.bubbleOther,
+            gradient: isMe ? AppColors.primaryGradient : null,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(18),
+              topRight: const Radius.circular(18),
+              bottomLeft: Radius.circular(isMe ? 18 : 4),
+              bottomRight: Radius.circular(isMe ? 4 : 18),
+            ),
+            border: isHighlighted
+                ? Border.all(color: const Color(0xFFFFD54F), width: 1.4)
+                : null,
+            boxShadow: [
+              BoxShadow(
+                color: isHighlighted
+                    ? const Color(0xFFFFD54F).withOpacity(0.28)
+                    : Colors.black.withOpacity(0.1),
+                blurRadius: isHighlighted ? 10 : 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: content,
+          child: content,
+        ),
+        if (isPinned)
+          Positioned(
+            top: -7,
+            right: isMe ? -6 : null,
+            left: isMe ? null : -6,
+            child: Container(
+              width: 18,
+              height: 18,
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.push_pin_rounded,
+                size: 11,
+                color: Colors.white,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -590,9 +641,9 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
       await _player.resume();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Không phát được audio.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Không phát được audio.')));
     }
   }
 

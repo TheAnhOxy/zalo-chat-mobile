@@ -74,7 +74,8 @@ class ConversationMember {
   static String _extractId(dynamic raw) {
     if (raw == null) return '';
     if (raw is String) return raw;
-    if (raw is Map) return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+    if (raw is Map)
+      return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
     return raw.toString();
   }
 
@@ -124,6 +125,8 @@ class ConversationModel {
   final String? name;
   final String? avatar;
   final List<ConversationMember> members;
+  final List<String> pinnedMessageIds;
+  final List<MessageModel> pinnedMessages;
   final LastMessagePreview? lastMessage;
   final int unreadCount; // ← Thêm / sửa
   final DateTime createdAt;
@@ -135,6 +138,8 @@ class ConversationModel {
     this.name,
     this.avatar,
     required this.members,
+    this.pinnedMessageIds = const [],
+    this.pinnedMessages = const [],
     this.lastMessage,
     this.unreadCount = 0, // default = 0
     required this.createdAt,
@@ -142,6 +147,67 @@ class ConversationModel {
   });
 
   factory ConversationModel.fromJson(Map<String, dynamic> json) {
+    String extractPinnedId(dynamic raw) {
+      if (raw == null) return '';
+      if (raw is String) return raw;
+      if (raw is Map) {
+        final map = Map<String, dynamic>.from(raw);
+        final idRaw = map['_id'] ?? map['id'];
+        if (idRaw is Map) {
+          final idMap = Map<String, dynamic>.from(idRaw);
+          return (idMap['\$oid'] ?? idMap['oid'] ?? idMap['id'] ?? '')
+              .toString();
+        }
+        return idRaw?.toString() ?? '';
+      }
+      return raw.toString();
+    }
+
+    final rawPinned = json['pinnedMessageIds'] as List? ?? const [];
+    final parsedPinnedMessages = rawPinned
+        .whereType<Map>()
+        .map((raw) {
+          try {
+            return MessageModel.fromJson(Map<String, dynamic>.from(raw));
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<MessageModel>()
+        .toList();
+
+    final parsedPinnedIdsFromRaw = rawPinned
+        .map(extractPinnedId)
+        .where((id) => id.isNotEmpty)
+        .toList();
+
+    final parsedPinnedIds = <String>{
+      ...parsedPinnedIdsFromRaw,
+      ...parsedPinnedMessages.map((m) => m.id).where((id) => id.isNotEmpty),
+      ...(json['pinnedMessages'] as List? ?? const [])
+          .whereType<Map>()
+          .map(extractPinnedId)
+          .where((id) => id.isNotEmpty),
+    };
+
+    final parsedPinnedMessagesField =
+        (json['pinnedMessages'] as List? ?? const [])
+            .whereType<Map>()
+            .map((raw) {
+              try {
+                return MessageModel.fromJson(Map<String, dynamic>.from(raw));
+              } catch (_) {
+                return null;
+              }
+            })
+            .whereType<MessageModel>()
+            .toList();
+
+    final mergedPinnedMessages = <String, MessageModel>{
+      for (final m in parsedPinnedMessages) m.id: m,
+      for (final m in parsedPinnedMessagesField) m.id: m,
+    }.values.toList();
+
     return ConversationModel(
       id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
       type: json['type']?.toString() ?? 'PRIVATE',
@@ -161,6 +227,9 @@ class ConversationModel {
       members: (json['members'] as List? ?? [])
           .map((m) => ConversationMember.fromJson(m as Map<String, dynamic>))
           .toList(),
+
+      pinnedMessageIds: parsedPinnedIds.toList(),
+      pinnedMessages: mergedPinnedMessages,
 
       lastMessage: json['lastMessage'] != null
           ? LastMessagePreview.fromJson(
