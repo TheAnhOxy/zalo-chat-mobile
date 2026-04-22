@@ -46,6 +46,23 @@ class StoryService {
     }
   }
 
+  Future<List<StoryGroupModel>> getStoryFeed(String userId) async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/stories/feed/$userId'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+        return data.map((e) => StoryGroupModel.fromJson(e)).toList();
+      }
+      return [];
+    } catch (e) {
+      dev.log('❌ getStoryFeed error: $e');
+      return [];
+    }
+  }
+
   Future<List<ApiStoryModel>> getExploreStories(String excludeUserId) async {
     try {
       final res = await _client

@@ -14,7 +14,7 @@ class StoryListWidget extends StatefulWidget {
 }
 
 class _StoryListWidgetState extends State<StoryListWidget> {
-  final List<ApiStoryModel> _stories = [];
+  final List<StoryGroupModel> _groups = [];
   bool _isLoading = true;
 
   @override
@@ -26,34 +26,72 @@ class _StoryListWidgetState extends State<StoryListWidget> {
     storySocketService.onNewStory.listen((story) {
       if (!mounted) return;
       setState(() {
-        _stories.insert(0, story);
+        final groupIdx = _groups.indexWhere((g) => g.user.id == story.userId);
+        if (groupIdx != -1) {
+          final group = _groups.removeAt(groupIdx);
+          group.stories.add(story); // story.userName/userAvatar có thể null nhưng backend tạo sẽ đẩy đủ
+          // Update lastStoryTime & move to top
+          _groups.insert(0, StoryGroupModel(
+            user: group.user,
+            hasUnseen: true, // vửa có story mới tức là chưa xem
+            lastStoryTime: story.createdAt,
+            stories: group.stories,
+          ));
+        } else {
+          // Tạo group mới nếu user chưa có
+          _groups.insert(0, StoryGroupModel(
+            user: StoryUserModel(
+              id: story.userId,
+              fullName: story.userName ?? 'User',
+              avatar: story.userAvatar ?? '',
+            ),
+            hasUnseen: true,
+            lastStoryTime: story.createdAt,
+            stories: [story],
+          ));
+        }
       });
     });
 
     storySocketService.onStorySeen.listen((data) {
       if (!mounted) return;
-      // Mark story as seen if needed locally
-      // data: {'storyId': ..., 'viewerId': ...}
       final storyId = data['storyId'];
-      final idx = _stories.indexWhere((s) => s.id == storyId);
-      if (idx != -1) {
-        setState(() {
-          if (!_stories[idx].viewers.contains(data['viewerId'])) {
-            _stories[idx].viewers.add(data['viewerId']);
+      final viewerId = data['viewerId'];
+      
+      setState(() {
+        for (int i = 0; i < _groups.length; i++) {
+          final group = _groups[i];
+          final storyIdx = group.stories.indexWhere((s) => s.id == storyId);
+          if (storyIdx != -1) {
+            if (!group.stories[storyIdx].viewers.contains(viewerId)) {
+               group.stories[storyIdx].viewers.add(viewerId);
+            }
+            // Re-eval hasUnseen for me
+            final me = authService.currentUser?.id;
+            if (me != null && viewerId == me) {
+              final newHasUnseen = group.stories.any((s) => !s.viewers.contains(me));
+              _groups[i] = StoryGroupModel(
+                 user: group.user,
+                 hasUnseen: newHasUnseen,
+                 lastStoryTime: group.lastStoryTime,
+                 stories: group.stories,
+              );
+            }
+            break; // found and updated
           }
-        });
-      }
+        }
+      });
     });
   }
 
   Future<void> _fetchStories() async {
     final userId = authService.currentUser?.id;
     if (userId == null) return;
-    final stories = await storyService.getFriendsStories(userId);
+    final groups = await storyService.getStoryFeed(userId);
     if (!mounted) return;
     setState(() {
-      _stories.clear();
-      _stories.addAll(stories);
+      _groups.clear();
+      _groups.addAll(groups);
       _isLoading = false;
     });
   }
@@ -62,10 +100,15 @@ class _StoryListWidgetState extends State<StoryListWidget> {
     Navigator.pushNamed(context, '/create-story');
   }
 
-  void _navigateToViewer(int initialIndex) {
+  void _navigateToViewer(StoryGroupModel group) {
+    final me = authService.currentUser?.id ?? '';
+    // Tìm story chưa xem đầu tiên
+    int initialIdx = group.stories.indexWhere((s) => !s.viewers.contains(me));
+    if (initialIdx == -1) initialIdx = 0; // Nếu xem hết rồi thì xem từ đầu
+
     Navigator.pushNamed(context, '/story-viewer', arguments: {
-      'stories': _stories,
-      'initialIndex': initialIndex,
+      'stories': group.stories,
+      'initialIndex': initialIdx,
     });
   }
 
@@ -86,13 +129,13 @@ class _StoryListWidgetState extends State<StoryListWidget> {
           : ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: _stories.length + 1,
+              itemCount: _groups.length + 1,
               itemBuilder: (context, index) {
                 if (index == 0) {
                   return _buildCreateStoryItem(me?.avatar);
                 }
-                final story = _stories[index - 1];
-                return _buildStoryItem(story, index - 1);
+                final group = _groups[index - 1];
+                return _buildStoryItem(group);
               },
             ),
     );
@@ -156,15 +199,14 @@ class _StoryListWidgetState extends State<StoryListWidget> {
     );
   }
 
-  Widget _buildStoryItem(ApiStoryModel story, int listIndex) {
-    final bool hasSeen = story.viewers.contains(authService.currentUser?.id ?? '');
+  Widget _buildStoryItem(StoryGroupModel group) {
+    final bool hasUnseen = group.hasUnseen;
     
-    // In UI we use userAvatar. Since API didn't populate user info tightly, we fallback to story.userId if userName is null
-    final avatar = story.userAvatar ?? '';
-    final name = story.userName ?? 'User';
+    final avatar = group.user.avatar;
+    final name = group.user.fullName;
 
     return GestureDetector(
-      onTap: () => _navigateToViewer(listIndex),
+      onTap: () => _navigateToViewer(group),
       child: Container(
         width: 60,
         margin: const EdgeInsets.only(right: 16),
@@ -177,7 +219,7 @@ class _StoryListWidgetState extends State<StoryListWidget> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: hasSeen ? Colors.grey.shade300 : AppColors.primary,
+                  color: hasUnseen ? AppColors.primary : Colors.grey.shade300,
                   width: 2,
                 ),
               ),
@@ -197,7 +239,7 @@ class _StoryListWidgetState extends State<StoryListWidget> {
               name,
               style: TextStyle(
                 fontSize: 12,
-                color: hasSeen ? Colors.grey : Colors.black,
+                color: hasUnseen ? Colors.black : Colors.grey,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

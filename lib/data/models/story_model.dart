@@ -1,3 +1,5 @@
+import 'models.dart';
+
 class ApiStoryModel {
   final String id;
   final String userId;
@@ -60,5 +62,58 @@ class ApiStoryModel {
       'userName': userName,
       'userAvatar': userAvatar,
     };
+  }
+}
+
+class StoryUserModel {
+  final String id;
+  final String fullName;
+  final String avatar;
+
+  StoryUserModel({
+    required this.id,
+    required this.fullName,
+    required this.avatar,
+  });
+}
+
+class StoryGroupModel {
+  final StoryUserModel user;
+  final bool hasUnseen;
+  final DateTime lastStoryTime;
+  final List<ApiStoryModel> stories;
+
+  StoryGroupModel({
+    required this.user,
+    required this.hasUnseen,
+    required this.lastStoryTime,
+    required this.stories,
+  });
+
+  factory StoryGroupModel.fromJson(Map<String, dynamic> json) {
+    final userJson = json['user'] ?? {};
+    final user = StoryUserModel(
+      id: userJson['id'] ?? userJson['_id'] ?? '',
+      fullName: userJson['fullName'] ?? 'Unknown User',
+      avatar: userJson['avatar'] ?? '',
+    );
+
+    return StoryGroupModel(
+      user: user,
+      hasUnseen: json['hasUnseen'] ?? false,
+      lastStoryTime: json['lastStoryTime'] != null
+          ? DateTime.parse(json['lastStoryTime'])
+          : DateTime.now(),
+      stories: (json['stories'] as List<dynamic>?)
+              ?.map((e) {
+                 // Clone map e to avoid modifying immutable json map
+                 final Map<String, dynamic> eMap = Map.from(e);
+                 eMap['userName'] = user.fullName;
+                 eMap['userAvatar'] = user.avatar;
+                 return ApiStoryModel.fromJson(eMap);
+              })
+              .toList() ??
+          [],
+    );
   }
 }
