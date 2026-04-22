@@ -99,7 +99,6 @@ class GroupIncomingCallDialog extends StatelessWidget {
             Expanded(
               child: GestureDetector(
                 onTap: () {
-                  Navigator.of(context).pop();
                   callService.rejectCall(
                     callId: callId,
                     conversationId: conversationId,
