@@ -593,6 +593,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
                     peerId: widget.otherUser.id,
                     offer: widget.offer ?? {},
                     isVideo: false,
+                    isGroup: false,
                   );
                 },
               ),

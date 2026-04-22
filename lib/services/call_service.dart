@@ -53,6 +53,63 @@ class CallService {
     ],
   };
 
+  Map<String, dynamic> _sdpReceiveConstraints(bool isVideo) => {
+    'offerToReceiveAudio': true,
+    'offerToReceiveVideo': isVideo,
+  };
+
+  RTCSessionDescription _preferVp8Codec(RTCSessionDescription desc) {
+    final sdp = desc.sdp;
+    if (sdp == null || sdp.isEmpty) return desc;
+
+    final lines = sdp.split('\r\n');
+    int? mVideoIndex;
+    final vp8Payloads = <String>[];
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.startsWith('m=video ')) {
+        mVideoIndex = i;
+      }
+      final match = RegExp(r'^a=rtpmap:(\d+) VP8\/\d+', caseSensitive: false)
+          .firstMatch(line);
+      if (match != null) {
+        vp8Payloads.add(match.group(1)!);
+      }
+    }
+
+    if (mVideoIndex == null || vp8Payloads.isEmpty) return desc;
+
+    final mParts = lines[mVideoIndex].split(' ');
+    if (mParts.length <= 3) return desc;
+
+    final header = mParts.sublist(0, 3);
+    final payloads = mParts.sublist(3);
+    final preferred = <String>[];
+    final rest = <String>[];
+
+    for (final p in payloads) {
+      if (vp8Payloads.contains(p)) {
+        preferred.add(p);
+      } else {
+        rest.add(p);
+      }
+    }
+
+    lines[mVideoIndex] = [...header, ...preferred, ...rest].join(' ');
+    return RTCSessionDescription(lines.join('\r\n'), desc.type);
+  }
+
+  String _candidateType(String? rawCandidate) {
+    if (rawCandidate == null || rawCandidate.isEmpty) return 'unknown';
+    final parts = rawCandidate.split(' ');
+    final idx = parts.indexOf('typ');
+    if (idx >= 0 && idx + 1 < parts.length) {
+      return parts[idx + 1];
+    }
+    return 'unknown';
+  }
+
   void init() {
     socketService.off('incoming_call');
     socketService.off('call_answered');
@@ -101,6 +158,10 @@ class CallService {
         final peerId = responderId ?? _currentPeerId;
         final pc = peerId != null ? _peerConnections[peerId] : _pc;
 
+        dev.log(
+          '📩 call_answered received: peer=$peerId responder=$responderId target=${map['targetId']} source=${map['sourceId']}',
+        );
+
         if (pc == null) {
           dev.log(
             '❌ call_answered received but no peer connection found for $peerId',
@@ -112,10 +173,14 @@ class CallService {
           map['answer']['sdp'],
           map['answer']['type'],
         );
+        dev.log(
+          '🧾 setRemoteDescription(answer): peer=$peerId type=${answer.type} sdpLen=${answer.sdp?.length ?? 0}',
+        );
         await pc.setRemoteDescription(answer);
         _peerHasRemoteDescription[peerId ?? 'default'] = true;
 
         final pending = _pendingRemoteCandidates[peerId] ?? [];
+        dev.log('🧊 flushing pending ICE: peer=$peerId count=${pending.length}');
         for (final c in pending) {
           await pc.addCandidate(c);
         }
@@ -136,8 +201,14 @@ class CallService {
         final sourceId = map['sourceId']?.toString();
         final targetId = map['targetId']?.toString();
         final peerId = sourceId ?? targetId ?? _currentPeerId;
+        final cType = _candidateType(candidate.candidate);
+
+        dev.log(
+          '📩 ICE received: peer=$peerId type=$cType source=$sourceId target=$targetId',
+        );
 
         if (targetId != null && targetId != authService.userId) {
+          dev.log('↪️ ICE ignored (target mismatch): myId=${authService.userId} target=$targetId');
           return;
         }
 
@@ -146,6 +217,7 @@ class CallService {
           _pendingRemoteCandidates
               .putIfAbsent(peerId ?? 'default', () => [])
               .add(candidate);
+              dev.log('🧊 ICE queued (pc missing): peer=$peerId');
           return;
         }
 
@@ -155,8 +227,10 @@ class CallService {
           _pendingRemoteCandidates
               .putIfAbsent(peerId ?? 'default', () => [])
               .add(candidate);
+          dev.log('🧊 ICE queued (no remoteDescription yet): peer=$peerId');
         } else {
           await pc.addCandidate(candidate);
+          dev.log('🧊 ICE added immediately: peer=$peerId type=$cType');
         }
       } catch (e) {
         dev.log('❌ ICE error: $e');
@@ -209,7 +283,11 @@ class CallService {
       await _getLocalStream(isVideo: isVideo);
       final pc = await _createPeerConnection(calleeId, isVideo: isVideo);
 
-      final offer = await pc.createOffer();
+      var offer = await pc.createOffer(_sdpReceiveConstraints(isVideo));
+      offer = _preferVp8Codec(offer);
+      dev.log(
+        '🧾 createOffer(caller): peer=$calleeId video=$isVideo type=${offer.type} sdpLen=${offer.sdp?.length ?? 0}',
+      );
       await pc.setLocalDescription(offer);
 
       socketService.emit('start_call', {
@@ -253,7 +331,11 @@ class CallService {
 
       for (final participantId in participantIds) {
         final pc = await _createPeerConnection(participantId, isVideo: isVideo);
-        final offer = await pc.createOffer();
+        var offer = await pc.createOffer(_sdpReceiveConstraints(isVideo));
+        offer = _preferVp8Codec(offer);
+        dev.log(
+          '🧾 createOffer(group-caller): peer=$participantId video=$isVideo type=${offer.type} sdpLen=${offer.sdp?.length ?? 0}',
+        );
         await pc.setLocalDescription(offer);
 
         offers.add({
@@ -291,18 +373,22 @@ class CallService {
     required String peerId,
     required Map<String, dynamic> offer,
     bool isVideo = false,
+    bool isGroup = false,
   }) async {
     try {
       _currentConversationId = conversationId;
       _currentCallId = callId;
       _currentPeerId = peerId;
       _currentCallerId = peerId;
-      _isGroupCall = true;
+      _isGroupCall = isGroup;
 
       await _getLocalStream(isVideo: isVideo);
       final pc = await _createPeerConnection(peerId, isVideo: isVideo);
 
       final remoteDesc = RTCSessionDescription(offer['sdp'], offer['type']);
+      dev.log(
+        '🧾 setRemoteDescription(offer): peer=$peerId video=$isVideo type=${remoteDesc.type} sdpLen=${remoteDesc.sdp?.length ?? 0}',
+      );
       await pc.setRemoteDescription(remoteDesc);
       _peerHasRemoteDescription[peerId] = true;
 
@@ -312,7 +398,11 @@ class CallService {
       }
       _pendingRemoteCandidates.remove(peerId);
 
-      final answer = await pc.createAnswer();
+      var answer = await pc.createAnswer(_sdpReceiveConstraints(isVideo));
+      answer = _preferVp8Codec(answer);
+      dev.log(
+        '🧾 createAnswer(callee): peer=$peerId video=$isVideo type=${answer.type} sdpLen=${answer.sdp?.length ?? 0}',
+      );
       await pc.setLocalDescription(answer);
 
       socketService.emit('answer_call', {
@@ -422,6 +512,9 @@ class CallService {
     pc.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
 
+      final cType = _candidateType(candidate.candidate);
+      dev.log('📤 ICE send: peer=$peerId type=$cType mid=${candidate.sdpMid}');
+
       socketService.emit('ice_candidate', {
         'conversationId': _currentConversationId,
         'candidate': candidate.candidate,
@@ -433,6 +526,7 @@ class CallService {
     };
 
     pc.onConnectionState = (state) {
+      dev.log('📡 connectionState: peer=$peerId state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         // ✅ Emit call_connected chỉ lần đầu tiên
         if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
@@ -458,9 +552,39 @@ class CallService {
       }
     };
 
+    pc.onIceConnectionState = (state) {
+      dev.log('🧊 iceConnectionState: peer=$peerId state=$state');
+    };
+
+    pc.onIceGatheringState = (state) {
+      dev.log('🧊 iceGatheringState: peer=$peerId state=$state');
+    };
+
+    pc.onSignalingState = (state) {
+      dev.log('📶 signalingState: peer=$peerId state=$state');
+    };
+
     pc.onTrack = (event) async {
-      if (event.streams.isEmpty) return;
-      final stream = event.streams[0];
+      dev.log(
+        '🎬 onTrack: peer=$peerId kind=${event.track.kind} streams=${event.streams.length}',
+      );
+      MediaStream? stream;
+
+      if (event.streams.isNotEmpty) {
+        stream = event.streams[0];
+      } else {
+        try {
+          final fallbackStream = await createLocalMediaStream(
+            'remote_${peerId}_${event.track.id}',
+          );
+          await fallbackStream.addTrack(event.track);
+          stream = fallbackStream;
+          dev.log('ℹ️ onTrack fallback stream created for peer $peerId');
+        } catch (e) {
+          dev.log('❌ onTrack fallback failed for peer $peerId: $e');
+          return;
+        }
+      }
 
       _remoteStream = stream;
       if (!_isGroupCall) {
@@ -514,6 +638,34 @@ class CallService {
       }
     };
 
+    // Fallback for platforms where remote media is delivered via onAddStream.
+    pc.onAddStream = (stream) {
+      dev.log(
+        '🎬 onAddStream: peer=$peerId tracks=${stream.getTracks().length}',
+      );
+      _remoteStream = stream;
+
+      if (!_isGroupCall) {
+        onRemoteStream?.call(stream);
+      } else {
+        onRemoteStream?.call(stream);
+      }
+
+      if (_state == CallState.calling) {
+        if (!_callConnectedEmitted &&
+            _currentCallId != null &&
+            _currentConversationId != null) {
+          _callConnectedEmitted = true;
+          socketService.emit('call_connected', {
+            'callId': _currentCallId,
+            'conversationId': _currentConversationId,
+            'userId': authService.userId,
+          });
+        }
+        _setState(CallState.connected);
+      }
+    };
+
     return pc;
   }
 
@@ -521,10 +673,34 @@ class CallService {
     if (_localStream != null) return;
 
     try {
-      _localStream = await navigator.mediaDevices.getUserMedia({
-        'audio': true,
-        'video': isVideo ? {'facingMode': 'user'} : false,
-      });
+      if (isVideo) {
+        try {
+          _localStream = await navigator.mediaDevices.getUserMedia({
+            'audio': true,
+            'video': {'facingMode': 'user'},
+          });
+        } catch (e) {
+          dev.log('⚠️ getUserMedia facingMode failed, retry generic video: $e');
+          try {
+            _localStream = await navigator.mediaDevices.getUserMedia({
+              'audio': true,
+              'video': true,
+            });
+          } catch (e2) {
+            dev.log('⚠️ getUserMedia video failed, fallback audio-only: $e2');
+            _localStream = await navigator.mediaDevices.getUserMedia({
+              'audio': true,
+              'video': false,
+            });
+          }
+        }
+      } else {
+        _localStream = await navigator.mediaDevices.getUserMedia({
+          'audio': true,
+          'video': false,
+        });
+      }
+
       _peerConnections.values.forEach((pc) {
         _localStream!.getTracks().forEach(
           (track) => pc.addTrack(track, _localStream!),
