@@ -11,6 +11,7 @@ import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
 import '../../services/socket_service.dart';
+import '../../navigation/app_router.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../contacts/create_group_screen.dart';
 import 'group_chat_backgrounds.dart';
@@ -3051,6 +3052,7 @@ class _ConversationStorageSheetState extends State<_ConversationStorageSheet> {
 class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
   late List<ApiGroupMember> _members;
   Map<String, UserModel> _userMap = {};
+  Set<String> _friendIds = <String>{};
   bool _loading = true;
   String? _error;
 
@@ -3061,6 +3063,7 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
     super.initState();
     _members = List<ApiGroupMember>.from(widget.members);
     _loadUsers();
+    _loadFriends();
   }
 
   Future<void> _loadUsers() async {
@@ -3091,6 +3094,53 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
         });
       }
     }
+  }
+
+  Future<void> _loadFriends() async {
+    final myId = (widget.myUserId ?? '').toString();
+    if (myId.isEmpty) return;
+    try {
+      final res = await ContactsApiService.instance.fetchFriends(myId);
+      final list = res.data ?? const <ApiUserModel>[];
+      if (!mounted) return;
+      setState(() {
+        _friendIds = list.map((u) => u.id).where((id) => id.isNotEmpty).toSet();
+      });
+    } catch (_) {
+      // ignore: fallback to empty set
+    }
+  }
+
+  ApiUserModel _toApiUserModel(String userId) {
+    final u = _userMap[userId];
+    if (u != null) {
+      return ApiUserModel(
+        id: u.id,
+        fullName: u.fullName,
+        phone: u.phone,
+        avatar: u.avatar,
+        isOnline: u.status.isOnline,
+        lastSeen: u.status.lastSeen,
+      );
+    }
+    return ApiUserModel(
+      id: userId,
+      fullName: userId,
+      phone: '',
+      avatar: '',
+      isOnline: false,
+      lastSeen: null,
+    );
+  }
+
+  void _openMemberProfile(String userId) {
+    final myId = (widget.myUserId ?? '').toString();
+    if (userId.isEmpty || userId == myId) return;
+    Navigator.pushNamed(
+      context,
+      AppRouter.foundUser,
+      arguments: _toApiUserModel(userId),
+    );
   }
 
   String _displayName(ApiGroupMember m) {
@@ -3437,9 +3487,13 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                       final user = _userMap[m.userId];
                       final name = _displayName(m);
                       final isAdmin = m.role == 'ADMIN';
+                      final myId = (widget.myUserId ?? '').toString();
+                      final isSelf = m.userId == myId;
                       final canTap =
                           widget.canManage &&
                           m.userId != (widget.myUserId ?? '');
+                      final canAddFriend =
+                          !isSelf && !_friendIds.contains(m.userId);
                       return ListTile(
                         onTap: canTap ? () => _showMemberActions(m) : null,
                         leading: AvatarWidget(
@@ -3489,6 +3543,19 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                                   ),
                                 ),
                               ),
+                            if (canAddFriend) ...[
+                              const SizedBox(width: 6),
+                              IconButton(
+                                onPressed: () => _openMemberProfile(m.userId),
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_outlined,
+                                  color: AppColors.primary,
+                                  size: 22,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Thêm bạn',
+                              ),
+                            ],
                             if (canTap) ...[
                               const SizedBox(width: 4),
                               const Icon(
