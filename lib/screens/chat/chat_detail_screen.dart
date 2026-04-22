@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:convert';
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -30,6 +31,8 @@ import '../../widgets/chat/conversation_voice_recording_bar.dart';
 import '../ai/ai_screen.dart';
 import 'pinned_messages_screen.dart';
 import '../group/group_options_screen.dart';
+import '../group/group_chat_screen.dart';
+import '../../navigation/app_navigator.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String conversationId;
@@ -79,6 +82,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   bool _lastKnownTyping = false;
   String? _lastEmittedSeenMessageId;
   String? _highlightedMessageId;
+  bool _suppressAutoScroll = false;
+  bool _backInProgress = false;
+  final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
 
   List<MessageModel> get _messages => _chatController.messages;
   bool get _isTyping => _chatController.isPeerTyping;
@@ -159,7 +165,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       _emitSeenForLatest();
     }
 
-    if (hasNewMessage || typingStarted) {
+    if (!_suppressAutoScroll && (hasNewMessage || typingStarted)) {
       _scrollToBottomBurst();
     }
   }
@@ -177,6 +183,68 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     if (chars <= 60) return 92;
     if (chars <= 180) return 120;
     return 150;
+  }
+
+  GlobalKey _keyForMessage(String messageId) {
+    return _messageKeys.putIfAbsent(messageId, () => GlobalKey());
+  }
+
+  double _estimateChatItemHeight(ChatItem item) {
+    const extra = 10.0;
+    if (item.type == ChatItemType.call) return 92 + extra;
+    return _estimateMessageItemHeight(item.message!) + extra;
+  }
+
+  double _estimateOffsetForChatIndex(int index) {
+    if (index <= 0) return 0;
+    double sum = 0;
+    for (var i = 0; i < index && i < _chatItems.length; i++) {
+      sum += _estimateChatItemHeight(_chatItems[i]);
+    }
+    return sum;
+  }
+
+  Future<void> _jumpToMessageExact(String messageId) async {
+    _suppressAutoScroll = true;
+    final ok = await _chatController.ensureMessageLoaded(messageId);
+    if (!ok || !mounted) {
+      _suppressAutoScroll = false;
+      return;
+    }
+
+    int idx = -1;
+    for (var t = 0; t < 12; t++) {
+      idx = _chatItems.indexWhere(
+        (it) => it.type == ChatItemType.message && it.message?.id == messageId,
+      );
+      if (idx != -1) break;
+      await Future.delayed(const Duration(milliseconds: 24));
+      if (!mounted) return;
+    }
+
+    if (_scrollCtrl.hasClients && idx >= 0) {
+      final max = _scrollCtrl.position.maxScrollExtent;
+      final rough = _estimateOffsetForChatIndex(idx).clamp(0, max).toDouble();
+      await _scrollCtrl.animateTo(
+        rough,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
+    await Future.delayed(const Duration(milliseconds: 32));
+    if (!mounted) return;
+    final ctx = _messageKeys[messageId]?.currentContext;
+    if (ctx == null) return;
+    await Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      alignment: 0.22,
+    );
+
+    _flashMessageHighlight(messageId);
+    _suppressAutoScroll = false;
   }
 
   Future<List<MessageModel>> _fetchMessagesAroundTarget(
@@ -335,6 +403,45 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     }
 
     socketService.on('user_status_changed', _handlePeerStatusChanged);
+
+    socketService.on(
+      'conversation_history_cleared',
+      _handleConversationHistoryCleared,
+    );
+  }
+
+  void _handleConversationHistoryCleared(dynamic data) {
+    try {
+      final map = data is Map<String, dynamic>
+          ? data
+          : (data is String
+              ? (jsonDecode(data) as Map<String, dynamic>)
+              : Map<String, dynamic>.from(data as Map));
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid != widget.conversationId) return;
+    } catch (_) {
+      return;
+    }
+
+    if (!mounted) return;
+    _chatController.setMessages(const <MessageModel>[]);
+    setState(() {
+      _calls = [];
+      _chatItems = [];
+      _lastKnownMessageCount = 0;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Đã xoá lịch sử trò chuyện',
+          style: TextStyle(fontFamily: 'Inter', color: Colors.white),
+        ),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   void _handleConversationCallUpdated(dynamic data) {
@@ -448,6 +555,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     socketService.off('call_ended', _handleCallTerminalEvent);
     socketService.off('call_rejected', _handleCallTerminalEvent);
     socketService.off('user_status_changed', _handlePeerStatusChanged);
+    socketService.off(
+      'conversation_history_cleared',
+      _handleConversationHistoryCleared,
+    );
     _chatController.removeListener(_onChatControllerChanged);
     _chatController.dispose();
     _voiceTimer?.cancel();
@@ -1538,7 +1649,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Future<void> _openOptions() async {
-    final result = await Navigator.push<String?>(
+    final result = await Navigator.push<Object?>(
       context,
       MaterialPageRoute(
         builder: (_) => ChatOptionsScreen(
@@ -1558,8 +1669,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ),
     );
     if (!mounted) return;
-    if (result != null && result.isNotEmpty) {
+    if (result is String && result.isNotEmpty) {
       _chatController.jumpToMessage(result);
+      return;
+    }
+    if (result is ApiGroupModel) {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(builder: (_) => GroupChatScreen(group: result)),
+      );
     }
   }
 
@@ -1602,7 +1720,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ),
     );
     if (selectedMessageId == null || selectedMessageId.isEmpty) return;
-    await _chatController.jumpToMessage(selectedMessageId);
+    await _jumpToMessageExact(selectedMessageId);
   }
 
   Widget _buildPinSystemLine(MessageModel msg) {
@@ -1654,7 +1772,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               avatarUrl: widget.otherUser?.avatar,
               isOnline: _peerOnline,
               presenceText: _presenceText(),
-              onBackTap: () => Navigator.pop(context),
+              onBackTap: _handleBack,
               onVoiceCallTap: _startVoiceCall,
               onVideoCallTap: _startVideoCall,
               onAppearanceTap: _showAppearanceSheet,
@@ -1736,37 +1854,68 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         msg.senderId.toString() == authService.userId.toString();
     final showAvatar = _shouldShowAvatarAtIndex(i);
 
-    return CommonMessageBubble(
-      msg: msg,
-      isMe: isCurrentUserMessage,
-      isGroup: false,
-      senderAvatar: !isCurrentUserMessage ? widget.otherUser?.avatar : null,
-      senderName: !isCurrentUserMessage ? widget.otherUser?.fullName : null,
-      showAvatar: showAvatar,
-      showSeenLabel: msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
-      replyToMsg: msg.replyToId != null
-          ? _messages.firstWhere(
-              (m) => m.id == msg.replyToId,
-              orElse: () => msg,
-            )
-          : null,
-      onLongPress: () {
-        _showMessageActions(msg);
-      },
-      onDoubleTap: () {
-        _addReaction(msg, 'LIKE');
-      },
-      onReply: () {
-        setState(() => _replyTo = msg);
-      },
-      onImageTap: () => _openImageViewer(msg),
-      onFileTap: () => _downloadFile(msg),
-      onVideoTap: () => _openVideoPlayer(msg),
-      isPinned:
-          _chatController.isPinnedStateReady &&
-          _chatController.isMessagePinned(msg.id),
-      isHighlighted: _highlightedMessageId == msg.id,
+    return KeyedSubtree(
+      key: _keyForMessage(msg.id),
+      child: CommonMessageBubble(
+        msg: msg,
+        isMe: isCurrentUserMessage,
+        isGroup: false,
+        senderAvatar: !isCurrentUserMessage ? widget.otherUser?.avatar : null,
+        senderName: !isCurrentUserMessage ? widget.otherUser?.fullName : null,
+        showAvatar: showAvatar,
+        showSeenLabel: msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
+        replyToMsg: msg.replyToId != null
+            ? _messages.firstWhere(
+                (m) => m.id == msg.replyToId,
+                orElse: () => msg,
+              )
+            : null,
+        onLongPress: () {
+          _showMessageActions(msg);
+        },
+        onDoubleTap: () {
+          _addReaction(msg, 'LIKE');
+        },
+        onReply: () {
+          setState(() => _replyTo = msg);
+        },
+        onImageTap: () => _openImageViewer(msg),
+        onFileTap: () => _downloadFile(msg),
+        onVideoTap: () => _openVideoPlayer(msg),
+        isPinned:
+            _chatController.isPinnedStateReady &&
+            _chatController.isMessagePinned(msg.id),
+        isHighlighted: _highlightedMessageId == msg.id,
+      ),
     );
+  }
+
+  void _handleBack() {
+    // Trên web dễ bị assert navigator.dart:5591 khi pop trong lúc Navigator đang "locked"
+    // (do double-tap hoặc đang có transition). Debounce + pop qua root navigator.
+    if (_backInProgress) return;
+    _backInProgress = true;
+
+    Future.microtask(() async {
+      try {
+        final root = AppNavigator.navigatorKey.currentState;
+        if (root != null) {
+          final didPop = await root.maybePop();
+          if (didPop) return;
+        }
+
+        if (!mounted) return;
+        final nav = Navigator.of(context);
+        if (nav.canPop()) nav.pop();
+      } finally {
+        if (mounted) {
+          // Nhả khóa sau 1 tick để tránh click liên tiếp
+          Future.delayed(const Duration(milliseconds: 150), () {
+            if (mounted) _backInProgress = false;
+          });
+        }
+      }
+    });
   }
 
   String? _senderIdForChatItem(ChatItem item) {

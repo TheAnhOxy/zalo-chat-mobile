@@ -6,6 +6,7 @@ import '../../data/models/models.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/socket_service.dart';
 
 class GroupMembersScreen extends StatefulWidget {
   final ApiGroupModel group;
@@ -118,6 +119,23 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
     if (mounted) Navigator.pop(context); // đóng loading
 
     if (result.isSuccess) {
+      // Thông báo system trong nhóm giống Zalo
+      final myId = authService.userId ?? '';
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+      final peerName = (user?.fullName ?? '').trim();
+      socketService.sendMessage({
+        'conversationId': _group.id,
+        'senderId': myId,
+        'type': 'SYSTEM',
+        'content':
+            'REMOVE_MEMBER|$actorName|${peerName.isEmpty ? 'một thành viên' : peerName}',
+      });
+
       setState(() {
         _group = ApiGroupModel(
           id: _group.id,
@@ -216,6 +234,20 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
     if (mounted) Navigator.pop(context); // đóng loading
 
     if (result.isSuccess) {
+      // Thông báo system trong nhóm giống Zalo
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+      socketService.sendMessage({
+        'conversationId': _group.id,
+        'senderId': _myId,
+        'type': 'SYSTEM',
+        'content': 'LEAVE_GROUP|$actorName',
+      });
+
       if (mounted) Navigator.pop(context, true); // trả về để refresh danh sách
     } else {
       _showSnack(result.error ?? 'Lỗi không xác định', isError: true);
@@ -444,7 +476,7 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
             IconButton(
               icon: const Icon(Icons.person_add_rounded, color: Colors.white),
               tooltip: 'Thêm thành viên',
-              onPressed: _showAddMemberSheet,
+              onPressed: _openAddMembers,
             ),
         ],
       ),
@@ -614,51 +646,78 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
 
   // ── Add member sheet ─────────────────────────────────────────────────────────
 
-  void _showAddMemberSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.bgCard,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => _AddMemberSheet(
-        group: _group,
-        onAdded: (newUserIds) async {
-          if (newUserIds.isEmpty) return;
-          _showLoading();
-          final result = await ContactsApiService.instance.addMembersToGroup(
-            conversationId: _group.id,
-            currentMembers: _group.members,
-            newUserIds: newUserIds,
-          );
-          if (mounted) Navigator.pop(context); // loading
-          if (result.isSuccess) {
-            // Reload để lấy dữ liệu mới
-            await _loadUsers();
-            _showSnack('Đã thêm ${newUserIds.length} thành viên');
-          } else {
-            _showSnack(result.error ?? 'Lỗi không xác định', isError: true);
-          }
-        },
+  Future<void> _openAddMembers() async {
+    final picked = await Navigator.push<List<String>?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddMembersScreen(group: _group),
       ),
     );
+    final newUserIds = picked ?? const <String>[];
+    if (newUserIds.isEmpty) return;
+
+    _showLoading();
+    final result = await ContactsApiService.instance.addMembersToGroup(
+      conversationId: _group.id,
+      currentMembers: _group.members,
+      newUserIds: newUserIds,
+    );
+    if (mounted) Navigator.pop(context); // đóng loading
+    if (result.isSuccess) {
+      // Thông báo system trong nhóm giống Zalo
+      final myId = authService.userId ?? '';
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+
+      try {
+        final users = await Future.wait(
+          newUserIds.map((id) => apiService.getUserById(id)),
+        );
+        for (final u in users) {
+          final peerName = (u?.fullName ?? u?.displayName ?? '').trim();
+          socketService.sendMessage({
+            'conversationId': _group.id,
+            'senderId': myId,
+            'type': 'SYSTEM',
+            'content':
+                'ADD_MEMBER|$actorName|${peerName.isEmpty ? 'một thành viên' : peerName}',
+          });
+        }
+      } catch (_) {
+        for (final _ in newUserIds) {
+          socketService.sendMessage({
+            'conversationId': _group.id,
+            'senderId': myId,
+            'type': 'SYSTEM',
+            'content': 'ADD_MEMBER|$actorName|một thành viên',
+          });
+        }
+      }
+
+      await _loadUsers();
+      _showSnack('Đã thêm ${newUserIds.length} thành viên');
+    } else {
+      _showSnack(result.error ?? 'Lỗi không xác định', isError: true);
+    }
   }
 }
 
-// ── Add Member Sheet ──────────────────────────────────────────────────────────
+// ── Add Members Screen (full screen giống Zalo) ────────────────────────────────
 
-class _AddMemberSheet extends StatefulWidget {
+class AddMembersScreen extends StatefulWidget {
   final ApiGroupModel group;
-  final Future<void> Function(List<String> userIds) onAdded;
 
-  const _AddMemberSheet({required this.group, required this.onAdded});
+  const AddMembersScreen({required this.group});
 
   @override
-  State<_AddMemberSheet> createState() => _AddMemberSheetState();
+  State<AddMembersScreen> createState() => _AddMembersScreenState();
 }
 
-class _AddMemberSheetState extends State<_AddMemberSheet> {
+class _AddMembersScreenState extends State<AddMembersScreen> {
   List<ApiUserModel> _allFriends = []; // dùng ApiUserModel từ contacts service
   final Set<String> _selected = {};
   bool _loading = true;
@@ -701,158 +760,166 @@ class _AddMemberSheetState extends State<_AddMemberSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.75,
-      maxChildSize: 0.95,
-      builder: (_, scrollCtrl) {
-        return Column(
+    final shown = _filtered;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: AppColors.primary,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Handle
-            Center(
-              child: Container(
-                margin: const EdgeInsets.only(top: 10, bottom: 8),
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.divider,
-                  borderRadius: BorderRadius.circular(2),
+            const Text(
+              'Thêm vào nhóm',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              'Đã chọn: ${_selected.length}',
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 12,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _selected.isEmpty
+                ? null
+                : () => Navigator.pop(context, _selected.toList()),
+            child: Text(
+              'Thêm',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontWeight: FontWeight.w700,
+                color: _selected.isEmpty ? Colors.white70 : Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _query = v),
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 14,
+                color: AppColors.textPrimary,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Tìm tên hoặc số điện thoại',
+                hintStyle: const TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 14,
+                  color: AppColors.textHint,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search_rounded,
+                  color: AppColors.textHint,
+                  size: 20,
+                ),
+                filled: true,
+                fillColor: const Color(0xFFF2F3F5),
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
                 ),
               ),
             ),
-
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Thêm thành viên',
-                      style: TextStyle(
-                        fontFamily: 'Inter',
-                        fontWeight: FontWeight.w700,
-                        fontSize: 17,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                  if (_selected.isNotEmpty)
-                    TextButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        widget.onAdded(_selected.toList());
-                      },
-                      style: TextButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: Text(
-                        'Thêm (${_selected.length})',
-                        style: const TextStyle(
-                          fontFamily: 'Inter',
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Search
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _searchCtrl,
-                onChanged: (v) => setState(() => _query = v),
-                decoration: InputDecoration(
-                  hintText: 'Tìm bạn bè...',
-                  hintStyle: const TextStyle(
-                      fontFamily: 'Inter', color: AppColors.textHint),
-                  prefixIcon: const Icon(Icons.search_rounded,
-                      color: AppColors.textHint, size: 20),
-                  filled: true,
-                  fillColor: AppColors.bgDark,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            Expanded(
-              child: _loading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                          color: AppColors.primary))
-                  : _filtered.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Không có bạn bè để thêm',
-                            style: TextStyle(
-                              fontFamily: 'Inter',
-                              color: AppColors.textHint,
-                            ),
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary),
+                  )
+                : (shown.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Không có bạn bè để thêm',
+                          style: TextStyle(
+                            fontFamily: 'Inter',
+                            color: AppColors.textHint,
                           ),
-                        )
-                      : ListView.builder(
-                          controller: scrollCtrl,
-                          itemCount: _filtered.length,
-                          itemBuilder: (_, i) {
-                            final u = _filtered[i];
-                            final sel = _selected.contains(u.id);
-                            return CheckboxListTile(
-                              value: sel,
-                              activeColor: AppColors.primary,
-                              onChanged: (_) {
-                                setState(() {
-                                  if (sel) {
-                                    _selected.remove(u.id);
-                                  } else {
-                                    _selected.add(u.id);
-                                  }
-                                });
-                              },
-                              secondary: _AvatarWidget(
-                                url: u.avatar,
-                                name: u.fullName,
-                                size: 42,
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: shown.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1, color: AppColors.divider),
+                        itemBuilder: (_, i) {
+                          final u = shown[i];
+                          final sel = _selected.contains(u.id);
+                          return ListTile(
+                            onTap: () {
+                              setState(() {
+                                if (sel) {
+                                  _selected.remove(u.id);
+                                } else {
+                                  _selected.add(u.id);
+                                }
+                              });
+                            },
+                            leading: _AvatarWidget(
+                              url: u.avatar,
+                              name: u.fullName,
+                              size: 44,
+                            ),
+                            title: Text(
+                              u.fullName,
+                              style: const TextStyle(
+                                fontFamily: 'Inter',
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
                               ),
-                              title: Text(
-                                u.fullName,
-                                style: const TextStyle(
-                                  fontFamily: 'Inter',
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.textPrimary,
+                            ),
+                            trailing: Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: sel
+                                      ? AppColors.primary
+                                      : AppColors.textHint,
+                                  width: 2,
                                 ),
+                                color: sel
+                                    ? AppColors.primary
+                                    : Colors.transparent,
                               ),
-                              subtitle: u.isOnline
-                                  ? const Text(
-                                      'Đang online',
-                                      style: TextStyle(
-                                        fontFamily: 'Inter',
-                                        fontSize: 12,
-                                        color: AppColors.online,
-                                      ),
+                              child: sel
+                                  ? const Icon(
+                                      Icons.check,
+                                      size: 16,
+                                      color: Colors.white,
                                     )
                                   : null,
-                            );
-                          },
-                        ),
-            ),
-
-            SizedBox(height: MediaQuery.of(context).padding.bottom),
-          ],
-        );
-      },
+                            ),
+                          );
+                        },
+                      )),
+          ),
+          SizedBox(height: MediaQuery.of(context).padding.bottom),
+        ],
+      ),
     );
   }
 }

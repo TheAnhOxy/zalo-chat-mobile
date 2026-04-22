@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_utils.dart' as du;
 import '../../data/models/models.dart';
@@ -11,7 +12,6 @@ import 'chat_detail_screen.dart';
 import '../group/group_chat_screen.dart';
 import '../ai/ai_screen.dart';
 import 'dart:developer';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -55,18 +55,208 @@ class _ChatListScreenState extends State<ChatListScreen> {
     super.initState();
     _loadConversations();
     _initSocketListener();
+    socketService.on('conversation_updated', _onConversationUpdated);
+    socketService.on('conversation_pin_updated', _handleConversationPinUpdated);
+    socketService.on('conversation_removed', _handleConversationRemoved);
+    socketService.on(
+      'conversation_history_cleared',
+      _handleConversationHistoryCleared,
+    );
+    socketService.on('conversation_created', _handleConversationCreated);
   }
 
-  String _pinPrefKey(String convId) =>
-      'conv_pin_${authService.userId ?? 'me'}_$convId';
+  void _handleConversationCreated(dynamic data) {
+    if (!mounted) return;
+    try {
+      final map = _tryMap(data);
+      if (map == null) return;
+      final convRaw = map['conversation'];
+      final convMap = _tryMap(convRaw);
+      if (convMap == null) return;
+      final conv = ConversationModel.fromJson(convMap);
+      if (conv.id.isEmpty) return;
+      if (_conversations.any((c) => c.id == conv.id)) return;
+
+      setState(() {
+        _conversations.insert(0, conv);
+        _loadPinnedPrefs(_conversations);
+        _conversations = _sortWithPinned(_conversations);
+      });
+
+      socketService.joinConversation(conv.id);
+      _cacheKnownUsers([conv]);
+      _fetchUserProfiles([conv]);
+    } catch (_) {}
+  }
+
+  void _handleConversationHistoryCleared(dynamic data) {
+    if (!mounted) return;
+    try {
+      final map = _tryMap(data);
+      if (map == null) return;
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid.isEmpty) return;
+      final idx = _conversations.indexWhere((c) => c.id == cid);
+      if (idx == -1) return;
+      final c = _conversations[idx];
+      setState(() {
+        _conversations[idx] = ConversationModel(
+          id: c.id,
+          type: c.type,
+          name: c.name,
+          avatar: c.avatar,
+          members: c.members,
+          createdAt: c.createdAt,
+          updatedAt: DateTime.now(),
+          unreadCount: 0,
+          lastMessage: null,
+          pinnedMessageIds: c.pinnedMessageIds,
+          pinnedMessages: c.pinnedMessages,
+        );
+        _conversations = _sortWithPinned(_conversations);
+      });
+    } catch (_) {}
+  }
+
+  void _handleConversationRemoved(dynamic data) {
+    if (!mounted) return;
+    try {
+      final map = _tryMap(data);
+      if (map == null) return;
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid.isEmpty) return;
+      setState(() {
+        _pinnedConversationIds.remove(cid);
+        _conversations = _conversations.where((c) => c.id != cid).toList();
+      });
+    } catch (_) {}
+  }
+
+  void _handleConversationPinUpdated(dynamic data) {
+    if (!mounted) return;
+    try {
+      final map = _tryMap(data);
+      if (map == null) return;
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid.isEmpty) return;
+      final pinned = map['isPinned'] == true;
+      setState(() {
+        if (pinned) {
+          _pinnedConversationIds.add(cid);
+        } else {
+          _pinnedConversationIds.remove(cid);
+        }
+        _conversations = _sortWithPinned(_conversations);
+      });
+    } catch (_) {}
+  }
+
+  void _onConversationUpdated(dynamic data) {
+    if (!mounted) return;
+    Map<String, dynamic>? tryMap(dynamic d) {
+      if (d == null) return null;
+      if (d is Map) return Map<String, dynamic>.from(d);
+      if (d is String) {
+        try {
+          final decoded = jsonDecode(d);
+          if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    final map = tryMap(data);
+    if (map == null) return;
+    final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+    if (cid.isEmpty) return;
+    final newName = (map['name'] ?? '').toString();
+    final newAvatar = (map['avatar'] ?? '').toString();
+    final membersRaw = map['members'];
+    final updatedAtRaw = map['updatedAt']?.toString();
+    final updatedAt = updatedAtRaw != null
+        ? (DateTime.tryParse(updatedAtRaw) ?? DateTime.now())
+        : DateTime.now();
+
+    final idx = _conversations.indexWhere((c) => c.id == cid);
+    if (idx == -1) return;
+    final c = _conversations[idx];
+
+    setState(() {
+      List<ConversationMember> nextMembers = c.members;
+      if (membersRaw is List) {
+        try {
+          nextMembers = membersRaw
+              .whereType<dynamic>()
+              .map((e) {
+                if (e is Map<String, dynamic>) return e;
+                if (e is Map) return Map<String, dynamic>.from(e);
+                return null;
+              })
+              .whereType<Map<String, dynamic>>()
+              .map(ConversationMember.fromJson)
+              .where((m) => m.userId.isNotEmpty)
+              .toList();
+        } catch (_) {
+          // ignore parse fail, keep old members
+        }
+      }
+
+      String? nextName;
+      final oldName = (c.name ?? '').trim();
+      if (newName.trim().isNotEmpty) {
+        nextName = newName;
+      } else {
+        nextName = c.name;
+      }
+
+      // Nếu đây là tên nhóm tự sinh từ thành viên thì cập nhật theo members mới.
+      if (c.isGroup && membersRaw is List) {
+        String autoNameFor(List<ConversationMember> members) {
+          final myId = authService.userId ?? '';
+          final names = <String>[];
+          for (final m in members) {
+            if (m.userId.isEmpty || m.userId == myId) continue;
+            final profile = _userProfiles[m.userId];
+            final n = (profile?.fullName ?? m.nickname ?? m.name ?? '').trim();
+            if (n.isNotEmpty) names.add(n);
+          }
+          if (names.isEmpty) return 'Nhóm';
+          final shown = names.take(3).toList();
+          return shown.join(', ');
+        }
+
+        final oldAuto = autoNameFor(c.members);
+        final newAuto = autoNameFor(nextMembers);
+        final effectiveOld = oldName.isNotEmpty ? oldName : (c.name ?? '').trim();
+        final isAuto =
+            effectiveOld.isEmpty || effectiveOld == 'Nhóm' || effectiveOld == oldAuto;
+        if (isAuto) nextName = newAuto;
+      }
+
+      _conversations[idx] = ConversationModel(
+        id: c.id,
+        type: c.type,
+        name: nextName,
+        avatar: newAvatar.isNotEmpty ? newAvatar : c.avatar,
+        members: nextMembers,
+        createdAt: c.createdAt,
+        updatedAt: updatedAt,
+        unreadCount: c.unreadCount,
+        lastMessage: c.lastMessage,
+      );
+      // sort lại để nhóm vừa update có thể nhảy lên (nếu sort theo recent)
+      _conversations = _sortWithPinned(_conversations);
+    });
+  }
 
   Future<void> _loadPinnedPrefs(List<ConversationModel> convs) async {
-    final p = await SharedPreferences.getInstance();
+    // Pin được lưu theo user ở backend (members.$.isPinned)
+    final myId = authService.userId ?? '';
     _pinnedConversationIds
       ..clear()
       ..addAll(
         convs
-            .where((c) => p.getBool(_pinPrefKey(c.id)) ?? false)
+            .where((c) => c.members.any((m) => m.userId == myId && m.isPinned))
             .map((c) => c.id),
       );
   }
@@ -201,6 +391,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   void dispose() {
+    socketService.off('conversation_updated', _onConversationUpdated);
+    socketService.off('conversation_pin_updated', _handleConversationPinUpdated);
+    socketService.off('conversation_removed', _handleConversationRemoved);
+    socketService.off(
+      'conversation_history_cleared',
+      _handleConversationHistoryCleared,
+    );
+    socketService.off('conversation_created', _handleConversationCreated);
     socketService.off('new_message', _handleNewMessageEvent);
     socketService.off(
       'conversation_call_updated',
@@ -425,6 +623,32 @@ class _ChatListScreenState extends State<ChatListScreen> {
     String? type,
     MessageMetadata? metadata,
   }) {
+    final raw = content.trim();
+    if (raw.startsWith('ADD_MEMBER|')) {
+      final parts = raw.split('|');
+      final actor = parts.length > 1 ? parts[1].trim() : '';
+      final peer = parts.length > 2 ? parts[2].trim() : '';
+      final a = actor.isEmpty ? 'Ai đó' : actor;
+      final p = peer.isEmpty ? 'một thành viên' : peer;
+      return '$a đã thêm $p vào nhóm';
+    }
+    if (raw.startsWith('REMOVE_MEMBER|') || raw.startsWith('KICK_MEMBER|')) {
+      final parts = raw.split('|');
+      final actor = parts.length > 1 ? parts[1].trim() : '';
+      final peer = parts.length > 2 ? parts[2].trim() : '';
+      final a = actor.isEmpty ? 'Ai đó' : actor;
+      final p = peer.isEmpty ? 'một thành viên' : peer;
+      return '$a đã xóa $p khỏi nhóm';
+    }
+    if (raw.startsWith('LEAVE_GROUP|')) {
+      final parts = raw.split('|');
+      final actor = parts.length > 1 ? parts[1].trim() : '';
+      final a = actor.isEmpty ? 'Ai đó' : actor;
+      return '$a đã rời khỏi nhóm';
+    }
+    if (raw.startsWith('PIN_MESSAGE|')) return 'Đã ghim một tin nhắn';
+    if (raw.startsWith('UNPIN_MESSAGE|')) return 'Đã bỏ ghim một tin nhắn';
+
     final normalizedType = (type ?? '').toUpperCase();
     if (normalizedType == 'IMAGE' || _isImageUrl(content)) {
       return 'Đã gửi 1 ảnh';
@@ -1038,6 +1262,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   void _showContextMenu(ConversationModel c) {
+    final isPinned = _pinnedConversationIds.contains(c.id);
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.bgCard,
@@ -1058,9 +1283,48 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
           _MenuTile(
             Icons.push_pin_outlined,
-            'Ghim cuộc trò chuyện',
+            isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện',
             AppColors.textPrimary,
-            () => Navigator.pop(context),
+            () async {
+              Navigator.pop(context);
+              final myId = authService.userId ?? '';
+              if (myId.isEmpty) return;
+              final nextPinned = !isPinned;
+
+              // Optimistic UI
+              setState(() {
+                if (nextPinned) {
+                  _pinnedConversationIds.add(c.id);
+                } else {
+                  _pinnedConversationIds.remove(c.id);
+                }
+                _conversations = _sortWithPinned(_conversations);
+              });
+
+              final res = await ContactsApiService.instance.setConversationPinned(
+                conversationId: c.id,
+                userId: myId,
+                isPinned: nextPinned,
+              );
+              if (!mounted) return;
+              if (!res.isSuccess) {
+                // rollback
+                setState(() {
+                  if (isPinned) {
+                    _pinnedConversationIds.add(c.id);
+                  } else {
+                    _pinnedConversationIds.remove(c.id);
+                  }
+                  _conversations = _sortWithPinned(_conversations);
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(res.error ?? 'Không thể ghim cuộc trò chuyện'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
           ),
           _MenuTile(
             Icons.delete_outline,
