@@ -12,7 +12,16 @@ import '../../services/auth_service.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AiScreen extends StatefulWidget {
-  const AiScreen({super.key});
+  final String? targetConversationId;
+  final int targetConversationLimit;
+  final bool autoSummarizeOnOpen;
+
+  const AiScreen({
+    super.key,
+    this.targetConversationId,
+    this.targetConversationLimit = 60,
+    this.autoSummarizeOnOpen = false,
+  });
 
   @override
   State<AiScreen> createState() => _AiScreenState();
@@ -73,6 +82,18 @@ class _AiScreenState extends State<AiScreen> with TickerProviderStateMixin {
     } catch (_) {
       // ignore - fallback to local-only
     }
+
+    if (widget.autoSummarizeOnOpen &&
+        widget.targetConversationId != null &&
+        widget.targetConversationId!.isNotEmpty) {
+      // Gửi yêu cầu tóm tắt ngay khi mở AI từ 1 cuộc trò chuyện cụ thể.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      await _sendMessage(
+        'Tóm tắt cuộc trò chuyện này (nêu ý chính, quyết định/việc cần làm, mốc thời gian nếu có).',
+        targetConversationId: widget.targetConversationId,
+      );
+    }
   }
 
   Future<void> _loadConversationById(String id) async {
@@ -128,7 +149,10 @@ class _AiScreenState extends State<AiScreen> with TickerProviderStateMixin {
 
   // ── Send message ──────────────────────────────────────────────────────────
 
-  Future<void> _sendMessage(String text) async {
+  Future<void> _sendMessage(
+    String text, {
+    String? targetConversationId,
+  }) async {
     final trimmed = text.trim();
     if ((trimmed.isEmpty && _selectedFiles.isEmpty) || _isSending) return;
 
@@ -208,6 +232,8 @@ class _AiScreenState extends State<AiScreen> with TickerProviderStateMixin {
                 })
             .toList(),
         conversationId: _conversationId,
+        targetConversationId: targetConversationId,
+        targetConversationLimit: widget.targetConversationLimit,
         history: history,
       );
 

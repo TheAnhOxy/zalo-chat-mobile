@@ -1428,11 +1428,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           top: Radius.circular(20),
                         ),
                       ),
-                      child: const ClipRRect(
+                      child: ClipRRect(
                         borderRadius: BorderRadius.vertical(
                           top: Radius.circular(16),
                         ),
-                        child: AiScreen(),
+                        child: AiScreen(
+                          targetConversationId: widget.conversationId,
+                          autoSummarizeOnOpen: true,
+                        ),
                       ),
                     ),
                   );
