@@ -1699,7 +1699,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
                     useSafeArea: false,
-                    builder: (_) => const _GroupAiChatSheet(),
+                    builder: (_) => _GroupAiChatSheet(
+                      conversationId: _group.id,
+                    ),
                   );
                 },
               ),
@@ -2243,7 +2245,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _GroupAiChatSheet extends StatelessWidget {
-  const _GroupAiChatSheet();
+  final String conversationId;
+
+  const _GroupAiChatSheet({required this.conversationId});
 
   @override
   Widget build(BuildContext context) {
@@ -2267,10 +2271,15 @@ class _GroupAiChatSheet extends StatelessWidget {
               ),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: ClipRRect(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              child: AiScreen(),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: AiScreen(
+                targetConversationId: conversationId,
+                autoSummarizeOnOpen: true,
+              ),
             ),
           ),
         ],

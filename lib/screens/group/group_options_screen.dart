@@ -52,6 +52,12 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   bool _mediaPreviewLoading = false;
   bool _backInProgress = false;
 
+  bool get _isGroupMember {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) return false;
+    return _group.members.any((m) => m.userId == myId);
+  }
+
   bool get _isAdmin {
     final myId = authService.userId ?? '';
     return _group.members.any((m) => m.userId == myId && m.role == 'ADMIN');
@@ -258,9 +264,9 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   }
 
   Future<void> _openAddMembers() async {
-    if (!_isAdmin) {
+    if (!_isGroupMember) {
       _showLeaveSnack(
-        'Chỉ quản trị viên mới thêm được thành viên',
+        'Bạn không phải thành viên của nhóm',
         isError: true,
       );
       return;
