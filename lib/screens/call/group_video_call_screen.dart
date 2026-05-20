@@ -575,14 +575,17 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
 
   Widget _buildVideoGridBackground(List<GroupCallParticipant> activePeers) {
     final count = activePeers.length;
-    final crossAxisCount = count <= 4 ? 2 : 3;
-    final childAspectRatio = crossAxisCount == 2
-      ? (count == 2 ? 0.78 : 0.92)
-      : 0.76;
+    // For 4+ participants we show 2 columns. For more than 4 allow vertical
+    // scrolling (5-6 etc.). Keep tiles ~portrait for mobile.
+    final crossAxisCount = 2;
+    final childAspectRatio = 0.78;
+    final scrollable = count > 4;
 
     return GridView.builder(
       padding: EdgeInsets.zero,
-      physics: const NeverScrollableScrollPhysics(),
+      physics: scrollable
+          ? const BouncingScrollPhysics()
+          : const NeverScrollableScrollPhysics(),
       itemCount: count,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,
@@ -590,18 +593,17 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
         mainAxisSpacing: 2,
         crossAxisSpacing: 2,
       ),
-      itemBuilder: (_, index) {
-        return _buildParticipantVideoTile(activePeers[index]);
-      },
+      itemBuilder: (_, index) => _buildParticipantVideoTile(activePeers[index]),
     );
   }
 
   Widget _buildTwoUpLayout(List<GroupCallParticipant> peers) {
+    // Top/bottom split (each takes 50% height, full width)
     return SizedBox.expand(
-      child: Row(
+      child: Column(
         children: [
           Expanded(child: _buildParticipantVideoTile(peers[0])),
-          const SizedBox(width: 2),
+          const SizedBox(height: 2),
           Expanded(child: _buildParticipantVideoTile(peers[1])),
         ],
       ),
@@ -609,20 +611,21 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
   }
 
   Widget _buildThreeUpLayout(List<GroupCallParticipant> peers) {
+    // Layout: first participant full-width on top, two others split below
     return SizedBox.expand(
       child: Column(
         children: [
+          Expanded(child: _buildParticipantVideoTile(peers[0])),
+          const SizedBox(height: 2),
           Expanded(
             child: Row(
               children: [
-                Expanded(child: _buildParticipantVideoTile(peers[0])),
-                const SizedBox(width: 2),
                 Expanded(child: _buildParticipantVideoTile(peers[1])),
+                const SizedBox(width: 2),
+                Expanded(child: _buildParticipantVideoTile(peers[2])),
               ],
             ),
           ),
-          const SizedBox(height: 2),
-          Expanded(child: _buildParticipantVideoTile(peers[2])),
         ],
       ),
     );
@@ -647,6 +650,22 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
             bottom: 16,
             child: _buildNamePill(participant.name),
           ),
+          // mic indicator
+          if (participant.isMuted)
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.black, width: 1.2),
+                ),
+                child: const Icon(Icons.mic_off, color: Colors.white, size: 12),
+              ),
+            ),
         ],
       );
     }
@@ -720,6 +739,21 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
             bottom: 8,
             child: _buildNamePill(participant.name),
           ),
+          if (participant.isMuted)
+            Positioned(
+              right: 8,
+              top: 8,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.black, width: 1),
+                ),
+                child: const Icon(Icons.mic_off, color: Colors.white, size: 10),
+              ),
+            ),
         ],
       );
     }
@@ -778,6 +812,21 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
             top: 8,
             child: _buildNamePill(participant.name),
           ),
+          if (participant.isMuted)
+            Positioned(
+              right: 8,
+              top: 8,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.black, width: 1),
+                ),
+                child: const Icon(Icons.mic_off, color: Colors.white, size: 10),
+              ),
+            ),
         ],
       ),
     );
