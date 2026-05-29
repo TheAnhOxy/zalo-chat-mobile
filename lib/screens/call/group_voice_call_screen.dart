@@ -59,6 +59,12 @@ class GroupVoiceCallScreen extends StatefulWidget {
   /// offer SDP (chỉ có khi isIncoming == true).
   final Map<String, dynamic>? offer;
 
+  /// true = vào thẳng cuộc gọi đang có, không tạo call mới.
+  final bool joinExistingCall;
+
+  /// true = nhận cuộc gọi ngay khi màn hình mở.
+  final bool autoAnswer;
+
   const GroupVoiceCallScreen({
     super.key,
     required this.conversationId,
@@ -69,6 +75,8 @@ class GroupVoiceCallScreen extends StatefulWidget {
     this.isIncoming = false,
     this.callId,
     this.offer,
+    this.joinExistingCall = false,
+    this.autoAnswer = false,
   });
 
   @override
@@ -223,7 +231,26 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
     }
 
     if (widget.isIncoming) {
-      setState(() => _callState = CallState.incoming);
+      if (widget.autoAnswer) {
+        setState(() => _callState = CallState.calling);
+        await callService.answerCall(
+          conversationId: widget.conversationId,
+          callId: widget.callId ?? '',
+          peerId: widget.callerId,
+          offer: widget.offer ?? const {},
+          isVideo: false,
+          isGroup: true,
+        );
+      } else {
+        setState(() => _callState = CallState.incoming);
+      }
+    } else if (widget.joinExistingCall) {
+      await callService.joinGroupCall(
+        conversationId: widget.conversationId,
+        callId: widget.callId ?? '',
+        isVideo: false,
+      );
+      setState(() => _callState = CallState.calling);
     } else {
       // Gọi nhóm: participants là danh sách userId của tất cả thành viên.
       await callService.startGroupCall(

@@ -15,6 +15,7 @@ class VoiceCallScreen extends StatefulWidget {
   final String? callId;
   final String? conversationId;
   final Map<String, dynamic>? offer;
+  final bool autoAnswer;
 
   const VoiceCallScreen({
     super.key,
@@ -23,6 +24,7 @@ class VoiceCallScreen extends StatefulWidget {
     this.callId,
     this.conversationId,
     this.offer,
+    this.autoAnswer = false,
   });
 
   @override
@@ -93,8 +95,19 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
       }
     }
     if (widget.isIncoming) {
-      print('📞 Incoming call, setting state to incoming');
-      setState(() => _callState = CallState.incoming);
+      if (widget.autoAnswer) {
+        setState(() => _callState = CallState.calling);
+        await callService.answerCall(
+          conversationId: widget.conversationId ?? '',
+          callId: widget.callId ?? '',
+          peerId: widget.otherUser.id,
+          offer: widget.offer ?? const {},
+          isVideo: false,
+        );
+      } else {
+        print('📞 Incoming call, setting state to incoming');
+        setState(() => _callState = CallState.incoming);
+      }
     } else {
       print('📞 Outgoing call, starting call');
       await callService.startCall(

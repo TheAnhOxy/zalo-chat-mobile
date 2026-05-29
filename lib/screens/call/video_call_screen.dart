@@ -15,6 +15,7 @@ class VideoCallScreen extends StatefulWidget {
   final String? callId;
   final String? conversationId;
   final Map<String, dynamic>? offer;
+  final bool autoAnswer;
 
   const VideoCallScreen({
     super.key,
@@ -23,6 +24,7 @@ class VideoCallScreen extends StatefulWidget {
     this.callId,
     this.conversationId,
     this.offer,
+    this.autoAnswer = false,
   });
 
   @override
@@ -105,7 +107,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
 
     if (widget.isIncoming) {
-      setState(() => _callState = CallState.incoming);
+      if (widget.autoAnswer) {
+        setState(() => _callState = CallState.calling);
+        await callService.answerCall(
+          conversationId: widget.conversationId ?? '',
+          callId: widget.callId ?? '',
+          peerId: widget.otherUser.id,
+          offer: widget.offer ?? const {},
+          isVideo: true,
+        );
+      } else {
+        setState(() => _callState = CallState.incoming);
+      }
     } else {
       await callService.startCall(
         conversationId: widget.conversationId ?? '',

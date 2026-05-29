@@ -473,6 +473,32 @@ class CallService {
     }
   }
 
+  Future<void> joinGroupCall({
+    required String conversationId,
+    required String callId,
+    bool isVideo = false,
+  }) async {
+    try {
+      _currentConversationId = conversationId;
+      _currentCallId = callId;
+      _currentCallerId = authService.userId;
+      _isGroupCall = true;
+
+      await _getLocalStream(isVideo: isVideo);
+
+      socketService.emit('call_connected', {
+        'callId': callId,
+        'conversationId': conversationId,
+        'userId': authService.userId,
+      });
+
+      _setState(CallState.calling);
+    } catch (e) {
+      dev.log('❌ joinGroupCall error: $e');
+      _cleanUp();
+    }
+  }
+
   void rejectCall({required String callId, required String conversationId}) {
     socketService.emit('reject_call', {
       'callId': callId,

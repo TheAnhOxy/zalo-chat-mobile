@@ -25,6 +25,45 @@ class GroupIncomingCallDialog extends StatelessWidget {
     this.offer,
   });
 
+  void _openDetails(BuildContext context) {
+    Navigator.of(context).pop();
+    if (isVideo) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => GroupVideoCallScreen(
+            conversationId: conversationId,
+            groupName: groupName.isNotEmpty ? groupName : 'Nhóm',
+            callerId: callerId,
+            groupAvatar: groupAvatar,
+            participants: participants,
+            isIncoming: true,
+            callId: callId,
+            offer: offer,
+          ),
+        ),
+      );
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => GroupVoiceCallScreen(
+            conversationId: conversationId,
+            groupName: groupName.isNotEmpty ? groupName : 'Nhóm',
+            callerId: callerId,
+            groupAvatar: groupAvatar,
+            participants: participants,
+            isIncoming: true,
+            callId: callId,
+            offer: offer,
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayName = groupName.isNotEmpty ? groupName : 'Nhóm';
@@ -35,9 +74,12 @@ class GroupIncomingCallDialog extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
       actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      content: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _openDetails(context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
           Container(
             width: 84,
             height: 84,
@@ -91,7 +133,8 @@ class GroupIncomingCallDialog extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-        ],
+          ],
+        ),
       ),
       actions: [
         Row(
@@ -146,6 +189,7 @@ class GroupIncomingCallDialog extends StatelessWidget {
                           groupAvatar: avatarUrl,
                           participants: participants,
                           isIncoming: true,
+                          autoAnswer: true,
                           callId: callId,
                           offer: offer,
                         ),
@@ -163,6 +207,7 @@ class GroupIncomingCallDialog extends StatelessWidget {
                           groupAvatar: avatarUrl,
                           participants: participants,
                           isIncoming: true,
+                          autoAnswer: true,
                           callId: callId,
                           offer: offer,
                         ),

@@ -25,6 +25,10 @@ class GroupVideoCallScreen extends StatefulWidget {
   final bool isIncoming;
   final String? callId;
   final Map<String, dynamic>? offer;
+  /// true = vào thẳng cuộc gọi đang có, không tạo call mới.
+  final bool joinExistingCall;
+  /// true = nhận cuộc gọi ngay khi màn hình mở.
+  final bool autoAnswer;
 
   const GroupVideoCallScreen({
     super.key,
@@ -36,6 +40,8 @@ class GroupVideoCallScreen extends StatefulWidget {
     this.isIncoming = false,
     this.callId,
     this.offer,
+    this.joinExistingCall = false,
+    this.autoAnswer = false,
   });
 
   @override
@@ -240,7 +246,29 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
     }
 
     if (widget.isIncoming) {
-      setState(() => _callState = CallState.incoming);
+      if (widget.autoAnswer) {
+        setState(() => _callState = CallState.calling);
+        await callService.answerCall(
+          conversationId: widget.conversationId,
+          callId: widget.callId ?? '',
+          peerId: widget.callerId,
+          offer: widget.offer ?? const {},
+          isVideo: true,
+          isGroup: true,
+        );
+      } else {
+        setState(() => _callState = CallState.incoming);
+      }
+    } else if (widget.joinExistingCall) {
+      await callService.joinGroupCall(
+        conversationId: widget.conversationId,
+        callId: widget.callId ?? '',
+        isVideo: true,
+      );
+      if (callService.localStream != null) {
+        _localRenderer.srcObject = callService.localStream;
+      }
+      setState(() => _callState = CallState.calling);
     } else {
       await callService.startGroupCall(
         conversationId: widget.conversationId,

@@ -391,6 +391,7 @@ class CallModel {
   final String conversationId;
   final String callerId;
   final List<String> participants;
+  final List<String> activeParticipants;
   final String type; // VOICE | VIDEO
   final String status; // ENDED | MISSED | REJECTED | CALLING
   final DateTime? startedAt;
@@ -403,6 +404,7 @@ class CallModel {
     required this.conversationId,
     required this.callerId,
     required this.participants,
+    this.activeParticipants = const [],
     required this.type,
     required this.status,
     this.startedAt,
@@ -428,6 +430,9 @@ class CallModel {
       conversationId: extractId(json['conversationId']),
       callerId: extractId(json['callerId']),
       participants: ((json['participants'] as List?) ?? [])
+          .map((e) => extractId(e))
+          .toList(),
+        activeParticipants: ((json['activeParticipants'] as List?) ?? [])
           .map((e) => extractId(e))
           .toList(),
       type: json['type']?.toString() ?? 'VOICE',
