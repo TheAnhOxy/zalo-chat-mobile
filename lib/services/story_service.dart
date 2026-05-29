@@ -22,6 +22,23 @@ class StoryService {
     return headers;
   }
 
+  Future<List<ApiStoryModel>> getStories() async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/stories'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+        return data.map((e) => ApiStoryModel.fromJson(e)).toList();
+      }
+      return [];
+    } catch (e) {
+      dev.log('❌ getStories error: $e');
+      return [];
+    }
+  }
+
   Future<List<ApiStoryModel>> getFriendsStories(String userId) async {
     try {
       // In a real scenario, the backend could provide an aggregation.
@@ -86,6 +103,7 @@ class StoryService {
     required String type, // IMAGE | VIDEO
     String caption = '',
     required DateTime expiresAt,
+    String? thumbnailUrl,
   }) async {
     try {
       final body = jsonEncode({
@@ -94,6 +112,7 @@ class StoryService {
         'type': type,
         'caption': caption,
         'expiresAt': expiresAt.toIso8601String(),
+        'thumbnailUrl': thumbnailUrl,
       });
 
       final res = await _client

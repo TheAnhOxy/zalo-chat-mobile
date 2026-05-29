@@ -4,6 +4,8 @@ import '../../services/auth_service.dart';
 import '../../services/story_service.dart';
 import '../../services/story_socket_service.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/config/app_config.dart';
+import '../../widgets/story/video_thumbnail_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class StoryListWidget extends StatefulWidget {
@@ -122,13 +124,13 @@ class _StoryListWidgetState extends State<StoryListWidget> {
   Widget build(BuildContext context) {
     final me = authService.currentUser;
     return Container(
-      height: 100,
+      height: 200,
       color: Colors.white,
       child: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView.builder(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               itemCount: _groups.length + 1,
               itemBuilder: (context, index) {
                 if (index == 0) {
@@ -142,56 +144,86 @@ class _StoryListWidgetState extends State<StoryListWidget> {
   }
 
   Widget _buildCreateStoryItem(String? myAvatar) {
+    final avatarUrl = _getAbsolutePath(myAvatar ?? '');
     return GestureDetector(
       onTap: _navigateToCreate,
       child: Container(
-        width: 60,
-        margin: const EdgeInsets.only(right: 16),
-        child: Column(
-          children: [
-            Stack(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.grey.shade300, width: 2),
-                    image: myAvatar != null && myAvatar.isNotEmpty
-                        ? DecorationImage(
-                            image: CachedNetworkImageProvider(myAvatar),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                    color: myAvatar == null || myAvatar.isEmpty ? Colors.grey.shade300 : null,
-                  ),
-                  child: myAvatar == null || myAvatar.isEmpty
-                      ? const Icon(Icons.person, color: Colors.white)
-                      : null,
-                ),
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.add_circle,
-                      color: AppColors.primary,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ],
+        width: 110,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.grey[200],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Tạo mới',
-              style: TextStyle(fontSize: 12),
-              overflow: TextOverflow.ellipsis,
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            // Top portion: Avatar
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 45,
+              child: avatarUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: avatarUrl,
+                      fit: BoxFit.cover,
+                    )
+                  : Container(
+                      color: Colors.grey[300],
+                      child: const Icon(Icons.person, color: Colors.white, size: 40),
+                    ),
+            ),
+            // Bottom portion: white box
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 45,
+              child: Container(
+                color: Colors.white,
+                child: const Center(
+                  child: Padding(
+                    padding: EdgeInsets.only(top: 15),
+                    child: Text(
+                      'Tạo Tin',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Floating "+" button
+            Positioned(
+              bottom: 30,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 3),
+                  ),
+                  child: const Icon(
+                    Icons.add,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -201,52 +233,114 @@ class _StoryListWidgetState extends State<StoryListWidget> {
 
   Widget _buildStoryItem(StoryGroupModel group) {
     final bool hasUnseen = group.hasUnseen;
+    final lastStory = group.stories.last; // Use the latest one for preview
     
-    final avatar = group.user.avatar;
+    String? previewUrl;
+    if (lastStory.type == 'VIDEO') {
+      previewUrl = lastStory.thumbnailUrl ?? lastStory.mediaUrl;
+    } else {
+      previewUrl = lastStory.mediaUrl;
+    }
+    
+    final avatarUrl = _getAbsolutePath(group.user.avatar);
+    final featuredUrl = _getAbsolutePath(previewUrl ?? '');
     final name = group.user.fullName;
 
     return GestureDetector(
       onTap: () => _navigateToViewer(group),
       child: Container(
-        width: 60,
-        margin: const EdgeInsets.only(right: 16),
-        child: Column(
+        width: 110,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.grey[200],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
           children: [
+            // Background Image (Featured Story)
+            (lastStory.type == 'VIDEO' && (lastStory.thumbnailUrl == null || lastStory.thumbnailUrl!.isEmpty))
+              ? VideoThumbnailPlayer(videoUrl: _getAbsolutePath(lastStory.mediaUrl))
+              : CachedNetworkImage(
+                  imageUrl: featuredUrl,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(color: Colors.grey[300]),
+                  errorWidget: (_, __, ___) => Container(color: Colors.grey[300]),
+                ),
+            // Dark gradient overlay
             Container(
-              width: 56,
-              height: 56,
-              padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: hasUnseen ? AppColors.primary : Colors.grey.shade300,
-                  width: 2,
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.1),
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.6),
+                  ],
+                  stops: const [0.0, 0.4, 1.0],
                 ),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(28),
-                child: avatar.isNotEmpty
-                    ? CachedNetworkImage(
-                        imageUrl: avatar,
-                        fit: BoxFit.cover,
-                        errorWidget: (_, __, ___) => const Icon(Icons.person),
-                      )
-                    : const Icon(Icons.person, color: Colors.grey),
+            ),
+            // Avatar (Top left)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: hasUnseen ? AppColors.primary : Colors.white,
+                    width: 2,
+                  ),
+                ),
+                child: ClipOval(
+                  child: avatarUrl.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: avatarUrl,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) => const Icon(Icons.person, size: 20),
+                        )
+                      : const Icon(Icons.person, color: Colors.grey, size: 20),
+                ),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              name,
-              style: TextStyle(
-                fontSize: 12,
-                color: hasUnseen ? Colors.black : Colors.grey,
+            // User name (Bottom)
+            Positioned(
+              bottom: 8,
+              left: 8,
+              right: 8,
+              child: Text(
+                name,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  shadows: [Shadow(blurRadius: 2, color: Colors.black)],
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
       ),
     );
   }
+}
+
+String _getAbsolutePath(String url) {
+  if (url.isEmpty) return '';
+  if (url.startsWith('http')) return url;
+  return '${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://');
 }

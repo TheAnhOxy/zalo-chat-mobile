@@ -224,20 +224,10 @@ class ChatController extends ChangeNotifier {
   Future<void> jumpToMessage(String messageId) async {
     if (messageId.isEmpty) return;
 
-    var index = _messages.indexWhere((m) => m.id == messageId);
+    final ok = await ensureMessageLoaded(messageId);
+    if (!ok) return;
 
-    if (index == -1 && fetchMessagesAround != null) {
-      final around = await fetchMessagesAround!(messageId);
-      if (around.isNotEmpty) {
-        _messages
-          ..clear()
-          ..addAll(_normalizeMessages(around));
-        _syncPinnedObjectsWithMessages(_messages);
-        notifyListeners();
-      }
-      index = _messages.indexWhere((m) => m.id == messageId);
-    }
-
+    final index = _messages.indexWhere((m) => m.id == messageId);
     if (index == -1) return;
 
     final sc = scrollController;
@@ -254,6 +244,46 @@ class ChatController extends ChangeNotifier {
     );
 
     onJumpCompleted?.call(messageId);
+  }
+
+  /// Đảm bảo messageId có trong `_messages` bằng cách:
+  /// - tìm trong list hiện tại
+  /// - nếu không có: tải 1 chunk chứa message đó (paginate)
+  /// - nếu vẫn không có: fetch trực tiếp `/messages/:id`
+  /// Trả về true nếu sau cùng tìm thấy message trong `_messages`.
+  Future<bool> ensureMessageLoaded(String messageId) async {
+    if (messageId.isEmpty) return false;
+
+    var index = _messages.indexWhere((m) => m.id == messageId);
+
+    if (index == -1 && fetchMessagesAround != null) {
+      final around = await fetchMessagesAround!(messageId);
+      if (around.isNotEmpty) {
+        _messages
+          ..clear()
+          ..addAll(_normalizeMessages(around));
+        _syncPinnedObjectsWithMessages(_messages);
+        notifyListeners();
+      }
+      index = _messages.indexWhere((m) => m.id == messageId);
+    }
+
+    // Fallback: nếu vẫn không tìm thấy (tin nhắn quá cũ / paginate không tới),
+    // thử lấy trực tiếp message theo ID rồi chèn vào danh sách để có thể nhảy tới.
+    if (index == -1 && currentUserId.isNotEmpty) {
+      final fetched = await apiService.getMessageById(messageId, currentUserId);
+      if (fetched != null &&
+          fetched.id.isNotEmpty &&
+          fetched.conversationId == conversationId) {
+        _messages.add(_normalizeMessage(fetched));
+        _messages.sort(_compareMessages);
+        _syncPinnedObjectsWithMessages(_messages);
+        notifyListeners();
+        index = _messages.indexWhere((m) => m.id == messageId);
+      }
+    }
+
+    return index != -1;
   }
 
   void handleNewMessage(dynamic data) => _handleNewMessage(data);

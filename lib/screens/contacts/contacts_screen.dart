@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/image_utils.dart';
 import '../../data/models/models.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/socket_service.dart';
 import '../../navigation/app_router.dart';
 import '../group/group_chat_screen.dart';
-import '../group/group_members_screen.dart';
+import '../group/group_options_screen.dart';
 import 'create_group_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
@@ -394,11 +396,244 @@ class _GroupsTabState extends State<_GroupsTab> {
   String? _error;
   _GroupSortMode _sortMode = _GroupSortMode.recent;
   final GlobalKey _sortKey = GlobalKey();
+  late final void Function(dynamic) _onConversationUpdated;
+  late final void Function(dynamic) _onNewMessage;
+  late final void Function(dynamic) _onConversationRemoved;
+  late final void Function(dynamic) _onConversationHistoryCleared;
+  late final void Function(dynamic) _onConversationCreated;
+
+  Map<String, dynamic>? _tryMap(dynamic data) {
+    if (data == null) return null;
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    if (data is String) {
+      try {
+        final decoded = jsonDecode(data);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _extractMessageMap(Map<String, dynamic> payload) {
+    if (payload.containsKey('conversationId') &&
+        (payload.containsKey('_id') || payload.containsKey('id'))) {
+      return payload;
+    }
+    final nested = _tryMap(payload['message']);
+    if (nested != null) return nested;
+    return null;
+  }
 
   @override
   void initState() {
     super.initState();
     _load();
+    _onConversationUpdated = (data) {
+      if (!mounted) return;
+      final map = _tryMap(data);
+      if (map == null) return;
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid.isEmpty) return;
+      final newName = (map['name'] ?? '').toString();
+      final newAvatar = (map['avatar'] ?? '').toString();
+      final membersRaw = map['members'];
+      final updatedAtRaw = map['updatedAt']?.toString();
+      final updatedAt = updatedAtRaw != null
+          ? (DateTime.tryParse(updatedAtRaw) ?? DateTime.now())
+          : DateTime.now();
+
+      final current = _groups;
+      if (current == null || current.isEmpty) return;
+
+      final idx = current.indexWhere((g) => g.id == cid);
+      if (idx == -1) return;
+      final g = current[idx];
+      final next = List<ApiGroupModel>.from(current);
+      List<ApiGroupMember> nextMembers = g.members;
+      if (membersRaw is List) {
+        try {
+          nextMembers = membersRaw
+              .whereType<dynamic>()
+              .map((e) {
+                if (e is Map<String, dynamic>) return e;
+                if (e is Map) return Map<String, dynamic>.from(e);
+                return null;
+              })
+              .whereType<Map<String, dynamic>>()
+              .map((m) {
+                final uid = (m['userId'] ?? '').toString();
+                final role = (m['role'] ?? 'MEMBER').toString();
+                return ApiGroupMember(userId: uid, role: role);
+              })
+              .where((m) => m.userId.isNotEmpty)
+              .toList();
+        } catch (_) {
+          // keep old members on parse fail
+        }
+      }
+      next[idx] = ApiGroupModel(
+        id: g.id,
+        name: newName.isNotEmpty ? newName : g.name,
+        avatar: newAvatar.isNotEmpty ? newAvatar : g.avatar,
+        members: nextMembers,
+        description: g.description,
+        lastMessageContent: g.lastMessageContent,
+        lastMessageAt: g.lastMessageAt,
+        updatedAt: updatedAt,
+      );
+      setState(() => _groups = next);
+    };
+    socketService.on('conversation_updated', _onConversationUpdated);
+
+    _onNewMessage = (data) {
+      if (!mounted) return;
+      final map = _tryMap(data);
+      if (map == null) return;
+      final messageMap = _extractMessageMap(map);
+      if (messageMap == null) return;
+      try {
+        final msg = MessageModel.fromJson(messageMap);
+        final current = _groups;
+        if (current == null || current.isEmpty) return;
+        final idx = current.indexWhere((g) => g.id == msg.conversationId);
+        if (idx == -1) return;
+        final g = current[idx];
+        final next = List<ApiGroupModel>.from(current);
+        next[idx] = ApiGroupModel(
+          id: g.id,
+          name: g.name,
+          avatar: g.avatar,
+          members: g.members,
+          description: g.description,
+          lastMessageContent: msg.content,
+          lastMessageAt: msg.createdAt,
+          updatedAt: msg.createdAt,
+        );
+        setState(() => _groups = next);
+      } catch (_) {
+        return;
+      }
+    };
+    socketService.on('new_message', _onNewMessage);
+
+    _onConversationRemoved = (data) {
+      if (!mounted) return;
+      final map = _tryMap(data);
+      if (map == null) return;
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid.isEmpty) return;
+      final current = _groups;
+      if (current == null || current.isEmpty) return;
+      final next = current.where((g) => g.id != cid).toList();
+      setState(() => _groups = next);
+    };
+    socketService.on('conversation_removed', _onConversationRemoved);
+
+    _onConversationHistoryCleared = (data) {
+      if (!mounted) return;
+      final map = _tryMap(data);
+      if (map == null) return;
+      final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+      if (cid.isEmpty) return;
+      final current = _groups;
+      if (current == null || current.isEmpty) return;
+      final idx = current.indexWhere((g) => g.id == cid);
+      if (idx == -1) return;
+      final g = current[idx];
+      final next = List<ApiGroupModel>.from(current);
+      next[idx] = ApiGroupModel(
+        id: g.id,
+        name: g.name,
+        avatar: g.avatar,
+        members: g.members,
+        description: g.description,
+        lastMessageContent: null,
+        lastMessageAt: null,
+        updatedAt: DateTime.now(),
+      );
+      setState(() => _groups = next);
+    };
+    socketService.on(
+      'conversation_history_cleared',
+      _onConversationHistoryCleared,
+    );
+
+    _onConversationCreated = (data) {
+      if (!mounted) return;
+      final map = _tryMap(data);
+      if (map == null) return;
+      final convMap = _tryMap(map['conversation']);
+      if (convMap == null) return;
+      final type = (convMap['type'] ?? '').toString().toUpperCase();
+      if (type != 'GROUP') return;
+      final userId = authService.userId ?? '';
+
+      String extractId(dynamic raw) {
+        if (raw == null) return '';
+        if (raw is String) return raw;
+        if (raw is Map) {
+          return (raw['\$oid'] ?? raw['oid'] ?? raw['_id'] ?? '').toString();
+        }
+        return raw.toString();
+      }
+
+      final membersRaw = (convMap['members'] as List? ?? const <dynamic>[]);
+      final members = membersRaw
+          .whereType<dynamic>()
+          .map((m) {
+            if (m is Map<String, dynamic>) return m;
+            if (m is Map) return Map<String, dynamic>.from(m);
+            return null;
+          })
+          .whereType<Map<String, dynamic>>()
+          .map((m) => ApiGroupMember(
+                userId: extractId(m['userId'] ?? m['_id']),
+                role: (m['role'] ?? 'MEMBER').toString(),
+              ))
+          .toList();
+
+      final lm = _tryMap(convMap['lastMessage']);
+      final g = ApiGroupModel(
+        id: extractId(convMap['_id'] ?? convMap['id']),
+        name: (convMap['name'] ?? '').toString(),
+        avatar: (convMap['avatar'] ?? '').toString(),
+        members: members,
+        description: (convMap['description'] ?? '').toString().trim().isEmpty
+            ? null
+            : (convMap['description'] ?? '').toString(),
+        lastMessageContent: lm?['content']?.toString(),
+        lastMessageAt: lm?['createdAt'] != null
+            ? DateTime.tryParse(lm!['createdAt'].toString())
+            : null,
+        updatedAt: convMap['updatedAt'] != null
+            ? DateTime.tryParse(convMap['updatedAt'].toString()) ?? DateTime.now()
+            : DateTime.now(),
+      );
+      if (g.id.isEmpty) return;
+      // chỉ thêm nếu mình là member
+      if (!g.members.any((m) => m.userId == userId)) return;
+
+      final current = _groups ?? <ApiGroupModel>[];
+      if (current.any((x) => x.id == g.id)) return;
+      final next = <ApiGroupModel>[g, ...current];
+      setState(() => _groups = next);
+    };
+    socketService.on('conversation_created', _onConversationCreated);
+  }
+
+  @override
+  void dispose() {
+    socketService.off('conversation_updated', _onConversationUpdated);
+    socketService.off('new_message', _onNewMessage);
+    socketService.off('conversation_removed', _onConversationRemoved);
+    socketService.off(
+      'conversation_history_cleared',
+      _onConversationHistoryCleared,
+    );
+    socketService.off('conversation_created', _onConversationCreated);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -574,7 +809,7 @@ class _GroupsTabState extends State<_GroupsTab> {
               final avatarUrls = g.avatar.isNotEmpty ? [g.avatar] : <String>[];
               return _GroupRow(
                 name: g.name.isEmpty ? 'Nhóm' : g.name,
-                subtitle: g.lastMessageContent ?? 'Chưa có tin nhắn',
+                subtitle: _formatLastMessagePreview(g.lastMessageContent),
                 trailing: g.lastMessageAt != null
                     ? _formatRelative(g.lastMessageAt!)
                     : _formatRelative(g.updatedAt),
@@ -594,7 +829,7 @@ class _GroupsTabState extends State<_GroupsTab> {
                   final result = await Navigator.push<Object?>(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => GroupMembersScreen(group: g),
+                      builder: (_) => ChatOptionsScreen(group: g, isGroup: true),
                     ),
                   );
                   if (!mounted) return;
@@ -1297,6 +1532,36 @@ String _formatRelative(DateTime dt) {
   if (diff.inMinutes < 60) return '${diff.inMinutes} phút';
   if (diff.inHours < 24) return '${diff.inHours} giờ';
   return '${diff.inDays} ngày';
+}
+
+String _formatLastMessagePreview(String? raw) {
+  final s = (raw ?? '').trim();
+  if (s.isEmpty) return 'Chưa có tin nhắn';
+  if (s.startsWith('ADD_MEMBER|')) {
+    final parts = s.split('|');
+    final actor = parts.length > 1 ? parts[1].trim() : '';
+    final peer = parts.length > 2 ? parts[2].trim() : '';
+    final a = actor.isEmpty ? 'Ai đó' : actor;
+    final p = peer.isEmpty ? 'một thành viên' : peer;
+    return '$a đã thêm $p vào nhóm';
+  }
+  if (s.startsWith('REMOVE_MEMBER|') || s.startsWith('KICK_MEMBER|')) {
+    final parts = s.split('|');
+    final actor = parts.length > 1 ? parts[1].trim() : '';
+    final peer = parts.length > 2 ? parts[2].trim() : '';
+    final a = actor.isEmpty ? 'Ai đó' : actor;
+    final p = peer.isEmpty ? 'một thành viên' : peer;
+    return '$a đã xóa $p khỏi nhóm';
+  }
+  if (s.startsWith('LEAVE_GROUP|')) {
+    final parts = s.split('|');
+    final actor = parts.length > 1 ? parts[1].trim() : '';
+    final a = actor.isEmpty ? 'Ai đó' : actor;
+    return '$a đã rời khỏi nhóm';
+  }
+  if (s.startsWith('PIN_MESSAGE|')) return 'Đã ghim một tin nhắn';
+  if (s.startsWith('UNPIN_MESSAGE|')) return 'Đã bỏ ghim một tin nhắn';
+  return s;
 }
 
 // ── Data wrappers ──────────────────────────────────────────────────────────────

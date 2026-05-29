@@ -620,6 +620,29 @@ class ContactsApiService {
     }
   }
 
+  /// Cập nhật tên nhóm (PATCH conversation).
+  Future<ContactsResult<bool>> updateConversationName({
+    required String conversationId,
+    required String name,
+  }) async {
+    try {
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'name': name}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        return const ContactsResult.success(true);
+      }
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
   // ── Group chat background (sync toàn nhóm) ──────────────────────────────────
 
   /// Lấy groupSettings (raw) của conversation theo ID.
@@ -895,6 +918,27 @@ class ContactsApiService {
             Uri.parse('$baseUrl/conversations/$conversationId'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'members': updated}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) return const ContactsResult.success(true);
+      return ContactsResult.error('Lỗi ${res.statusCode}');
+    } catch (e) {
+      return ContactsResult.error('Không kết nối được: $e');
+    }
+  }
+
+  /// Ghim/Bỏ ghim cuộc trò chuyện (theo user hiện tại)
+  Future<ContactsResult<bool>> setConversationPinned({
+    required String conversationId,
+    required String userId,
+    required bool isPinned,
+  }) async {
+    try {
+      final res = await _client
+          .patch(
+            Uri.parse('$baseUrl/conversations/$conversationId/pin'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'userId': userId, 'isPinned': isPinned}),
           )
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) return const ContactsResult.success(true);

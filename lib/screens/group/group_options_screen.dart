@@ -10,6 +10,8 @@ import '../../data/models/models.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/socket_service.dart';
+import '../../navigation/app_router.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../contacts/create_group_screen.dart';
 import 'group_chat_backgrounds.dart';
@@ -46,10 +48,29 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   DateTime? _muteUntil;
 
   late ApiGroupModel _group;
+  final List<_MediaPreviewItem> _mediaPreview = <_MediaPreviewItem>[];
+  bool _mediaPreviewLoading = false;
+  bool _backInProgress = false;
+
+  bool get _isGroupMember {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) return false;
+    return _group.members.any((m) => m.userId == myId);
+  }
 
   bool get _isAdmin {
     final myId = authService.userId ?? '';
     return _group.members.any((m) => m.userId == myId && m.role == 'ADMIN');
+  }
+
+  String? get _peerUserId {
+    if (widget.isGroup) return null;
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) return null;
+    for (final m in _group.members) {
+      if (m.userId.isNotEmpty && m.userId != myId) return m.userId;
+    }
+    return null;
   }
 
   /// Chỉ còn một admin và đó là mình — không cho rời (cần thêm QTV khác trước).
@@ -66,8 +87,6 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   String get _bgCustomPrefKey => 'group_chat_bg_custom_${_group.id}';
   String get _bgOverridePrefKey => 'group_chat_bg_override_${_group.id}';
   String get _descPrefKey => 'group_description_${_group.id}';
-  String get _pinPrefKey =>
-      'conv_pin_${authService.userId ?? 'me'}_${_group.id}';
 
   @override
   void initState() {
@@ -75,21 +94,86 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
     _group = widget.group;
     _loadMutePref();
     _loadDescriptionPref();
-    _loadPinPref();
+    _loadPinnedFromBackend();
+    _loadMediaPreview();
+    socketService.on('conversation_pin_updated', _onConversationPinUpdated);
   }
 
-  void _loadPinPref() {
-    SharedPreferences.getInstance().then((p) {
-      if (!mounted) return;
-      setState(() => _isPinned = p.getBool(_pinPrefKey) ?? false);
-    });
+  @override
+  void dispose() {
+    socketService.off('conversation_pin_updated', _onConversationPinUpdated);
+    super.dispose();
+  }
+
+  Future<void> _loadPinnedFromBackend() async {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) return;
+    final raw =
+        await ContactsApiService.instance.fetchConversationRaw(_group.id);
+    if (!mounted || !raw.isSuccess) return;
+    final data = raw.data ?? const <String, dynamic>{};
+    final membersRaw = data['members'];
+    if (membersRaw is! List) return;
+    bool pinned = false;
+    for (final m in membersRaw) {
+      if (m is! Map) continue;
+      final map = Map<String, dynamic>.from(m);
+      final uid = (map['userId'] ?? map['_id'] ?? '').toString();
+      if (uid == myId) {
+        pinned = map['isPinned'] == true;
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _isPinned = pinned);
+  }
+
+  void _onConversationPinUpdated(dynamic data) {
+    if (!mounted) return;
+    Map<String, dynamic>? tryMap(dynamic d) {
+      if (d == null) return null;
+      if (d is Map) return Map<String, dynamic>.from(d);
+      if (d is String) {
+        try {
+          final decoded = jsonDecode(d);
+          if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    final map = tryMap(data);
+    if (map == null) return;
+    final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+    if (cid != _group.id) return;
+    final pinned = map['isPinned'] == true;
+    setState(() => _isPinned = pinned);
   }
 
   Future<void> _setPinned(bool v) async {
+    final myId = authService.userId ?? '';
+    if (myId.isEmpty) return;
+    final before = _isPinned;
     setState(() => _isPinned = v);
-    final p = await SharedPreferences.getInstance();
-    await p.setBool(_pinPrefKey, v);
+
+    final res = await ContactsApiService.instance.setConversationPinned(
+      conversationId: _group.id,
+      userId: myId,
+      isPinned: v,
+    );
     if (!mounted) return;
+    if (!res.isSuccess) {
+      setState(() => _isPinned = before);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.error ?? 'Không thể ghim trò chuyện'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(v ? 'Đã ghim trò chuyện' : 'Đã bỏ ghim trò chuyện'),
@@ -180,23 +264,142 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   }
 
   Future<void> _openAddMembers() async {
-    if (!_isAdmin) {
+    if (!_isGroupMember) {
       _showLeaveSnack(
-        'Chỉ quản trị viên mới thêm được thành viên',
+        'Bạn không phải thành viên của nhóm',
         isError: true,
       );
       return;
     }
-    final result = await Navigator.push<Object?>(
+    final picked = await Navigator.push<List<String>?>(
       context,
-      MaterialPageRoute(builder: (_) => GroupMembersScreen(group: _group)),
+      MaterialPageRoute(builder: (_) => AddMembersScreen(group: _group)),
     );
     if (!mounted) return;
-    if (result == true) {
-      Navigator.pop(context, true);
-    } else if (result is ApiGroupModel) {
-      setState(() => _group = result);
+    final newUserIds = picked ?? const <String>[];
+    if (newUserIds.isEmpty) return;
+
+    _showLeaveLoading();
+    final res = await ContactsApiService.instance.addMembersToGroup(
+      conversationId: _group.id,
+      currentMembers: _group.members,
+      newUserIds: newUserIds,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // loading
+    if (!mounted) return;
+
+    if (!res.isSuccess) {
+      _showLeaveSnack(res.error ?? 'Không thể thêm vào nhóm', isError: true);
+      return;
     }
+
+    // Đồng bộ lại state nhóm để UI (thành viên/đếm) cập nhật
+    setState(() {
+      final updatedMembers = List<ApiGroupMember>.from(_group.members);
+      for (final uid in newUserIds) {
+        if (updatedMembers.any((m) => m.userId == uid)) continue;
+        updatedMembers.add(ApiGroupMember(userId: uid, role: 'MEMBER'));
+      }
+      _group = ApiGroupModel(
+        id: _group.id,
+        name: _group.name,
+        avatar: _group.avatar,
+        members: updatedMembers,
+        description: _group.description,
+        lastMessageContent: _group.lastMessageContent,
+        lastMessageAt: _group.lastMessageAt,
+        updatedAt: _group.updatedAt,
+      );
+    });
+
+    // Thông báo system trong nhóm giống Zalo
+    final myId = authService.userId ?? '';
+    final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                true)
+        ? authService.currentUser!.fullName.trim()
+        : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+            ? authService.currentUser!.displayName.trim()
+            : 'Bạn';
+
+    try {
+      final users = await Future.wait(
+        newUserIds.map((id) => apiService.getUserById(id)),
+      );
+      for (final u in users) {
+        final peerName = (u?.fullName ?? u?.displayName ?? '').trim();
+        socketService.sendMessage({
+          'conversationId': _group.id,
+          'senderId': myId,
+          'type': 'SYSTEM',
+          'content': 'ADD_MEMBER|$actorName|${peerName.isEmpty ? 'một thành viên' : peerName}',
+        });
+      }
+    } catch (_) {
+      // Không block UI nếu fetch tên fail
+      for (final _ in newUserIds) {
+        socketService.sendMessage({
+          'conversationId': _group.id,
+          'senderId': myId,
+          'type': 'SYSTEM',
+          'content': 'ADD_MEMBER|$actorName|một thành viên',
+        });
+      }
+    }
+
+    _showLeaveSnack('Đã thêm ${newUserIds.length} thành viên');
+  }
+
+  Future<void> _loadMediaPreview() async {
+    final uid = authService.userId ?? '';
+    if (uid.isEmpty) return;
+    setState(() => _mediaPreviewLoading = true);
+    try {
+      final msgs = await apiService.getMessages(
+        _group.id,
+        uid,
+        limit: 50,
+        skip: 0,
+      );
+      final items = _buildMediaPreviewItems(msgs);
+      if (!mounted) return;
+      setState(() {
+        _mediaPreview
+          ..clear()
+          ..addAll(items.take(3));
+        _mediaPreviewLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _mediaPreviewLoading = false);
+    }
+  }
+
+  List<_MediaPreviewItem> _buildMediaPreviewItems(List<MessageModel> msgs) {
+    final out = <_MediaPreviewItem>[];
+    for (final m in msgs) {
+      if (m.isRecalled) continue;
+      final t = m.type.toUpperCase();
+      if (t == 'IMAGE') {
+        final url = m.content.trim();
+        if (url.isEmpty) continue;
+        out.add(_MediaPreviewItem.image(url: url));
+        continue;
+      }
+      if (t == 'VIDEO') {
+        final thumb =
+            (m.metadata?.thumbnailUrl ?? m.metadata?.thumbnail ?? '').trim();
+        if (thumb.isNotEmpty) {
+          out.add(_MediaPreviewItem.video(url: thumb));
+          continue;
+        }
+        final url = m.content.trim();
+        if (url.isNotEmpty) {
+          out.add(_MediaPreviewItem.video(url: url));
+        }
+        continue;
+      }
+    }
+    return out;
   }
 
   String get _peerDisplayName {
@@ -220,7 +423,26 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
   }
 
   void _addPeerToGroup() {
-    _showLeaveSnack('Tính năng thêm thành viên vào nhóm sẽ sớm ra mắt');
+    final myId = authService.userId ?? '';
+    final peerId = _peerUserId;
+    if (myId.isEmpty || peerId == null || peerId.isEmpty) {
+      _showLeaveSnack('Không xác định được người dùng cần thêm', isError: true);
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => _AddToGroupSheet(
+        myUserId: myId,
+        peerUserId: peerId,
+        peerName: _peerDisplayName,
+      ),
+    );
   }
 
   Future<void> _showWallpaperPicker() async {
@@ -612,23 +834,11 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
             ),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               final name = ctrl.text.trim();
-              if (name.isNotEmpty) {
-                setState(
-                  () => _group = ApiGroupModel(
-                    id: _group.id,
-                    name: name,
-                    avatar: _group.avatar,
-                    members: _group.members,
-                    description: _group.description,
-                    lastMessageContent: _group.lastMessageContent,
-                    lastMessageAt: _group.lastMessageAt,
-                    updatedAt: _group.updatedAt,
-                  ),
-                );
-              }
               Navigator.pop(context);
+              if (name.isEmpty) return;
+              await _saveGroupName(name);
             },
             child: const Text(
               'Lưu',
@@ -641,6 +851,58 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _saveGroupName(String newName) async {
+    final name = newName.trim();
+    if (name.isEmpty) return;
+
+    final old = _group.name;
+
+    // Cập nhật local trước để UI phản hồi ngay.
+    if (!mounted) return;
+    setState(() {
+      _group = ApiGroupModel(
+        id: _group.id,
+        name: name,
+        avatar: _group.avatar,
+        members: _group.members,
+        description: _group.description,
+        lastMessageContent: _group.lastMessageContent,
+        lastMessageAt: _group.lastMessageAt,
+        updatedAt: _group.updatedAt,
+      );
+    });
+
+    _showLeaveLoading();
+    final result = await ContactsApiService.instance.updateConversationName(
+      conversationId: _group.id,
+      name: name,
+    );
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      setState(() {
+        _group = ApiGroupModel(
+          id: _group.id,
+          name: old,
+          avatar: _group.avatar,
+          members: _group.members,
+          description: _group.description,
+          lastMessageContent: _group.lastMessageContent,
+          lastMessageAt: _group.lastMessageAt,
+          updatedAt: _group.updatedAt,
+        );
+      });
+      _showLeaveSnack(
+        result.error ?? 'Không thể đổi tên nhóm',
+        isError: true,
+      );
+      return;
+    }
+
+    _showLeaveSnack('Đã đổi tên nhóm');
   }
 
   // ── Rời nhóm (API) ────────────────────────────────────────────
@@ -734,6 +996,20 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
 
     if (!mounted) return;
     if (result.isSuccess) {
+      // Thông báo system trong nhóm giống Zalo
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+      socketService.sendMessage({
+        'conversationId': _group.id,
+        'senderId': myId,
+        'type': 'SYSTEM',
+        'content': 'LEAVE_GROUP|$actorName',
+      });
+
       Navigator.pop(context, true);
     } else {
       _showLeaveSnack(result.error ?? 'Không thể rời nhóm', isError: true);
@@ -837,7 +1113,11 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Chưa đăng nhập'),
+                    content: Text(
+                      'Chưa đăng nhập',
+                      style: TextStyle(fontFamily: 'Inter', color: Colors.white),
+                    ),
+                    backgroundColor: AppColors.primary,
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
@@ -846,7 +1126,11 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
 
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Đang xoá lịch sử...'),
+                  content: Text(
+                    'Đang xoá lịch sử...',
+                    style: TextStyle(fontFamily: 'Inter', color: Colors.white),
+                  ),
+                  backgroundColor: AppColors.primary,
                   behavior: SnackBarBehavior.floating,
                   duration: Duration(seconds: 1),
                 ),
@@ -861,7 +1145,13 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
                 SnackBar(
                   content: Text(
                     ok ? 'Đã xoá lịch sử trò chuyện' : 'Xoá thất bại',
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      color: Colors.white,
+                    ),
                   ),
+                  backgroundColor:
+                      ok ? AppColors.primary : AppColors.error,
                   behavior: SnackBarBehavior.floating,
                   duration: const Duration(seconds: 2),
                 ),
@@ -904,7 +1194,7 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context, _group),
+          onPressed: _handleBack,
         ),
         title: const Text(
           'Tùy chọn',
@@ -1053,6 +1343,27 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
         ],
       ),
     );
+  }
+
+  void _handleBack() {
+    // Tránh lỗi Navigator locked (navigator.dart:5591) trên web khi pop liên tiếp.
+    if (_backInProgress) return;
+    _backInProgress = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        // Chat 1-1: màn trước push<String?> nên không được pop ra ApiGroupModel.
+        // Chat group: pop trả về ApiGroupModel để màn chat cập nhật lại state.
+        final result = widget.isGroup ? _group : null;
+        await Navigator.of(context, rootNavigator: true).maybePop(result);
+      } finally {
+        if (!mounted) return;
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (mounted) _backInProgress = false;
+        });
+      }
+    });
   }
 
   // ── Header ────────────────────────────────────────────────────
@@ -1213,8 +1524,6 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
         ],
       ),
     );
-
-    ctrl.dispose();
   }
 
   Future<void> _saveGroupDescription(String newDesc) async {
@@ -1316,19 +1625,12 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            // Preview thumbnails placeholder
+            // Preview thumbnails (giống Zalo: 3 mục gần nhất)
             SizedBox(
               height: 60,
               child: Row(
                 children: [
-                  _mediaThumbnail(
-                    Icons.image_outlined,
-                    const Color(0xFFE8F5E9),
-                  ),
-                  const SizedBox(width: 6),
-                  _mediaThumbnail(Icons.code_rounded, const Color(0xFFE8F5E9)),
-                  const SizedBox(width: 6),
-                  _mediaThumbnail(Icons.link_rounded, const Color(0xFFF3E5F5)),
+                  ..._buildPreviewThumbs(),
                   const SizedBox(width: 6),
                   Expanded(
                     child: InkWell(
@@ -1356,6 +1658,61 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildPreviewThumbs() {
+    if (_mediaPreviewLoading) {
+      return [
+        _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9)),
+        const SizedBox(width: 6),
+        _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9)),
+        const SizedBox(width: 6),
+        _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9)),
+      ];
+    }
+
+    if (_mediaPreview.isEmpty) {
+      return [
+        _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9)),
+        const SizedBox(width: 6),
+        _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9)),
+        const SizedBox(width: 6),
+        _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9)),
+      ];
+    }
+
+    final thumbs = <Widget>[];
+    for (var i = 0; i < 3; i++) {
+      if (i > 0) thumbs.add(const SizedBox(width: 6));
+      final item = i < _mediaPreview.length ? _mediaPreview[i] : null;
+      thumbs.add(_previewThumb(item));
+    }
+    return thumbs;
+  }
+
+  Widget _previewThumb(_MediaPreviewItem? item) {
+    if (item == null) {
+      return _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9));
+    }
+    switch (item.kind) {
+      case _MediaPreviewKind.image:
+      case _MediaPreviewKind.video:
+        final url = item.url?.trim() ?? '';
+        if (url.isEmpty) {
+          return _mediaThumbnail(Icons.image_outlined, const Color(0xFFE8F5E9));
+        }
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            webSafeImageUrl(url),
+            width: 60,
+            height: 60,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                _mediaThumbnail(Icons.image_not_supported_outlined, const Color(0xFFE8F5E9)),
+          ),
+        );
+    }
   }
 
   Widget _mediaThumbnail(IconData icon, Color bg) {
@@ -1574,6 +1931,254 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
       ),
     );
   }
+}
+
+class _AddToGroupSheet extends StatefulWidget {
+  final String myUserId;
+  final String peerUserId;
+  final String peerName;
+  const _AddToGroupSheet({
+    required this.myUserId,
+    required this.peerUserId,
+    required this.peerName,
+  });
+
+  @override
+  State<_AddToGroupSheet> createState() => _AddToGroupSheetState();
+}
+
+class _AddToGroupSheetState extends State<_AddToGroupSheet> {
+  bool _loading = true;
+  bool _working = false;
+  String? _error;
+  List<ApiGroupModel> _groups = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final res = await ContactsApiService.instance.fetchGroups(widget.myUserId);
+    if (!mounted) return;
+    if (!res.isSuccess) {
+      setState(() {
+        _loading = false;
+        _error = res.error ?? 'Không tải được danh sách nhóm';
+        _groups = const [];
+      });
+      return;
+    }
+
+    final all = res.data ?? const <ApiGroupModel>[];
+    // Hiển thị tất cả nhóm mình đang tham gia (không giới hạn ADMIN)
+    final list = List<ApiGroupModel>.from(all);
+    list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+    setState(() {
+      _loading = false;
+      _groups = list;
+    });
+  }
+
+  Future<void> _addToGroup(ApiGroupModel g) async {
+    if (_working) return;
+    setState(() => _working = true);
+    final res = await ContactsApiService.instance.addMembersToGroup(
+      conversationId: g.id,
+      currentMembers: g.members,
+      newUserIds: [widget.peerUserId],
+    );
+    if (!mounted) return;
+    setState(() => _working = false);
+
+    if (!res.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.error ?? 'Không thể thêm vào nhóm'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Thông báo system trong nhóm giống Zalo
+    final actorName = authService.currentUser?.displayName.trim().isNotEmpty == true
+        ? authService.currentUser!.displayName.trim()
+        : 'Bạn';
+    socketService.sendMessage({
+      'conversationId': g.id,
+      'senderId': widget.myUserId,
+      'type': 'SYSTEM',
+      'content': 'ADD_MEMBER|$actorName|${widget.peerName}',
+    });
+
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Đã thêm ${widget.peerName} vào nhóm "${g.name}"'),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE6E6E6),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Thêm ${widget.peerName} vào nhóm',
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 18),
+                child: Center(
+                  child: CircularProgressIndicator(color: AppColors.primary),
+                ),
+              )
+            else if (_error != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(
+                      fontFamily: 'Inter',
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            else if (_groups.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 18),
+                child: Text(
+                  'Bạn chưa tham gia nhóm nào.',
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _groups.length,
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, color: AppColors.divider),
+                  itemBuilder: (_, i) {
+                    final g = _groups[i];
+                    final already = g.members.any((m) => m.userId == widget.peerUserId);
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        g.name.isEmpty ? 'Nhóm' : g.name,
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${g.members.length} thành viên',
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 12,
+                          color: AppColors.textHint,
+                        ),
+                      ),
+                      trailing: _working
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primary,
+                              ),
+                            )
+                          : Text(
+                              already ? 'Đã có' : 'Thêm',
+                              style: TextStyle(
+                                fontFamily: 'Inter',
+                                fontWeight: FontWeight.w700,
+                                color: already
+                                    ? AppColors.textHint
+                                    : AppColors.primary,
+                              ),
+                            ),
+                      onTap: (already || _working) ? null : () => _addToGroup(g),
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _working ? null : _load,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                ),
+                child: const Text(
+                  'Tải lại danh sách nhóm',
+                  style: TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _MediaPreviewKind { image, video }
+
+class _MediaPreviewItem {
+  final _MediaPreviewKind kind;
+  final String? url;
+
+  const _MediaPreviewItem._(this.kind, {this.url});
+
+  factory _MediaPreviewItem.image({required String url}) =>
+      _MediaPreviewItem._(_MediaPreviewKind.image, url: url);
+  factory _MediaPreviewItem.video({required String url}) =>
+      _MediaPreviewItem._(_MediaPreviewKind.video, url: url);
 }
 
 class _GroupWallpaperPickerScreen extends StatefulWidget {
@@ -2453,6 +3058,7 @@ class _ConversationStorageSheetState extends State<_ConversationStorageSheet> {
 class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
   late List<ApiGroupMember> _members;
   Map<String, UserModel> _userMap = {};
+  Set<String> _friendIds = <String>{};
   bool _loading = true;
   String? _error;
 
@@ -2463,6 +3069,7 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
     super.initState();
     _members = List<ApiGroupMember>.from(widget.members);
     _loadUsers();
+    _loadFriends();
   }
 
   Future<void> _loadUsers() async {
@@ -2493,6 +3100,53 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
         });
       }
     }
+  }
+
+  Future<void> _loadFriends() async {
+    final myId = (widget.myUserId ?? '').toString();
+    if (myId.isEmpty) return;
+    try {
+      final res = await ContactsApiService.instance.fetchFriends(myId);
+      final list = res.data ?? const <ApiUserModel>[];
+      if (!mounted) return;
+      setState(() {
+        _friendIds = list.map((u) => u.id).where((id) => id.isNotEmpty).toSet();
+      });
+    } catch (_) {
+      // ignore: fallback to empty set
+    }
+  }
+
+  ApiUserModel _toApiUserModel(String userId) {
+    final u = _userMap[userId];
+    if (u != null) {
+      return ApiUserModel(
+        id: u.id,
+        fullName: u.fullName,
+        phone: u.phone,
+        avatar: u.avatar,
+        isOnline: u.status.isOnline,
+        lastSeen: u.status.lastSeen,
+      );
+    }
+    return ApiUserModel(
+      id: userId,
+      fullName: userId,
+      phone: '',
+      avatar: '',
+      isOnline: false,
+      lastSeen: null,
+    );
+  }
+
+  void _openMemberProfile(String userId) {
+    final myId = (widget.myUserId ?? '').toString();
+    if (userId.isEmpty || userId == myId) return;
+    Navigator.pushNamed(
+      context,
+      AppRouter.foundUser,
+      arguments: _toApiUserModel(userId),
+    );
   }
 
   String _displayName(ApiGroupMember m) {
@@ -2649,6 +3303,23 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
     if (mounted) Navigator.of(context, rootNavigator: true).pop();
 
     if (result.isSuccess) {
+      // Thông báo system trong nhóm giống Zalo
+      final myId = authService.userId ?? '';
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+      final peerName = (user?.fullName ?? '').trim();
+      socketService.sendMessage({
+        'conversationId': widget.conversationId,
+        'senderId': myId,
+        'type': 'SYSTEM',
+        'content':
+            'REMOVE_MEMBER|$actorName|${peerName.isEmpty ? 'một thành viên' : peerName}',
+      });
+
       setState(() {
         _members = _members.where((m) => m.userId != member.userId).toList();
       });
@@ -2822,9 +3493,13 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                       final user = _userMap[m.userId];
                       final name = _displayName(m);
                       final isAdmin = m.role == 'ADMIN';
+                      final myId = (widget.myUserId ?? '').toString();
+                      final isSelf = m.userId == myId;
                       final canTap =
                           widget.canManage &&
                           m.userId != (widget.myUserId ?? '');
+                      final canAddFriend =
+                          !isSelf && !_friendIds.contains(m.userId);
                       return ListTile(
                         onTap: canTap ? () => _showMemberActions(m) : null,
                         leading: AvatarWidget(
@@ -2874,6 +3549,19 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                                   ),
                                 ),
                               ),
+                            if (canAddFriend) ...[
+                              const SizedBox(width: 6),
+                              IconButton(
+                                onPressed: () => _openMemberProfile(m.userId),
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_outlined,
+                                  color: AppColors.primary,
+                                  size: 22,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Thêm bạn',
+                              ),
+                            ],
                             if (canTap) ...[
                               const SizedBox(width: 4),
                               const Icon(

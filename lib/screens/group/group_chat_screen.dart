@@ -55,6 +55,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   bool _isLoading = true;
   bool _isSending = false;
   final Map<String, ApiUserModel> _memberProfiles = {};
+  final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
   int _bgIndex = 0;
   String? _bgCustomBase64;
 
@@ -76,6 +77,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   int _lastKnownMessageCount = 0;
   bool _lastKnownTyping = false;
   String? _highlightedMessageId;
+  bool _suppressAutoScroll = false;
 
   List<MessageModel> get _messages => _chatController.messages;
   bool get _isTyping => _chatController.isPeerTyping;
@@ -114,6 +116,68 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  Map<String, dynamic>? _tryMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) {
+      try {
+        return Map<String, dynamic>.from(data);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (data is String) {
+      try {
+        final decoded = jsonDecode(data);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  void _onConversationUpdated(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+    if (cid != _group.id) return;
+
+    final membersRaw = map['members'];
+    List<ApiGroupMember>? members;
+    if (membersRaw is List) {
+      members = membersRaw
+          .whereType<dynamic>()
+          .map((e) {
+            if (e is Map<String, dynamic>) return e;
+            if (e is Map) return Map<String, dynamic>.from(e);
+            return null;
+          })
+          .whereType<Map<String, dynamic>>()
+          .map((m) {
+            final uid = (m['userId'] ?? '').toString();
+            final role = (m['role'] ?? 'MEMBER').toString();
+            return ApiGroupMember(userId: uid, role: role);
+          })
+          .where((m) => m.userId.isNotEmpty)
+          .toList();
+    }
+
+    setState(() {
+      _group = ApiGroupModel(
+        id: _group.id,
+        name: (map['name']?.toString() ?? _group.name),
+        avatar: (map['avatar']?.toString() ?? _group.avatar),
+        members: members ?? _group.members,
+        description: (map['description']?.toString() ?? _group.description),
+        lastMessageContent: _group.lastMessageContent,
+        lastMessageAt: _group.lastMessageAt,
+        updatedAt: _group.updatedAt,
+      );
+    });
+
+    _loadMemberProfiles();
+  }
+
   void _onChatControllerChanged() {
     if (!mounted) return;
 
@@ -130,7 +194,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       _chatController.markLatestSeen();
     }
 
-    if (hasNewMessage || typingStarted) {
+    // Khi đang jump tới tin nhắn ghim/cũ, việc load thêm message sẽ tăng length
+    // nhưng không được auto-scroll xuống cuối (nếu không sẽ bị kéo về như ảnh).
+    if (!_suppressAutoScroll && (hasNewMessage || typingStarted)) {
       _scrollToBottomBurst();
     }
   }
@@ -185,6 +251,71 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       return item.call?.callerId.toString();
     }
     return item.message?.senderId.toString();
+  }
+
+  GlobalKey _keyForMessage(String messageId) {
+    return _messageKeys.putIfAbsent(messageId, () => GlobalKey());
+  }
+
+  double _estimateChatItemHeight(ChatItem item) {
+    // ConversationTimeline wrap Column + spacing; dùng ước lượng đủ tốt để nhảy tới gần.
+    const extra = 10.0;
+    if (item.type == ChatItemType.call) return 92 + extra;
+    return _estimateMessageItemHeight(item.message!) + extra;
+  }
+
+  double _estimateOffsetForChatIndex(int index) {
+    if (index <= 0) return 0;
+    double sum = 0;
+    for (var i = 0; i < index && i < _chatItems.length; i++) {
+      sum += _estimateChatItemHeight(_chatItems[i]);
+    }
+    return sum;
+  }
+
+  Future<void> _jumpToMessageExact(String messageId) async {
+    _suppressAutoScroll = true;
+    final ok = await _chatController.ensureMessageLoaded(messageId);
+    if (!ok || !mounted) {
+      _suppressAutoScroll = false;
+      return;
+    }
+
+    // Đợi rebuild `_chatItems` sau khi controller load message.
+    int idx = -1;
+    for (var t = 0; t < 12; t++) {
+      idx = _chatItems.indexWhere(
+        (it) => it.type == ChatItemType.message && it.message?.id == messageId,
+      );
+      if (idx != -1) break;
+      await Future.delayed(const Duration(milliseconds: 24));
+      if (!mounted) return;
+    }
+
+    if (_scrollCtrl.hasClients && idx >= 0) {
+      final max = _scrollCtrl.position.maxScrollExtent;
+      final rough = _estimateOffsetForChatIndex(idx).clamp(0, max).toDouble();
+      await _scrollCtrl.animateTo(
+        rough,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
+    // Đợi 1 frame để item được build, rồi ensureVisible "chốt" đúng vị trí.
+    await Future.delayed(const Duration(milliseconds: 32));
+    if (!mounted) return;
+    final ctx = _messageKeys[messageId]?.currentContext;
+    if (ctx == null) return;
+    await Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      alignment: 0.22, // đưa message xuống hơi dưới header, đúng “vị trí”
+    );
+
+    _flashMessageHighlight(messageId);
+    _suppressAutoScroll = false;
   }
 
   bool _shouldShowAvatarAtIndex(int index) {
@@ -314,6 +445,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _emitStopTypingEvent();
     _voiceTimer?.cancel();
     _voiceAmplitudeSub?.cancel();
+    socketService.off('conversation_updated', _onConversationUpdated);
+    socketService.off('conversation_removed', _onConversationRemoved);
+    socketService.off(
+      'conversation_history_cleared',
+      _onConversationHistoryCleared,
+    );
     socketService.off('participant_left', _handleParticipantLeftEvent);
     socketService.off('call_ended', _handleCallEndedEvent);
     socketService.off(
@@ -341,6 +478,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void _initSocket() {
     log('🔌 [SOCKET] Initializing socket listeners for group ${_group.id}');
     socketService.joinConversation(_group.id);
+    socketService.on('conversation_updated', _onConversationUpdated);
+    socketService.on('conversation_removed', _onConversationRemoved);
+    socketService.on(
+      'conversation_history_cleared',
+      _onConversationHistoryCleared,
+    );
     socketService.on('message_edited', _handleMessageUpdatedEvent);
     socketService.on('message_recalled', _handleMessageRecalledEvent);
     socketService.on('message_reaction_updated', _handleMessageUpdatedEvent);
@@ -351,6 +494,57 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     socketService.on('message_deleted_for_me', _handleMessageRealtimeEvent);
     socketService.on('message_deleted', _handleMessageRealtimeEvent);
     log('✅ [SOCKET] All listeners registered for group ${_group.id}');
+  }
+
+  void _onConversationRemoved(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+    if (cid != _group.id) return;
+    if (!mounted) return;
+
+    // Tránh pop sai stack khi đang ở route khác (vd: đang mở Tùy chọn).
+    final isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
+    if (!isCurrent) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Bạn đã rời khỏi nhóm',
+          style: TextStyle(fontFamily: 'Inter', color: Colors.white),
+        ),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    Navigator.of(context).maybePop(true);
+  }
+
+  void _onConversationHistoryCleared(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final cid = (map['conversationId'] ?? map['id'] ?? '').toString();
+    if (cid != _group.id) return;
+    if (!mounted) return;
+
+    _chatController.setMessages(const <MessageModel>[]);
+    setState(() {
+      _chatItems = <ChatItem>[];
+      _lastKnownMessageCount = 0;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Đã xoá lịch sử trò chuyện',
+          style: TextStyle(fontFamily: 'Inter', color: Colors.white),
+        ),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   void _emitSeenForLatest() {
@@ -642,12 +836,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _chatController.handleStopTypingEvent(data);
   }
 
-  Map<String, dynamic>? _tryMap(dynamic data) {
-    if (data is Map<String, dynamic>) return data;
-    if (data is Map) return Map<String, dynamic>.from(data);
-    return null;
-  }
-
   Map<String, dynamic>? _extractMessageMap(Map<String, dynamic> payload) {
     if (payload.containsKey('conversationId') &&
         (payload.containsKey('_id') || payload.containsKey('id'))) {
@@ -805,6 +993,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (content.isEmpty) return false;
     if (content.startsWith('PIN_MESSAGE|')) return true;
     if (content.startsWith('UNPIN_MESSAGE|')) return true;
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('ADD_MEMBER|')) {
+      return true;
+    }
+    if (msg.type.toUpperCase() == 'SYSTEM' &&
+        (content.startsWith('REMOVE_MEMBER|') ||
+            content.startsWith('KICK_MEMBER|'))) {
+      return true;
+    }
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('LEAVE_GROUP|')) {
+      return true;
+    }
     if (content.contains('Bạn đã ghim một tin nhắn')) return true;
     if (msg.type.toUpperCase() == 'SYSTEM' && content.contains('ghim')) {
       return true;
@@ -818,6 +1017,30 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (content.startsWith('UNPIN_MESSAGE|')) {
       return 'Đã bỏ ghim một tin nhắn';
     }
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('ADD_MEMBER|')) {
+      final parts = content.split('|');
+      final actor = parts.length > 1 ? parts[1].trim() : '';
+      final peer = parts.length > 2 ? parts[2].trim() : '';
+      final a = actor.isEmpty ? 'Ai đó' : actor;
+      final p = peer.isEmpty ? 'một thành viên' : peer;
+      return '$a đã thêm $p vào nhóm';
+    }
+    if (msg.type.toUpperCase() == 'SYSTEM' &&
+        (content.startsWith('REMOVE_MEMBER|') ||
+            content.startsWith('KICK_MEMBER|'))) {
+      final parts = content.split('|');
+      final actor = parts.length > 1 ? parts[1].trim() : '';
+      final peer = parts.length > 2 ? parts[2].trim() : '';
+      final a = actor.isEmpty ? 'Ai đó' : actor;
+      final p = peer.isEmpty ? 'một thành viên' : peer;
+      return '$a đã xóa $p khỏi nhóm';
+    }
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('LEAVE_GROUP|')) {
+      final parts = content.split('|');
+      final actor = parts.length > 1 ? parts[1].trim() : '';
+      final a = actor.isEmpty ? 'Ai đó' : actor;
+      return '$a đã rời khỏi nhóm';
+    }
     return content;
   }
 
@@ -829,14 +1052,25 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           controller: _chatController,
           chatTitle: _group.name.isNotEmpty ? _group.name : 'Nhóm',
           chatAvatar: _group.avatar,
+          memberNames: {
+            for (final e in _memberProfiles.entries) e.key: e.value.fullName,
+            authService.userId ?? '': authService.currentUser?.displayName ?? 'Tôi',
+          },
+          memberAvatars: {
+            for (final e in _memberProfiles.entries) e.key: e.value.avatar,
+            authService.userId ?? '': authService.currentUser?.avatar ?? '',
+          },
         ),
       ),
     );
     if (selectedMessageId == null || selectedMessageId.isEmpty) return;
-    await _chatController.jumpToMessage(selectedMessageId);
+    await _jumpToMessageExact(selectedMessageId);
   }
 
   Widget _buildPinSystemLine(MessageModel msg) {
+    final content = msg.content.trim();
+    final showPinnedShortcut =
+        content.startsWith('PIN_MESSAGE|') || content.startsWith('UNPIN_MESSAGE|');
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -850,19 +1084,21 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               color: AppColors.textHint,
             ),
           ),
-          const SizedBox(width: 6),
-          GestureDetector(
-            onTap: _openPinnedMessages,
-            child: const Text(
-              'Xem tất cả',
-              style: TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 12,
-                color: AppColors.primary,
-                fontWeight: FontWeight.w700,
+          if (showPinnedShortcut) ...[
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: _openPinnedMessages,
+              child: const Text(
+                'Xem tất cả',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 12,
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1463,7 +1699,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
                     useSafeArea: false,
-                    builder: (_) => const _GroupAiChatSheet(),
+                    builder: (_) => _GroupAiChatSheet(
+                      conversationId: _group.id,
+                    ),
                   );
                 },
               ),
@@ -1768,33 +2006,36 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             return _buildPinSystemLine(msg);
                           }
                           final isMe = msg.senderId == authService.userId;
-                          return CommonMessageBubble(
-                            msg: msg,
-                            isMe: isMe,
-                            isGroup: true,
-                            senderLabel: isMe
-                                ? null
-                                : _resolveMemberName(msg.senderId),
-                            senderAvatar: isMe
-                                ? null
-                                : _resolveMemberAvatar(msg.senderId),
-                            senderName: isMe
-                                ? null
-                                : _resolveMemberFullName(msg.senderId),
-                            showAvatar: _shouldShowAvatarAtIndex(index),
-                            onLongPress: () {
-                              _showMessageActions(msg);
-                            },
-                            onDoubleTap: () {
-                              _addReaction(msg, 'LIKE');
-                            },
-                            onImageTap: () => _openImageViewer(msg),
-                            onFileTap: () => _downloadFile(msg),
-                            onVideoTap: () => _openVideoPlayer(msg),
-                            isPinned:
-                                _chatController.isPinnedStateReady &&
-                                _chatController.isMessagePinned(msg.id),
-                            isHighlighted: _highlightedMessageId == msg.id,
+                          return KeyedSubtree(
+                            key: _keyForMessage(msg.id),
+                            child: CommonMessageBubble(
+                              msg: msg,
+                              isMe: isMe,
+                              isGroup: true,
+                              senderLabel: isMe
+                                  ? null
+                                  : _resolveMemberName(msg.senderId),
+                              senderAvatar: isMe
+                                  ? null
+                                  : _resolveMemberAvatar(msg.senderId),
+                              senderName: isMe
+                                  ? null
+                                  : _resolveMemberFullName(msg.senderId),
+                              showAvatar: _shouldShowAvatarAtIndex(index),
+                              onLongPress: () {
+                                _showMessageActions(msg);
+                              },
+                              onDoubleTap: () {
+                                _addReaction(msg, 'LIKE');
+                              },
+                              onImageTap: () => _openImageViewer(msg),
+                              onFileTap: () => _downloadFile(msg),
+                              onVideoTap: () => _openVideoPlayer(msg),
+                              isPinned:
+                                  _chatController.isPinnedStateReady &&
+                                  _chatController.isMessagePinned(msg.id),
+                              isHighlighted: _highlightedMessageId == msg.id,
+                            ),
                           );
                         },
                         callBuilder: (call, index) => ConversationCallBubble(
@@ -2004,7 +2245,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _GroupAiChatSheet extends StatelessWidget {
-  const _GroupAiChatSheet();
+  final String conversationId;
+
+  const _GroupAiChatSheet({required this.conversationId});
 
   @override
   Widget build(BuildContext context) {
@@ -2028,10 +2271,15 @@ class _GroupAiChatSheet extends StatelessWidget {
               ),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: ClipRRect(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              child: AiScreen(),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: AiScreen(
+                targetConversationId: conversationId,
+                autoSummarizeOnOpen: true,
+              ),
             ),
           ),
         ],

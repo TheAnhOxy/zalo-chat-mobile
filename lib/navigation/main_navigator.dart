@@ -7,6 +7,7 @@ import '../screens/contacts/contacts_screen.dart';
 import '../screens/ai/ai_screen.dart';
 import '../screens/setting/setting_screen.dart';
 import '../screens/notifications/notification_screen.dart';
+import '../screens/story/story_feed_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MainNavigator — 4 tabs + Floating AI Button ở góc phải dưới
@@ -30,8 +31,9 @@ class _MainNavigatorState extends State<MainNavigator>
   final List<Widget> _screens = const [
     ChatListScreen(),     // tab 0 — Tin nhắn
     ContactsScreen(),     // tab 1 — Danh bạ
-    NotificationScreen(), // tab 2 — Thông báo
-    SettingScreen(),      // tab 3 — Cài đặt
+    StoryFeedScreen(),    // tab 2 — Tin
+    NotificationScreen(), // tab 3 — Thông báo
+    SettingScreen(),      // tab 4 — Cài đặt
   ];
 
   @override

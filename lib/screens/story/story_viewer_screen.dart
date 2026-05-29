@@ -4,6 +4,9 @@ import 'package:video_player/video_player.dart';
 import '../../data/models/story_model.dart';
 import '../../services/auth_service.dart';
 import '../../services/story_socket_service.dart';
+import '../../core/config/app_config.dart';
+import '../../widgets/story/video_thumbnail_player.dart';
+import 'dart:ui' as ui;
 
 class StoryViewerScreen extends StatefulWidget {
   final List<ApiStoryModel> stories;
@@ -182,6 +185,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     }
 
     final topPad = MediaQuery.of(context).padding.top;
+    final botPad = MediaQuery.of(context).padding.bottom;
     final story = widget.stories[_currentIndex];
 
     return Scaffold(
@@ -193,78 +197,118 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ── Content ───────────────────────────────────────────
+            // ── PageView for Stories (Content + Blur Background) ──
             PageView.builder(
               controller: _pageController,
               physics: const NeverScrollableScrollPhysics(),
               onPageChanged: _onPageChanged,
               itemCount: widget.stories.length,
-              itemBuilder: (_, i) => _buildStoryContent(widget.stories[i], i),
+              itemBuilder: (_, i) => _buildStoryPage(widget.stories[i], i),
             ),
 
-            // ── Gradient overlays (top & bottom) ──────────────────
+            // ── Floating Overlays ──
+            
+            // Progress bars
             Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: topPad + 120,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.65),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: 140,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.6),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // ── Progress bars ──────────────────────────────────────
-            Positioned(
-              top: topPad + 8,
-              left: 10,
-              right: 10,
+              top: topPad + 12,
+              left: 12,
+              right: 12,
               child: _buildProgressBars(),
             ),
 
-            // ── User header ────────────────────────────────────────
+            // User header
             Positioned(
-              top: topPad + 22,
-              left: 12,
-              right: 12,
+              top: topPad + 40,
+              left: 16,
+              right: 16,
               child: _buildUserHeader(story),
             ),
 
-            // ── Caption at bottom ──────────────────────────────────
+            // Caption above interaction bar
             if (story.caption.isNotEmpty)
               Positioned(
-                bottom: 24 + MediaQuery.of(context).padding.bottom,
+                bottom: botPad + 70,
                 left: 16,
                 right: 16,
                 child: _buildCaption(story.caption),
               ),
+
+            // Bottom Interaction Bar (Facebook style)
+            Positioned(
+              bottom: botPad + 12,
+              left: 16,
+              right: 16,
+              child: _buildBottomReplyBar(story),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStoryPage(ApiStoryModel story, int index) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 1. Blurred Background layer
+        _buildBlurredBackground(story, index),
+        
+        // 2. Black semi-transparent overlay to darken background
+        Container(color: Colors.black.withOpacity(0.35)),
+
+        // 3. Main Content Card
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 100, horizontal: 8),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: _buildStoryContent(story, index),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBlurredBackground(ApiStoryModel story, int index) {
+    // For background, we use the same media but with BoxFit.cover and Sigma blur
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      child: ImageFiltered(
+        imageFilter: ColorFilter.mode(Colors.black.withOpacity(0.1), BlendMode.darken), // Subtle darken
+        child: ShaderMask(
+          shaderCallback: (rect) {
+            return LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.black, Colors.black.withOpacity(0.1), Colors.black],
+            ).createShader(rect);
+          },
+          blendMode: BlendMode.dstIn,
+          child: ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+            child: (story.type == 'VIDEO' && index == _currentIndex && _videoReady && _videoController != null)
+                ? VideoPlayer(_videoController!)
+                : (story.type == 'VIDEO' && (story.thumbnailUrl == null || story.thumbnailUrl!.isEmpty))
+                    ? VideoThumbnailPlayer(videoUrl: _getAbsolutePath(story.mediaUrl))
+                    : CachedNetworkImage(
+                        imageUrl: _getAbsolutePath(story.type == 'VIDEO' ? (story.thumbnailUrl ?? story.mediaUrl) : story.mediaUrl),
+                        fit: BoxFit.cover,
+                      ),
+          ),
         ),
       ),
     );
@@ -280,23 +324,19 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Widget _buildImageContent(String url) {
-    return Container(
-      color: Colors.black,
-      alignment: Alignment.center,
-      child: CachedNetworkImage(
-        imageUrl: url,
-        fit: BoxFit.contain, // ← contain: không bể, không tràn
-        width: double.infinity,
-        height: double.infinity,
-        placeholder: (_, __) => const Center(
-          child: CircularProgressIndicator(
-            color: Colors.white54,
-            strokeWidth: 2,
-          ),
+    return CachedNetworkImage(
+      imageUrl: _getAbsolutePath(url),
+      fit: BoxFit.cover, // Fill the card
+      width: double.infinity,
+      height: double.infinity,
+      placeholder: (_, __) => const Center(
+        child: CircularProgressIndicator(
+          color: Colors.white54,
+          strokeWidth: 2,
         ),
-        errorWidget: (_, __, ___) => const Center(
-          child: Icon(Icons.broken_image_outlined, color: Colors.white38, size: 56),
-        ),
+      ),
+      errorWidget: (_, __, ___) => const Center(
+        child: Icon(Icons.broken_image_outlined, color: Colors.white38, size: 56),
       ),
     );
   }
@@ -306,20 +346,32 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     if (index != _currentIndex) return const SizedBox.expand();
 
     if (!_videoReady || _videoController == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white54, strokeWidth: 2),
+      final story = widget.stories[index];
+      final thumb = story.thumbnailUrl ?? '';
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (thumb.isNotEmpty)
+            CachedNetworkImage(
+              imageUrl: _getAbsolutePath(thumb),
+              fit: BoxFit.cover,
+            )
+          else
+            VideoThumbnailPlayer(videoUrl: _getAbsolutePath(story.mediaUrl)),
+          const Center(
+            child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2),
+          ),
+        ],
       );
     }
 
-    final aspectRatio = _videoController!.value.aspectRatio;
-    return Container(
-      color: Colors.black,
-      alignment: Alignment.center,
-      child: AspectRatio(
-        aspectRatio: (aspectRatio.isFinite && aspectRatio > 0) ? aspectRatio : 9 / 16,
-        child: VideoPlayer(_videoController!),
-      ),
-    );
+    return VideoPlayer(_videoController!);
+  }
+
+  String _getAbsolutePath(String url) {
+    if (url.isEmpty) return '';
+    if (url.startsWith('http')) return url;
+    return '${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://');
   }
 
   // ─── UI pieces ────────────────────────────────────────────────────────────
@@ -338,8 +390,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 if (i == _currentIndex) val = _progressController.value;
                 return LinearProgressIndicator(
                   value: val,
-                  minHeight: 2.5,
-                  backgroundColor: Colors.white.withOpacity(0.3),
+                  minHeight: 2,
+                  backgroundColor: Colors.white.withOpacity(0.2),
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
                 );
               },
@@ -356,16 +408,16 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       children: [
         // Avatar
         Container(
-          width: 38,
-          height: 38,
+          width: 32,
+          height: 32,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 1.5),
+            border: Border.all(color: Colors.white, width: 1),
           ),
           child: ClipOval(
             child: avatar.isNotEmpty
                 ? CachedNetworkImage(
-                    imageUrl: avatar,
+                    imageUrl: _getAbsolutePath(avatar),
                     fit: BoxFit.cover,
                     errorWidget: (_, __, ___) =>
                         const Icon(Icons.person, color: Colors.white70),
@@ -383,9 +435,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 story.userName ?? 'User',
                 style: const TextStyle(
                   color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                  shadows: [Shadow(blurRadius: 4, color: Colors.black87)],
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  shadows: [
+                    Shadow(blurRadius: 8, color: Colors.black),
+                    Shadow(blurRadius: 4, color: Colors.black54),
+                  ],
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -429,36 +484,83 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         GestureDetector(
           onTap: () => Navigator.pop(context),
           child: Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.3),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.close, color: Colors.white, size: 18),
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            child: const Icon(Icons.close, color: Colors.white, size: 24),
           ),
         ),
       ],
     );
   }
 
+  Widget _buildBottomReplyBar(ApiStoryModel story) {
+    return Row(
+      children: [
+        // Text field
+        Expanded(
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white.withOpacity(0.2)),
+            ),
+            child: const Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Gửi tin nhắn...',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        // Reaction icon (Heart)
+        _buildReactionIcon(Icons.favorite_rounded, Colors.redAccent),
+        const SizedBox(width: 10),
+        // Share icon
+        _buildReactionIcon(Icons.share_rounded, Colors.white),
+      ],
+    );
+  }
+
+  Widget _buildReactionIcon(IconData icon, Color color) {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Icon(icon, color: color, size: 22),
+    );
+  }
+
   Widget _buildCaption(String caption) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.black.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
         caption,
         style: const TextStyle(
           color: Colors.white,
           fontSize: 14,
+          fontWeight: FontWeight.w500,
           height: 1.4,
+          shadows: [Shadow(blurRadius: 6, color: Colors.black)],
         ),
-        textAlign: TextAlign.center,
-        maxLines: 4,
+        textAlign: TextAlign.start,
+        maxLines: 3,
         overflow: TextOverflow.ellipsis,
       ),
     );

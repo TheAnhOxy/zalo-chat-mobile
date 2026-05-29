@@ -210,6 +210,8 @@ class ChatbotService {
     String? fileMimeType,
     List<Map<String, String>>? files,
     String? conversationId,
+    String? targetConversationId,
+    int? targetConversationLimit,
     List<ChatMessage> history = const [],
   }) async {
     try {
@@ -239,6 +241,12 @@ class ChatbotService {
       }
       if (files != null && files.isNotEmpty) {
         body['files'] = files;
+      }
+      if (targetConversationId != null && targetConversationId.isNotEmpty) {
+        body['targetConversationId'] = targetConversationId;
+      }
+      if (targetConversationLimit != null) {
+        body['targetConversationLimit'] = targetConversationLimit;
       }
 
       final response = await _dio.post(
