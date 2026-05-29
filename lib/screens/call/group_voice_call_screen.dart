@@ -610,11 +610,6 @@ class _GroupVoiceCallScreenState extends State<GroupVoiceCallScreen>
                   callService.toggleSpeaker(_isSpeaker);
                 },
               ),
-              _ControlBtn(
-                icon: Icons.dialpad_rounded,
-                label: 'Bàn phím',
-                onTap: () {},
-              ),
             ],
           ),
         ),

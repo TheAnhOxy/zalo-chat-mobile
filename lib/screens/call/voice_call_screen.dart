@@ -498,11 +498,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
                   callService.toggleSpeaker(_isSpeaker);
                 },
               ),
-              _ControlBtn(
-                icon: Icons.dialpad_rounded,
-                label: 'Bàn phím',
-                onTap: () {},
-              ),
             ],
           ),
         ),
