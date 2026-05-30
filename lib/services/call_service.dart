@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -36,11 +37,13 @@ class CallService {
 
   bool _isStartingCall = false; // ✅ chống gọi trùng
   bool _isGroupCall = false;
+  bool _callMediaIsVideo = false; // Cuộc gọi VIDEO dù local không có cam
   bool _callConnectedEmitted = false; // ✅ Chỉ emit call_connected một lần
 
   CallState get state => _state;
   MediaStream? get localStream => _localStream;
   MediaStream? get remoteStream => _remoteStream;
+  String? get currentCallId => _currentCallId;
 
   final List<void Function(CallState)> _stateListeners = [];
   IncomingCallData? onIncomingCall;
@@ -56,7 +59,24 @@ class CallService {
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
     ],
+    'sdpSemantics': 'unified-plan',
   };
+
+  String _peerKey(String? id) => (id ?? '').trim();
+
+  RTCPeerConnection? _findPeerConnection(String peerId) {
+    final key = _peerKey(peerId);
+    if (key.isEmpty) return _pc;
+    final direct = _peerConnections[key];
+    if (direct != null) return direct;
+    for (final entry in _peerConnections.entries) {
+      if (entry.key == key) return entry.value;
+      if (entry.key.endsWith(key) || key.endsWith(entry.key)) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
 
   Map<String, dynamic> _sdpReceiveConstraints(bool isVideo) => {
     'offerToReceiveAudio': true,
@@ -157,14 +177,23 @@ class CallService {
         _pendingRejectBeforeCallId = false;
         _pendingRejectConversationId = null;
       }
+
+      if (_isGroupCall) {
+        _emitCallConnectedIfReady();
+      }
     });
 
     socketService.on('call_answered', (data) async {
       try {
         final map = Map<String, dynamic>.from(data as Map);
-        final responderId = map['responderId']?.toString();
-        final peerId = responderId ?? _currentPeerId;
-        final pc = peerId != null ? _peerConnections[peerId] : _pc;
+        final responderId = _peerKey(map['responderId']?.toString());
+        final sourceId = _peerKey(map['sourceId']?.toString());
+        final peerId = responderId.isNotEmpty
+            ? responderId
+            : (sourceId.isNotEmpty
+                ? sourceId
+                : _peerKey(_currentPeerId));
+        final pc = _findPeerConnection(peerId);
 
         dev.log(
           '📩 call_answered received: peer=$peerId responder=$responderId target=${map['targetId']} source=${map['sourceId']}',
@@ -172,27 +201,38 @@ class CallService {
 
         if (pc == null) {
           dev.log(
-            '❌ call_answered received but no peer connection found for $peerId',
+            '❌ call_answered: no PC for peer=$peerId keys=${_peerConnections.keys.toList()}',
           );
           return;
         }
 
+        final answerMap = map['answer'];
+        if (answerMap is! Map) {
+          dev.log('❌ call_answered: missing answer payload');
+          return;
+        }
+        final answerPayload = Map<String, dynamic>.from(answerMap);
         final answer = RTCSessionDescription(
-          map['answer']['sdp'],
-          map['answer']['type'],
+          answerPayload['sdp']?.toString(),
+          answerPayload['type']?.toString(),
         );
         dev.log(
           '🧾 setRemoteDescription(answer): peer=$peerId type=${answer.type} sdpLen=${answer.sdp?.length ?? 0}',
         );
         await pc.setRemoteDescription(answer);
-        _peerHasRemoteDescription[peerId ?? 'default'] = true;
+        final peerKey = peerId.isNotEmpty ? peerId : 'default';
+        _peerHasRemoteDescription[peerKey] = true;
 
-        final pending = _pendingRemoteCandidates[peerId] ?? [];
-        dev.log('🧊 flushing pending ICE: peer=$peerId count=${pending.length}');
+        final pending = _pendingRemoteCandidates[peerKey] ?? [];
+        dev.log('🧊 flushing pending ICE: peer=$peerKey count=${pending.length}');
         for (final c in pending) {
           await pc.addCandidate(c);
         }
-        _pendingRemoteCandidates.remove(peerId);
+        _pendingRemoteCandidates.remove(peerKey);
+
+        if (_isGroupCall && peerKey.isNotEmpty) {
+          await _pullRemoteTracksForPeer(peerKey);
+        }
       } catch (e) {
         dev.log('❌ call_answered error: $e');
       }
@@ -206,24 +246,26 @@ class CallService {
           map['sdpMid'],
           map['sdpMLineIndex'],
         );
-        final sourceId = map['sourceId']?.toString();
-        final targetId = map['targetId']?.toString();
-        final peerId = sourceId ?? targetId ?? _currentPeerId;
+        final sourceId = _peerKey(map['sourceId']?.toString());
+        final targetId = _peerKey(map['targetId']?.toString());
+        final peerId = sourceId.isNotEmpty
+            ? sourceId
+            : (targetId.isNotEmpty ? targetId : _peerKey(_currentPeerId));
         final cType = _candidateType(candidate.candidate);
 
         dev.log(
           '📩 ICE received: peer=$peerId type=$cType source=$sourceId target=$targetId',
         );
 
-        if (targetId != null && targetId != authService.userId) {
+        if (targetId.isNotEmpty && targetId != _peerKey(authService.userId)) {
           dev.log('↪️ ICE ignored (target mismatch): myId=${authService.userId} target=$targetId');
           return;
         }
 
-        final pc = peerId != null ? _peerConnections[peerId] : _pc;
+        final pc = peerId.isNotEmpty ? _findPeerConnection(peerId) : _pc;
         if (pc == null) {
           _pendingRemoteCandidates
-              .putIfAbsent(peerId ?? 'default', () => [])
+              .putIfAbsent(peerId.isNotEmpty ? peerId : 'default', () => [])
               .add(candidate);
               dev.log('🧊 ICE queued (pc missing): peer=$peerId');
           return;
@@ -233,7 +275,7 @@ class CallService {
             _peerHasRemoteDescription[peerId] ?? _hasRemoteDescription;
         if (!hasRemote) {
           _pendingRemoteCandidates
-              .putIfAbsent(peerId ?? 'default', () => [])
+              .putIfAbsent(peerId.isNotEmpty ? peerId : 'default', () => [])
               .add(candidate);
           dev.log('🧊 ICE queued (no remoteDescription yet): peer=$peerId');
         } else {
@@ -268,9 +310,9 @@ class CallService {
       );
       onParticipantJoined?.call(map);
 
-      final joinedId = map['userId']?.toString() ?? '';
-      if (_isGroupCall && _shouldInitiateOfferWith(joinedId)) {
-        _createOfferForPeer(joinedId);
+      final joinedId = _peerKey(map['userId']?.toString());
+      if (_isGroupCall) {
+        _ensureMeshToPeer(joinedId);
       }
     });
 
@@ -288,11 +330,12 @@ class CallService {
           .where((id) => id.isNotEmpty)
           .toList();
 
-      for (final id in ids) {
-        if (id == authService.userId) continue;
+      for (final raw in ids) {
+        final id = _peerKey(raw);
+        if (id.isEmpty || id == _peerKey(authService.userId)) continue;
         onParticipantJoined?.call({'userId': id});
-        if (_isGroupCall && _shouldInitiateOfferWith(id)) {
-          _createOfferForPeer(id);
+        if (_isGroupCall) {
+          _ensureMeshToPeer(id);
         }
       }
     });
@@ -303,8 +346,10 @@ class CallService {
         final targetId = map['targetId']?.toString();
         if (targetId != null && targetId != authService.userId) return;
 
-        final sourceId = map['sourceId']?.toString() ?? '';
-        if (sourceId.isEmpty || sourceId == authService.userId) return;
+        final sourceId = _peerKey(map['sourceId']?.toString());
+        if (sourceId.isEmpty || sourceId == _peerKey(authService.userId)) {
+          return;
+        }
 
         final offer = Map<String, dynamic>.from((map['offer'] as Map?) ?? {});
         final callId = map['callId']?.toString();
@@ -379,11 +424,14 @@ class CallService {
       _currentConversationId = conversationId;
       _currentCallerId = authService.userId;
       _isGroupCall = true;
+      _callMediaIsVideo = isVideo;
 
       await _getLocalStream(isVideo: isVideo);
       final offers = <Map<String, dynamic>>[];
 
-      for (final participantId in participantIds) {
+      for (final rawId in participantIds) {
+        final participantId = _peerKey(rawId);
+        if (participantId.isEmpty) continue;
         final pc = await _createPeerConnection(participantId, isVideo: isVideo);
         var offer = await pc.createOffer(_sdpReceiveConstraints(isVideo));
         offer = _preferVp8Codec(offer);
@@ -398,6 +446,22 @@ class CallService {
         });
       }
 
+      final callIdCompleter = Completer<String?>();
+      void onCallCreated(dynamic data) {
+        try {
+          final map = Map<String, dynamic>.from(data as Map);
+          final id = map['callId']?.toString();
+          if (id != null && id.isNotEmpty) {
+            _currentCallId = id;
+            if (!callIdCompleter.isCompleted) callIdCompleter.complete(id);
+          }
+        } catch (e) {
+          if (!callIdCompleter.isCompleted) callIdCompleter.complete(null);
+        }
+      }
+
+      socketService.on('call_created', onCallCreated);
+
       socketService.emit('start_call', {
         'callDto': {
           'conversationId': conversationId,
@@ -410,8 +474,30 @@ class CallService {
         'offers': offers,
       });
 
+      final callId = await callIdCompleter.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          dev.log('❌ startGroupCall: call_created timeout');
+          return null;
+        },
+      );
+
+      socketService.off('call_created', onCallCreated);
+
+      if (callId == null) {
+        _cleanUp();
+        return null;
+      }
+
+      _currentCallId = callId;
+      _emitCallConnectedIfReady();
+
+      if (!kIsWeb) {
+        Helper.setSpeakerphoneOn(true);
+      }
+
       _setState(CallState.calling);
-      return null;
+      return callId;
     } catch (e) {
       dev.log('❌ startGroupCall error: $e');
       _cleanUp();
@@ -435,27 +521,30 @@ class CallService {
       _currentPeerId = peerId;
       _currentCallerId = peerId;
       _isGroupCall = isGroup;
+      if (isGroup && isVideo) _callMediaIsVideo = true;
 
       await _getLocalStream(isVideo: isVideo);
-      final pc = await _createPeerConnection(peerId, isVideo: isVideo);
+      final recvVideo = _wantsRecvVideo();
+      final pc = await _createPeerConnection(peerId, isVideo: recvVideo);
 
       final remoteDesc = RTCSessionDescription(offer['sdp'], offer['type']);
       dev.log(
         '🧾 setRemoteDescription(offer): peer=$peerId video=$isVideo type=${remoteDesc.type} sdpLen=${remoteDesc.sdp?.length ?? 0}',
       );
+      final peerKey = _peerKey(peerId);
       await pc.setRemoteDescription(remoteDesc);
-      _peerHasRemoteDescription[peerId] = true;
+      _peerHasRemoteDescription[peerKey] = true;
 
-      final pending = _pendingRemoteCandidates[peerId] ?? [];
+      final pending = _pendingRemoteCandidates[peerKey] ?? [];
       for (final c in pending) {
         await pc.addCandidate(c);
       }
-      _pendingRemoteCandidates.remove(peerId);
+      _pendingRemoteCandidates.remove(peerKey);
 
-      var answer = await pc.createAnswer(_sdpReceiveConstraints(isVideo));
+      var answer = await pc.createAnswer(_sdpReceiveConstraints(recvVideo));
       answer = _preferVp8Codec(answer);
       dev.log(
-        '🧾 createAnswer(callee): peer=$peerId video=$isVideo type=${answer.type} sdpLen=${answer.sdp?.length ?? 0}',
+        '🧾 createAnswer(callee): peer=$peerKey video=$isVideo type=${answer.type} sdpLen=${answer.sdp?.length ?? 0}',
       );
       await pc.setLocalDescription(answer);
 
@@ -463,11 +552,15 @@ class CallService {
         'conversationId': conversationId,
         'callId': callId,
         'answer': {'sdp': answer.sdp, 'type': answer.type},
-        'targetId': peerId,
+        'targetId': peerKey,
         'sourceId': authService.userId,
       });
 
       _setState(CallState.calling);
+      if (isGroup) {
+        _emitCallConnectedIfReady();
+        await _pullRemoteTracksForPeer(peerKey);
+      }
     } catch (e) {
       dev.log('❌ answerCall error: $e');
       _cleanUp();
@@ -484,14 +577,11 @@ class CallService {
       _currentCallId = callId;
       _currentCallerId = authService.userId;
       _isGroupCall = true;
+      _callMediaIsVideo = isVideo;
 
       await _getLocalStream(isVideo: isVideo);
 
-      socketService.emit('call_connected', {
-        'callId': callId,
-        'conversationId': conversationId,
-        'userId': authService.userId,
-      });
+      _emitCallConnectedIfReady();
 
       _setState(CallState.calling);
     } catch (e) {
@@ -579,11 +669,12 @@ class CallService {
     String peerId, {
     bool isVideo = false,
   }) async {
+    final key = _peerKey(peerId);
     final pc = await createPeerConnection(_iceConfig);
-    _peerConnections[peerId] = pc;
+    _peerConnections[key] = pc;
     _pc = pc;
-    _peerHasRemoteDescription[peerId] = false;
-    _pendingRemoteCandidates.putIfAbsent(peerId, () => []);
+    _peerHasRemoteDescription[key] = false;
+    _pendingRemoteCandidates.putIfAbsent(key, () => []);
 
     _localStream?.getTracks().forEach((track) {
       pc.addTrack(track, _localStream!);
@@ -600,24 +691,18 @@ class CallService {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
         'sdpMLineIndex': candidate.sdpMLineIndex,
-        'targetId': peerId,
+        'targetId': key,
         'sourceId': authService.userId,
       });
     };
 
     pc.onConnectionState = (state) {
-      dev.log('📡 connectionState: peer=$peerId state=$state');
+      dev.log('📡 connectionState: peer=$key state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        // ✅ Emit call_connected chỉ lần đầu tiên
-        if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
-          _callConnectedEmitted = true;
-          socketService.emit('call_connected', {
-            'callId': _currentCallId,
-            'conversationId': _currentConversationId,
-            'userId': authService.userId,
-          });
+        _emitCallConnectedIfReady();
+        if (_isGroupCall) {
+          _pullRemoteTracksForPeer(key);
         }
-        // ✅ Chỉ transition tới connected nếu chưa connected
         if (_state != CallState.connected) {
           _setState(CallState.connected);
         }
@@ -671,15 +756,7 @@ class CallService {
         onRemoteStream?.call(stream);
 
         if (_state == CallState.calling) {
-          // ✅ onTrack cũng có thể emit call_connected nếu onConnectionState chưa emit
-          if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
-            _callConnectedEmitted = true;
-            socketService.emit('call_connected', {
-              'callId': _currentCallId,
-              'conversationId': _currentConversationId,
-              'userId': authService.userId,
-            });
-          }
+          _emitCallConnectedIfReady();
           _setState(CallState.connected);
         }
         return;
@@ -704,18 +781,10 @@ class CallService {
         onRemoteStream?.call(_remoteStream!);
       }
 
-      onPeerRemoteStream?.call(peerId, stream);
+      onPeerRemoteStream?.call(key, stream);
 
       if (_state == CallState.calling) {
-        // ✅ onTrack cũng có thể emit call_connected nếu onConnectionState chưa emit
-        if (!_callConnectedEmitted && _currentCallId != null && _currentConversationId != null) {
-          _callConnectedEmitted = true;
-          socketService.emit('call_connected', {
-            'callId': _currentCallId,
-            'conversationId': _currentConversationId,
-            'userId': authService.userId,
-          });
-        }
+        _emitCallConnectedIfReady();
         _setState(CallState.connected);
       }
     };
@@ -723,7 +792,7 @@ class CallService {
     // Fallback for platforms where remote media is delivered via onAddStream.
     pc.onAddStream = (stream) {
       dev.log(
-        '🎬 onAddStream: peer=$peerId tracks=${stream.getTracks().length}',
+        '🎬 onAddStream: peer=$key tracks=${stream.getTracks().length}',
       );
       _remoteStream = stream;
 
@@ -731,20 +800,11 @@ class CallService {
         onRemoteStream?.call(stream);
       } else {
         onRemoteStream?.call(stream);
-        onPeerRemoteStream?.call(peerId, stream);
+        onPeerRemoteStream?.call(key, stream);
       }
 
       if (_state == CallState.calling) {
-        if (!_callConnectedEmitted &&
-            _currentCallId != null &&
-            _currentConversationId != null) {
-          _callConnectedEmitted = true;
-          socketService.emit('call_connected', {
-            'callId': _currentCallId,
-            'conversationId': _currentConversationId,
-            'userId': authService.userId,
-          });
-        }
+        _emitCallConnectedIfReady();
         _setState(CallState.connected);
       }
     };
@@ -756,37 +816,125 @@ class CallService {
     return (_localStream?.getVideoTracks().isNotEmpty ?? false);
   }
 
+  /// Nhận video từ remote khi đang trong cuộc VIDEO (kể cả máy không có cam).
+  bool _wantsRecvVideo() => _callMediaIsVideo || _isVideoCall();
+
+  bool _isPoliteTo(String peerKey) {
+    final myId = _peerKey(authService.userId);
+    if (myId.isEmpty || peerKey.isEmpty) return false;
+    return myId.compareTo(peerKey) > 0;
+  }
+
+  /// Gom track từ receivers (Android/Web đôi khi onTrack không fire).
+  Future<void> _pullRemoteTracksForPeer(String peerId) async {
+    if (!_isGroupCall) return;
+    final key = _peerKey(peerId);
+    final pc = _peerConnections[key];
+    if (pc == null) return;
+
+    try {
+      final receivers = await pc.getReceivers();
+      if (receivers.isEmpty) return;
+
+      final stream = await createLocalMediaStream('remote_pull_$key');
+      for (final receiver in receivers) {
+        final track = receiver.track;
+        if (track == null) continue;
+        final sameKind =
+            stream.getTracks().where((t) => t.kind == track.kind).toList();
+        for (final old in sameKind) {
+          await stream.removeTrack(old);
+        }
+        await stream.addTrack(track);
+      }
+
+      if (stream.getTracks().isEmpty) return;
+      dev.log(
+        '[Mesh] pullRemoteTracks $key: ${stream.getTracks().map((t) => t.kind).toList()}',
+      );
+      onPeerRemoteStream?.call(key, stream);
+    } catch (e) {
+      dev.log('[Mesh] pullRemoteTracks($key) error: $e');
+    }
+  }
+
+  void _emitCallConnectedIfReady() {
+    if (_callConnectedEmitted) return;
+    if (_currentCallId == null || _currentConversationId == null) return;
+    final userId = authService.userId;
+    if (userId == null || userId.isEmpty) return;
+
+    _callConnectedEmitted = true;
+    socketService.emit('call_connected', {
+      'callId': _currentCallId,
+      'conversationId': _currentConversationId,
+      'userId': userId,
+    });
+    dev.log('📞 call_connected emitted: callId=$_currentCallId');
+  }
+
   bool _shouldInitiateOfferWith(String peerId) {
-    if (peerId.isEmpty) return false;
-    final myId = authService.userId;
-    if (myId == null || myId.isEmpty || myId == peerId) return false;
-    return myId.compareTo(peerId) < 0;
+    final key = _peerKey(peerId);
+    if (key.isEmpty) return false;
+    final myId = _peerKey(authService.userId);
+    if (myId.isEmpty || myId == key) return false;
+    return myId.compareTo(key) < 0;
+  }
+
+  /// Tạo kết nối mesh tới peer nếu chưa có PC.
+  void _ensureMeshToPeer(String peerId) {
+    final key = _peerKey(peerId);
+    if (key.isEmpty || key == _peerKey(authService.userId)) return;
+    if (_peerConnections.containsKey(key)) return;
+    if (_shouldInitiateOfferWith(key)) {
+      _createOfferForPeer(key);
+    }
+    // Retry mesh sau khi peer ổn định (tránh lúc thấy 1 người lúc thấy 2).
+    Future.delayed(const Duration(seconds: 2), () async {
+      if (!_isGroupCall) return;
+      if (_peerConnections.containsKey(key)) {
+        await _pullRemoteTracksForPeer(key);
+        if (_peerHasRemoteDescription[key] != true &&
+            _shouldInitiateOfferWith(key)) {
+          final stuck = _peerConnections.remove(key);
+          await stuck?.close();
+          _peerHasRemoteDescription.remove(key);
+          await _createOfferForPeer(key);
+        }
+        return;
+      }
+      if (_shouldInitiateOfferWith(key)) {
+        await _createOfferForPeer(key);
+      }
+    });
   }
 
   Future<void> _createOfferForPeer(String peerId) async {
     try {
-      if (peerId.isEmpty || peerId == authService.userId) return;
+      final key = _peerKey(peerId);
+      if (key.isEmpty || key == _peerKey(authService.userId)) return;
       if (!_isGroupCall) return;
       if (_currentConversationId == null || _currentConversationId!.isEmpty) {
         return;
       }
-      if (_peerConnections.containsKey(peerId)) return;
+      if (_peerConnections.containsKey(key)) return;
 
-      final isVideo = _isVideoCall();
-      await _getLocalStream(isVideo: isVideo);
-      final pc = await _createPeerConnection(peerId, isVideo: isVideo);
+      final recvVideo = _wantsRecvVideo();
+      await _getLocalStream(isVideo: recvVideo);
+      final pc = await _createPeerConnection(key, isVideo: recvVideo);
 
-      var offer = await pc.createOffer(_sdpReceiveConstraints(isVideo));
+      var offer = await pc.createOffer(_sdpReceiveConstraints(recvVideo));
       offer = _preferVp8Codec(offer);
       await pc.setLocalDescription(offer);
 
       socketService.emit('call_offer', {
         'conversationId': _currentConversationId,
         'callId': _currentCallId,
-        'targetId': peerId,
+        'targetId': key,
         'sourceId': authService.userId,
         'offer': {'sdp': offer.sdp, 'type': offer.type},
       });
+      dev.log('📤 call_offer sent to $key');
     } catch (e) {
       dev.log('❌ create offer for peer($peerId) error: $e');
     }
@@ -799,33 +947,57 @@ class CallService {
   }) async {
     try {
       if (!_isGroupCall) return;
-      if (sourceId == authService.userId) return;
+      final key = _peerKey(sourceId);
+      if (key.isEmpty || key == _peerKey(authService.userId)) return;
+
+      // Tránh glare chỉ khi đã có remote description (đã kết nối xong).
+      if (_peerHasRemoteDescription[key] == true) {
+        dev.log('↪️ Ignoring duplicate call_offer from $key (already connected)');
+        return;
+      }
+
+      final existingPc = _peerConnections[key];
+      if (existingPc != null) {
+        final state = existingPc.signalingState;
+        final waitingOurAnswer = state ==
+                RTCSignalingState.RTCSignalingStateHaveLocalOffer ||
+            state == RTCSignalingState.RTCSignalingStateHaveLocalPrAnswer;
+        if (waitingOurAnswer && !_isPoliteTo(key)) {
+          dev.log('↪️ Ignoring call_offer from $key — awaiting our offer answer');
+          return;
+        }
+        if (waitingOurAnswer && _isPoliteTo(key)) {
+          dev.log('🔄 Polite rollback for $key — accept incoming offer');
+          await existingPc.close();
+          _peerConnections.remove(key);
+          _peerHasRemoteDescription.remove(key);
+          _pendingRemoteCandidates.remove(key);
+        }
+      }
 
       final offerSdp = offer['sdp']?.toString() ?? '';
-      final isVideo = offerSdp.contains('m=video');
+      final recvVideo = _wantsRecvVideo() || offerSdp.contains('m=video');
 
       _currentCallId ??= callId;
-      await _getLocalStream(isVideo: isVideo || _isVideoCall());
+      await _getLocalStream(isVideo: recvVideo);
 
-      final pc = _peerConnections[sourceId] ??
-          await _createPeerConnection(sourceId, isVideo: isVideo || _isVideoCall());
+      final pc = _peerConnections[key] ??
+          await _createPeerConnection(key, isVideo: recvVideo);
 
       final remoteDesc = RTCSessionDescription(
         offer['sdp']?.toString(),
         offer['type']?.toString(),
       );
       await pc.setRemoteDescription(remoteDesc);
-      _peerHasRemoteDescription[sourceId] = true;
+      _peerHasRemoteDescription[key] = true;
 
-      final pending = _pendingRemoteCandidates[sourceId] ?? [];
+      final pending = _pendingRemoteCandidates[key] ?? [];
       for (final c in pending) {
         await pc.addCandidate(c);
       }
-      _pendingRemoteCandidates.remove(sourceId);
+      _pendingRemoteCandidates.remove(key);
 
-      var answer = await pc.createAnswer(
-        _sdpReceiveConstraints(isVideo || _isVideoCall()),
-      );
+      var answer = await pc.createAnswer(_sdpReceiveConstraints(recvVideo));
       answer = _preferVp8Codec(answer);
       await pc.setLocalDescription(answer);
 
@@ -833,9 +1005,11 @@ class CallService {
         'conversationId': _currentConversationId,
         'callId': _currentCallId,
         'answer': {'sdp': answer.sdp, 'type': answer.type},
-        'targetId': sourceId,
+        'targetId': key,
         'sourceId': authService.userId,
       });
+      dev.log('📤 mesh answer sent to $key');
+      await _pullRemoteTracksForPeer(key);
     } catch (e) {
       dev.log('❌ answer peer offer($sourceId) error: $e');
     }
@@ -926,6 +1100,7 @@ class CallService {
     _currentCallerId = null;
     _currentPeerId = null;
     _isGroupCall = false;
+    _callMediaIsVideo = false;
     _callConnectedEmitted = false; // ✅ Reset flag
 
     _state = CallState.idle;
