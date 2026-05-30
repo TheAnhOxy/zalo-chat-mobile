@@ -82,30 +82,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   List<MessageModel> get _messages => _chatController.messages;
   bool get _isTyping => _chatController.isPeerTyping;
 
-  CallModel? get _ongoingCall {
-    for (final call in _calls.reversed) {
-      if (call.status == 'ENDED' ||
-          call.status == 'REJECTED' ||
-          call.status == 'MISSED') {
-        continue;
-      }
-      if (call.activeParticipants.length < 2) {
-        continue;
-      }
-      return call;
-    }
-    return null;
-  }
-
-  bool get _hasJoinableOngoingCall {
-    final call = _ongoingCall;
-    if (call == null) return false;
-    if (call.activeParticipants.length < 2) return false;
-    final myId = authService.userId;
-    if (myId == null || myId.isEmpty) return false;
-    return !call.activeParticipants.contains(myId);
-  }
-
   @override
   void initState() {
     super.initState();
@@ -395,39 +371,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           participants: _buildParticipants(),
           isIncoming: false,
         ),
-      ),
-    );
-  }
-
-  Future<void> _joinOngoingCall() async {
-    final ongoingCall = _ongoingCall;
-    if (ongoingCall == null) return;
-
-    final participants = _buildParticipants();
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => ongoingCall.isVideo
-            ? GroupVideoCallScreen(
-                conversationId: _group.id,
-                groupName: _group.name.isNotEmpty ? _group.name : 'Nhóm',
-                callerId: authService.userId ?? '',
-                groupAvatar: _group.avatar.isNotEmpty ? _group.avatar : null,
-                participants: participants,
-                callId: ongoingCall.id,
-                joinExistingCall: true,
-              )
-            : GroupVoiceCallScreen(
-                conversationId: _group.id,
-                groupName: _group.name.isNotEmpty ? _group.name : 'Nhóm',
-                callerId: authService.userId ?? '',
-                groupAvatar: _group.avatar.isNotEmpty ? _group.avatar : null,
-                participants: participants,
-                callId: ongoingCall.id,
-                joinExistingCall: true,
-              ),
       ),
     );
   }
@@ -2215,7 +2158,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  // ── Header (ĐÃ THÊM 2 nút gọi nhóm + REJOIN) ─────────────────────────────────────
   Widget _buildHeader(int memberCount) {
     return Container(
       decoration: const BoxDecoration(
@@ -2285,36 +2227,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ),
 
-          if (_hasJoinableOngoingCall)
-            IconButton(
-              icon: Icon(
-                _ongoingCall?.isVideo == true
-                    ? Icons.videocam_outlined
-                    : Icons.phone_in_talk_outlined,
-                color: Colors.green,
-                size: 22,
-              ),
-              tooltip: 'Tham gia cuộc gọi',
-              onPressed: _joinOngoingCall,
-            )
-          else ...[
-            IconButton(
-              icon: const Icon(
-                Icons.phone_outlined,
-                color: AppColors.primary,
-                size: 22,
-              ),
-              onPressed: _startVoiceCall,
+          IconButton(
+            icon: const Icon(
+              Icons.phone_outlined,
+              color: AppColors.primary,
+              size: 22,
             ),
-            IconButton(
-              icon: const Icon(
-                Icons.videocam_outlined,
-                color: AppColors.primary,
-                size: 24,
-              ),
-              onPressed: _startVideoCall,
+            onPressed: _startVoiceCall,
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.videocam_outlined,
+              color: AppColors.primary,
+              size: 24,
             ),
-          ],
+            onPressed: _startVideoCall,
+          ),
           // ── Nút thông tin nhóm ──
           IconButton(
             icon: const Icon(
