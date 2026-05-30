@@ -108,6 +108,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   // ✅ Setup listeners cho sự kiện cuộc gọi
   void _setupCallListeners() {
+    socketService.on('call_started', _handleCallStartedEvent);
+    socketService.on('participant_joined', _handleParticipantJoinedEvent);
     socketService.on('participant_left', _handleParticipantLeftEvent);
     socketService.on('call_ended', _handleCallEndedEvent);
     socketService.on(
@@ -451,6 +453,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       'conversation_history_cleared',
       _onConversationHistoryCleared,
     );
+    socketService.off('call_started', _handleCallStartedEvent);
+    socketService.off('participant_joined', _handleParticipantJoinedEvent);
     socketService.off('participant_left', _handleParticipantLeftEvent);
     socketService.off('call_ended', _handleCallEndedEvent);
     socketService.off(
@@ -797,8 +801,86 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final callId = map['callId']?.toString() ?? '';
     if (callId.isEmpty) return;
 
-    _activeCallId = callId;
-    if (mounted) setState(() {});
+    final userId = map['userId']?.toString() ?? '';
+    if (userId.isEmpty) return;
+
+    setState(() {
+      final index = _calls.indexWhere((call) => call.id == callId);
+      if (index != -1) {
+        final call = _calls[index];
+        final updatedActiveParticipants = call.activeParticipants
+            .where((id) => id != userId)
+            .toList();
+        _calls[index] = CallModel(
+          id: call.id,
+          conversationId: call.conversationId,
+          callerId: call.callerId,
+          participants: call.participants,
+          activeParticipants: updatedActiveParticipants,
+          type: call.type,
+          status: call.status,
+          startedAt: call.startedAt,
+          endedAt: call.endedAt,
+          duration: call.duration,
+          createdAt: call.createdAt,
+        );
+        _rebuildChatItems();
+      }
+      _activeCallId = callId;
+    });
+
+    _syncCallsRealtime();
+  }
+
+  void _handleParticipantJoinedEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final callId = map['callId']?.toString() ?? '';
+    final userId = map['userId']?.toString() ?? '';
+    if (callId.isEmpty || userId.isEmpty) return;
+
+    setState(() {
+      final index = _calls.indexWhere((call) => call.id == callId);
+      if (index != -1) {
+        final call = _calls[index];
+        final updatedActiveParticipants = <String>{
+          ...call.activeParticipants,
+          userId,
+        }.toList();
+        _calls[index] = CallModel(
+          id: call.id,
+          conversationId: call.conversationId,
+          callerId: call.callerId,
+          participants: call.participants,
+          activeParticipants: updatedActiveParticipants,
+          type: call.type,
+          status: call.status,
+          startedAt: call.startedAt,
+          endedAt: call.endedAt,
+          duration: call.duration,
+          createdAt: call.createdAt,
+        );
+        _rebuildChatItems();
+      }
+      _activeCallId = callId;
+      _activeCallConversationId = _group.id;
+    });
+
+    _syncCallsRealtime();
+  }
+
+  void _handleCallStartedEvent(dynamic data) {
+    final map = _tryMap(data);
+    if (map == null) return;
+    final callId = map['callId']?.toString() ?? '';
+    if (callId.isEmpty) return;
+
+    setState(() {
+      _activeCallId = callId;
+      _activeCallConversationId = _group.id;
+    });
+
+    _syncCallsRealtime();
   }
 
   void _handleCallEndedEvent(dynamic data) {
@@ -823,6 +905,19 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (conversationId != _group.id) return;
 
     _activeCallConversationId = conversationId;
+    final callDataRaw = map['callData'];
+    final callData = _tryMap(callDataRaw);
+    if (callData != null) {
+      try {
+        final updatedCall = CallModel.fromJson(callData);
+        setState(() {
+          _calls = _upsertCall(_calls, updatedCall);
+          _rebuildChatItems();
+        });
+        _syncCallsRealtime();
+        return;
+      } catch (_) {}
+    }
     if (mounted) setState(() {});
     _syncCallsRealtime();
   }
@@ -2063,7 +2158,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  // ── Header (ĐÃ THÊM 2 nút gọi nhóm + REJOIN) ─────────────────────────────────────
   Widget _buildHeader(int memberCount) {
     return Container(
       decoration: const BoxDecoration(
@@ -2133,50 +2227,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ),
 
-          // ✅ Nút quay lại cuộc gọi (nếu đang có cuộc gọi)
-          if (_activeCallId != null && _activeCallId!.isNotEmpty)
-            IconButton(
-              icon: const Icon(
-                Icons.phone_in_talk_outlined,
-                color: Colors.green,
-                size: 22,
-              ),
-              tooltip: 'Quay lại cuộc gọi',
-              onPressed: () {
-                // ✅ Rejoin call: Navigate tới call screen
-                if (_activeCallConversationId != null &&
-                    _activeCallId != null) {
-                  final group = widget.group;
-                  // Build participants từ group members
-                  final participants = group.members
-                      .map(
-                        (m) => GroupCallParticipant(
-                          userId: m.userId,
-                          name: _memberProfiles[m.userId]?.fullName ?? m.userId,
-                          avatar: _memberProfiles[m.userId]?.avatar,
-                        ),
-                      )
-                      .toList();
-
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => GroupVideoCallScreen(
-                        conversationId: _activeCallConversationId!,
-                        groupName: group.name.isNotEmpty ? group.name : 'Nhóm',
-                        callerId: authService.userId ?? '',
-                        groupAvatar: group.avatar,
-                        participants: participants,
-                        isIncoming: false,
-                        callId: _activeCallId,
-                      ),
-                    ),
-                  );
-                }
-              },
-            ),
-
-          // ── Nút gọi thoại nhóm ──
           IconButton(
             icon: const Icon(
               Icons.phone_outlined,
@@ -2185,7 +2235,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
             onPressed: _startVoiceCall,
           ),
-          // ── Nút gọi video nhóm ──
           IconButton(
             icon: const Icon(
               Icons.videocam_outlined,

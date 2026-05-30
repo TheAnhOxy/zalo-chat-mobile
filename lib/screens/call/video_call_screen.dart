@@ -7,6 +7,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/models/models.dart';
 import '../../services/call_service.dart';
+import '../../services/auth_service.dart';
 import '../../widgets/common/common_widgets.dart';
 
 class VideoCallScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class VideoCallScreen extends StatefulWidget {
   final String? callId;
   final String? conversationId;
   final Map<String, dynamic>? offer;
+  final bool autoAnswer;
 
   const VideoCallScreen({
     super.key,
@@ -23,6 +25,7 @@ class VideoCallScreen extends StatefulWidget {
     this.callId,
     this.conversationId,
     this.offer,
+    this.autoAnswer = false,
   });
 
   @override
@@ -45,12 +48,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   late RTCVideoRenderer _remoteRenderer;
   bool _renderersReady = false;
   MediaStream? _pendingRemoteStream;
+  MediaStream? _pendingLocalStream;
 
   @override
   void initState() {
     super.initState();
     if (!kIsWeb) WakelockPlus.enable();
-    _initRenderers();
     callService.addStateListener(_onCallStateChanged);
     callService.onRemoteStream = (stream) {
       if (!mounted) return;
@@ -61,7 +64,39 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
       setState(() => _remoteRenderer.srcObject = stream);
     };
-    _init();
+    callService.onLocalStream = _bindLocalToRenderer;
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await _initRenderers();
+    if (!mounted) return;
+    await _init();
+  }
+
+  /// Gán local MediaStream vào PiP — chỉ sau khi renderer đã initialize.
+  void _bindLocalToRenderer(MediaStream stream) {
+    if (!mounted) return;
+    if (!_renderersReady) {
+      _pendingLocalStream = stream;
+      return;
+    }
+    if (_localRenderer.srcObject?.id != stream.id) {
+      _localRenderer.srcObject = null;
+      _localRenderer.srcObject = stream;
+    }
+    setState(() {});
+  }
+
+  void _bindLocalFromCallService() {
+    final stream = callService.localStream;
+    if (stream != null) _bindLocalToRenderer(stream);
+  }
+
+  bool get _hasLocalVideo {
+    if (_isCamOff) return false;
+    final stream = _localRenderer.srcObject ?? callService.localStream;
+    return stream?.getVideoTracks().any((t) => t.enabled) ?? false;
   }
 
   Future<void> _initRenderers() async {
@@ -71,8 +106,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     await _remoteRenderer.initialize();
     if (!mounted) return;
 
-    if (callService.localStream != null) {
-      _localRenderer.srcObject = callService.localStream;
+    final local = _pendingLocalStream ?? callService.localStream;
+    if (local != null) {
+      _localRenderer.srcObject = local;
+      _pendingLocalStream = null;
     }
 
     final remote = _pendingRemoteStream ?? callService.remoteStream;
@@ -87,6 +124,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void _onCallStateChanged(CallState state) {
     if (!mounted) return;
     setState(() => _callState = state);
+    if (state == CallState.calling || state == CallState.connected) {
+      _bindLocalFromCallService();
+    }
     if (state == CallState.connected) {
       _callWasConnected = true;
       _startTimer();
@@ -105,17 +145,26 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
 
     if (widget.isIncoming) {
-      setState(() => _callState = CallState.incoming);
+      if (widget.autoAnswer) {
+        setState(() => _callState = CallState.calling);
+        await callService.answerCall(
+          conversationId: widget.conversationId ?? '',
+          callId: widget.callId ?? '',
+          peerId: widget.otherUser.id,
+          offer: widget.offer ?? const {},
+          isVideo: true,
+        );
+        _bindLocalFromCallService();
+      } else {
+        setState(() => _callState = CallState.incoming);
+      }
     } else {
       await callService.startCall(
         conversationId: widget.conversationId ?? '',
         calleeId: widget.otherUser.id,
         isVideo: true,
       );
-      // Gán local stream vào renderer
-      if (callService.localStream != null) {
-        _localRenderer.srcObject = callService.localStream;
-      }
+      _bindLocalFromCallService();
       setState(() => _callState = CallState.calling);
     }
   }
@@ -129,6 +178,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _remoteRenderer.dispose();
     callService.removeStateListener(_onCallStateChanged);
     callService.onRemoteStream = null;
+    callService.onLocalStream = null;
     // if (_callState == CallState.calling || _callState == CallState.connected) {
     //   callService.endCall();
     // }
@@ -416,7 +466,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(13),
-            child: _isCamOff || _localRenderer.srcObject == null
+            child: _isCamOff
                 ? Container(
                     color: const Color(0xFF1A3A1A),
                     child: const Center(
@@ -424,6 +474,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                         Icons.videocam_off_rounded,
                         color: Colors.white54,
                         size: 28,
+                      ),
+                    ),
+                  )
+                : !_hasLocalVideo
+                ? Container(
+                    color: const Color(0xFF1A3A1A),
+                    child: Center(
+                      child: AvatarWidget(
+                        url: authService.currentUser?.avatar,
+                        name: authService.currentUser?.fullName ?? 'You',
+                        size: 48,
                       ),
                     ),
                   )
@@ -710,12 +771,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   isVideo: true,
                   isGroup: false,
                 );
-                // Gán local stream sau khi answer
-                if (callService.localStream != null && mounted) {
-                  setState(() {
-                    _localRenderer.srcObject = callService.localStream;
-                  });
-                }
+                _bindLocalFromCallService();
               },
               child: Container(
                 width: 64,

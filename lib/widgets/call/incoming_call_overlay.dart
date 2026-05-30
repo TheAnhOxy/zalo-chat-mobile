@@ -125,6 +125,39 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     );
     _isIncomingDialogVisible = true;
 
+    void openDetails() {
+      _dismissIncomingDialog();
+      if (isVideo) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => VideoCallScreen(
+              otherUser: callerUser,
+              isIncoming: true,
+              callId: callId,
+              conversationId: conversationId,
+              offer: offer,
+            ),
+          ),
+        );
+      } else {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => VoiceCallScreen(
+              otherUser: callerUser,
+              isIncoming: true,
+              callId: callId,
+              conversationId: conversationId,
+              offer: offer,
+            ),
+          ),
+        );
+      }
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -150,9 +183,12 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
           ),
           contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
           actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          content: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: openDetails,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               // Avatar với icon loại call overlay
               Stack(
                 alignment: Alignment.center,
@@ -228,7 +264,8 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 20),
-            ],
+              ],
+            ),
           ),
           actions: [
             Row(
@@ -286,6 +323,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
                             builder: (_) => VideoCallScreen(
                               otherUser: callerUser,
                               isIncoming: true,
+                              autoAnswer: true,
                               callId: callId,
                               conversationId: conversationId,
                               offer: offer,
@@ -300,6 +338,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
                             builder: (_) => VoiceCallScreen(
                               otherUser: callerUser,
                               isIncoming: true,
+                              autoAnswer: true,
                               callId: callId,
                               conversationId: conversationId,
                               offer: offer,
