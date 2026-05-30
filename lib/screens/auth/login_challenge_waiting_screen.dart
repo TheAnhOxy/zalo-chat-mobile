@@ -12,11 +12,13 @@ class LoginChallengeWaitingArguments {
   final String challengeId;
   final String email;
   final DateTime challengeExpiredAt;
+  final String? reason;
 
   const LoginChallengeWaitingArguments({
     required this.challengeId,
     required this.email,
     required this.challengeExpiredAt,
+    this.reason,
   });
 }
 
@@ -36,6 +38,20 @@ class _LoginChallengeWaitingScreenState
   bool _polling = true;
   bool _checking = false;
   String _statusText = 'Đang chờ bạn xác nhận trong email...';
+
+  String get _reasonText {
+    final reason = (widget.args.reason ?? '').toLowerCase().trim();
+    if (reason == 'new_device') {
+      return 'Thiết bị mới, vui lòng nhập OTP.';
+    }
+    if (reason == 'suspicious_login') {
+      return 'Đăng nhập bất thường, cần OTP.';
+    }
+    if (reason == 'missing_device_id') {
+      return 'Thiếu deviceId, cần OTP.';
+    }
+    return 'Vui lòng xác nhận đăng nhập qua email.';
+  }
 
   @override
   void initState() {
@@ -78,14 +94,15 @@ class _LoginChallengeWaitingScreenState
 
       if (!mounted || !_polling) return;
 
-      if (result.isPending) {
+      final status = result.status.toUpperCase();
+      if (status == 'PENDING') {
         setState(() {
           _statusText = 'Đang chờ bạn xác nhận trong email...';
         });
         return;
       }
 
-      if (result.isConsumed && result.loginResult != null) {
+      if ((status == 'APPROVED' || status == 'CONSUMED') && result.loginResult != null) {
         setState(() {
           _statusText = 'Đăng nhập đã được xác nhận, đang vào hệ thống...';
         });
@@ -101,6 +118,11 @@ class _LoginChallengeWaitingScreenState
         _stopPolling();
         if (!mounted) return;
         Navigator.pushNamedAndRemoveUntil(context, AppRouter.main, (_) => false);
+        return;
+      }
+
+      if (status == 'REJECTED') {
+        _setRejected();
         return;
       }
 
@@ -186,6 +208,14 @@ class _LoginChallengeWaitingScreenState
                 ),
               ),
               const SizedBox(height: 8),
+              Text(
+                _reasonText,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontFamily: 'Inter',
+                ),
+              ),
+              const SizedBox(height: 6),
               Text(
                 'Email nhận xác nhận: ${widget.args.email}',
                 style: const TextStyle(

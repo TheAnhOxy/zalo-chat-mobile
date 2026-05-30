@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/foundation.dart';
 import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
 import '../../services/fake_auth_flow_service.dart';
+import '../../services/device_info_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/top_notice.dart';
 import 'login_challenge_waiting_screen.dart';
@@ -46,11 +46,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _loading = true);
     try {
+      final deviceFingerprint = await deviceInfoService.getDeviceFingerprint();
       final result = await fakeAuthFlowService.login(
         identifier: identifier,
         password: password,
-        device: 'web',
-        deviceName: _buildShortDeviceName(),
+        device: deviceInfoService.deviceType,
+        deviceName: deviceInfoService.deviceName,
+        deviceFingerprint: deviceFingerprint,
       );
       if (!mounted) return;
 
@@ -63,6 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
             challengeId: challenge.challengeId,
             email: challenge.email,
             challengeExpiredAt: challenge.challengeExpiredAt,
+            reason: challenge.reason,
           ),
         );
         return;
@@ -87,24 +90,6 @@ class _LoginScreenState extends State<LoginScreen> {
       _showError('Đăng nhập thất bại: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  String _buildShortDeviceName() {
-    if (kIsWeb) return 'Web Browser';
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        return 'Flutter Android';
-      case TargetPlatform.iOS:
-        return 'Flutter iOS';
-      case TargetPlatform.windows:
-        return 'Flutter Windows';
-      case TargetPlatform.macOS:
-        return 'Flutter macOS';
-      case TargetPlatform.linux:
-        return 'Flutter Linux';
-      case TargetPlatform.fuchsia:
-        return 'Flutter Fuchsia';
     }
   }
 

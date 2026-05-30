@@ -4,6 +4,7 @@ import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/fake_auth_flow_service.dart';
+import '../../services/device_info_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/top_notice.dart';
 import 'otp_verify_screen.dart';
@@ -61,8 +62,12 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
 
     setState(() => _loading = true);
     try {
+      final deviceFingerprint = await deviceInfoService.getDeviceFingerprint();
       final otpSession = await fakeAuthFlowService.requestPhoneLoginOtp(
         phone: phone,
+        device: deviceInfoService.deviceType,
+        deviceName: deviceInfoService.deviceName,
+        deviceFingerprint: deviceFingerprint,
       );
       if (!mounted) return;
           showTopNotice(context, message: 'Đã gửi OTP đăng nhập tới $phone');

@@ -61,11 +61,13 @@ class LoginChallengeInfo {
   final String challengeId;
   final String email;
   final DateTime challengeExpiredAt;
+  final String? reason;
 
   const LoginChallengeInfo({
     required this.challengeId,
     required this.email,
     required this.challengeExpiredAt,
+    this.reason,
   });
 }
 
@@ -162,6 +164,7 @@ class FakeAuthFlowService {
   Future<LoginAttemptResult> login({
     required String identifier,
     required String password,
+    required String deviceFingerprint,
     String device = 'web',
     String deviceName = 'Flutter App',
   }) async {
@@ -170,6 +173,7 @@ class FakeAuthFlowService {
       'password': password,
       'device': device,
       'deviceName': deviceName,
+      'deviceFingerprint': deviceFingerprint,
     });
 
     final requiresChallenge = data['requiresEmailConfirmation'] == true;
@@ -185,6 +189,7 @@ class FakeAuthFlowService {
           challengeId: challengeId,
           email: email,
           challengeExpiredAt: expiredAt,
+          reason: (data['reason'] ?? '').toString().trim(),
         ),
       );
     }
@@ -200,17 +205,18 @@ class FakeAuthFlowService {
   Future<LoginChallengeStatusResult> getLoginChallengeStatus(
     String challengeId,
   ) async {
-    final data = await _post('/auth/login/challenge-status', {
+    final data = await _post('/auth/login-challenge/status', {
       'challengeId': challengeId.trim(),
     });
 
     final id = (data['challengeId'] ?? challengeId).toString().trim();
-    final status = (data['status'] ?? '').toString().toLowerCase().trim();
+    final rawStatus = (data['status'] ?? '').toString().trim();
+    final status = rawStatus.toUpperCase();
 
-    if (status == 'consumed') {
+    if (status == 'APPROVED' || status == 'CONSUMED') {
       return LoginChallengeStatusResult(
         challengeId: id,
-        status: status,
+        status: rawStatus,
         loginResult: LoginResult(
           user: _parseUser(_extractMap(data['user'])),
           tokens: _parseTokens(_extractMap(data['tokens'])),
@@ -221,7 +227,7 @@ class FakeAuthFlowService {
 
     return LoginChallengeStatusResult(
       challengeId: id,
-      status: status.isEmpty ? 'pending' : status,
+      status: rawStatus.isEmpty ? 'PENDING' : rawStatus,
     );
   }
 
@@ -330,7 +336,12 @@ class FakeAuthFlowService {
     await _post('/auth/logout-all-devices', {'userId': userId});
   }
 
-  Future<OtpSession> requestPhoneLoginOtp({required String phone}) async {
+  Future<OtpSession> requestPhoneLoginOtp({
+    required String phone,
+    required String deviceFingerprint,
+    String device = 'web',
+    String deviceName = 'Flutter App',
+  }) async {
     final data = await _post('/auth/phone-login/request-otp', {
       'phone': normalizePhone(phone),
     });
@@ -490,12 +501,18 @@ class FakeAuthFlowService {
     Map<String, dynamic> body,
   ) async {
     final uri = Uri.parse('$_baseUrl$path');
-    final response = await _client.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
-    return _handleResponse(response);
+    final headers = {'Content-Type': 'application/json'};
+    final encoded = jsonEncode(body);
+    try {
+      final response = await _client.post(
+        uri,
+        headers: headers,
+        body: encoded,
+      );
+      return _handleResponse(response);
+    } catch (e) {
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> _put(
