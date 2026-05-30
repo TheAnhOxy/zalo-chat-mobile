@@ -12,6 +12,7 @@ class ConversationTimeline extends StatelessWidget {
   final bool showTypingIndicator;
   final EdgeInsets padding;
   final Widget Function(MessageModel message, int index) messageBuilder;
+  final Widget Function(List<MessageModel> group, int index)? mediaGroupBuilder;
   final Widget Function(CallModel call, int index) callBuilder;
   final Widget Function()? typingIndicatorBuilder;
 
@@ -20,6 +21,7 @@ class ConversationTimeline extends StatelessWidget {
     required this.controller,
     required this.items,
     required this.messageBuilder,
+    this.mediaGroupBuilder,
     required this.callBuilder,
     this.showTypingIndicator = false,
     this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -81,6 +83,8 @@ class ConversationTimeline extends StatelessWidget {
               ),
             if (item.type == ChatItemType.call)
               callBuilder(item.call!, index)
+            else if (item.type == ChatItemType.mediaGroup && mediaGroupBuilder != null)
+              mediaGroupBuilder!(item.mediaGroup!, index)
             else
               messageBuilder(item.message!, index),
           ],

@@ -294,6 +294,7 @@ class MessageMetadata {
   final double? lat;
   final double? lng;
   final int? duration; // seconds (voice)
+  final String? groupId;
 
   factory MessageMetadata.fromJson(Map<String, dynamic> json) {
     return MessageMetadata(
@@ -304,6 +305,7 @@ class MessageMetadata {
       lat: (json['lat'] as num?)?.toDouble(),
       lng: (json['lng'] as num?)?.toDouble(),
       duration: json['duration'],
+      groupId: json['groupId'],
     );
   }
 
@@ -315,6 +317,7 @@ class MessageMetadata {
     this.lat,
     this.lng,
     this.duration,
+    this.groupId,
   });
 }
 

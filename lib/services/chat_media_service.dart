@@ -41,6 +41,10 @@ class ChatMediaService {
     return _imagePicker.pickVideo(source: ImageSource.gallery);
   }
 
+  Future<List<XFile>> pickMultipleMedia() async {
+    return _imagePicker.pickMultipleMedia();
+  }
+
   Future<PlatformFile?> pickFile() async {
     final result = await FilePicker.platform.pickFiles(withData: true);
     if (result == null || result.files.isEmpty) return null;
@@ -73,6 +77,11 @@ class ChatMediaService {
     }
     if (lower.endsWith('.zip')) return 'application/zip';
     if (lower.endsWith('.txt')) return 'text/plain';
+    if (lower.endsWith('.mp4')) return 'video/mp4';
+    if (lower.endsWith('.mov')) return 'video/quicktime';
+    if (lower.endsWith('.avi')) return 'video/x-msvideo';
+    if (lower.endsWith('.mkv')) return 'video/x-matroska';
+    if (lower.endsWith('.webm')) return 'video/webm';
     return 'application/octet-stream';
   }
 

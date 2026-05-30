@@ -8,6 +8,7 @@ import 'dart:developer';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/image_utils.dart';
 import '../../data/models/chat_item.dart';
@@ -27,6 +28,7 @@ import '../../widgets/chat/conversation_composer_bar.dart';
 import '../../widgets/chat/common_message_bubble.dart';
 import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
+import '../../widgets/chat/media_group_bubble.dart';
 import '../chat/video_player_screen.dart';
 import '../chat/forward_message_screen.dart';
 import '../chat/pinned_messages_screen.dart';
@@ -978,7 +980,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _rebuildChatItems() {
-    _chatItems =
+    final sorted =
         [..._messages.map(ChatItem.message), ..._calls.map(ChatItem.call)]
           ..sort((a, b) {
             final cmp = a.createdAt.compareTo(b.createdAt);
@@ -991,6 +993,49 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 : 'c_${b.call?.id ?? ''}';
             return aKey.compareTo(bKey);
           });
+
+    final clustered = <ChatItem>[];
+    for (final item in sorted) {
+      if (item.type == ChatItemType.message) {
+        final msg = item.message!;
+        if (!msg.isRecalled && (msg.type == 'IMAGE' || msg.type == 'VIDEO')) {
+          bool addedToExisting = false;
+          
+          final groupId = msg.metadata?.groupId;
+          if (groupId != null && groupId.isNotEmpty) {
+            for (int i = clustered.length - 1; i >= 0; i--) {
+              if (clustered[i].type == ChatItemType.mediaGroup) {
+                final group = clustered[i].mediaGroup!;
+                if (group.first.metadata?.groupId == groupId) {
+                  group.add(msg);
+                  addedToExisting = true;
+                  break;
+                }
+              }
+            }
+          } else {
+            // Logic cũ: Gom nhóm các tin nhắn liên tiếp nếu không có groupId
+            if (clustered.isNotEmpty && clustered.last.type == ChatItemType.mediaGroup) {
+              final group = clustered.last.mediaGroup!;
+              final lastMsg = group.last;
+              if (lastMsg.metadata?.groupId == null && 
+                  lastMsg.senderId == msg.senderId &&
+                  msg.createdAt.difference(lastMsg.createdAt).abs().inMinutes <= 5) {
+                group.add(msg);
+                addedToExisting = true;
+              }
+            }
+          }
+
+          if (!addedToExisting) {
+            clustered.add(ChatItem.mediaGroup([msg]));
+          }
+          continue;
+        }
+      }
+      clustered.add(item);
+    }
+    _chatItems = clustered;
   }
 
   Future<void> _syncCallsRealtime() async {
@@ -1429,31 +1474,63 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
   }
 
-  Future<void> _pickAndSendImage() async {
-    await _runMediaUpload(() async {
-      final picked = await _chatMediaService.pickImage();
-      if (picked == null) return null;
-      final uploaded = await _chatMediaService.uploadPickedImage(
-        picked,
-        onProgress: (progress) {
-          if (!mounted) return;
-          setState(() => _uploadProgress = progress);
-        },
-      );
+  Future<void> _pickAndSendMedia() async {
+    try {
+      final pickedFiles = await _chatMediaService.pickMultipleMedia();
+      if (pickedFiles.isEmpty) return;
 
-      socketService.sendMessage({
-        'conversationId': _group.id,
-        'senderId': authService.userId!,
-        'type': 'IMAGE',
-        'content': uploaded.fileUrl,
-        'metadata': {
-          'fileName': uploaded.fileName,
-          'fileSize': uploaded.fileSize,
-        },
+      final groupId = const Uuid().v4();
+      await _runMediaUpload(() async {
+        final total = pickedFiles.length;
+        var completed = 0;
+        for (final picked in pickedFiles) {
+          final isVideo = _chatMediaService.detectContentType(picked.name).startsWith('video');
+          ChatMediaUploadResult? uploaded;
+          try {
+            if (isVideo) {
+              uploaded = await _chatMediaService.uploadPickedVideo(
+                picked,
+                onProgress: (progress) {
+                  if (!mounted) return;
+                  setState(() => _uploadProgress = (completed + progress) / total);
+                },
+              );
+            } else {
+              uploaded = await _chatMediaService.uploadPickedImage(
+                picked,
+                onProgress: (progress) {
+                  if (!mounted) return;
+                  setState(() => _uploadProgress = (completed + progress) / total);
+                },
+              );
+            }
+
+            socketService.sendMessage({
+              'conversationId': _group.id,
+              'senderId': authService.userId!,
+              'type': isVideo ? 'VIDEO' : 'IMAGE',
+              'content': uploaded.fileUrl,
+              'metadata': {
+                'fileName': uploaded.fileName,
+                'fileSize': uploaded.fileSize,
+                'groupId': groupId,
+                if (uploaded.thumbnailUrl != null) 'thumbnailUrl': uploaded.thumbnailUrl,
+                if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
+              },
+            });
+          } catch (e) {
+            log('Upload lỗi: $e');
+          }
+          completed++;
+        }
+        if (mounted) {
+          _scrollToBottomBurst();
+        }
+        return null;
       });
-      _scrollToBottomBurst();
-      return null;
-    });
+    } catch (e) {
+      log('❌ Chọn media thất bại: $e');
+    }
   }
 
   Future<void> _pickAndSendFile() async {
@@ -1483,37 +1560,26 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
   }
 
-  Future<void> _pickAndSendVideo() async {
-    await _runMediaUpload(() async {
-      final picked = await _chatMediaService.pickVideo();
-      if (picked == null) return null;
-      final uploaded = await _chatMediaService.uploadPickedVideo(
-        picked,
-        onProgress: (progress) {
-          if (!mounted) return;
-          setState(() => _uploadProgress = progress);
-        },
-      );
+  Widget _buildMediaGroupBubble(List<MessageModel> group, int index) {
+    if (group.isEmpty) return const SizedBox.shrink();
+    final lastMsg = group.last;
+    final isMe = lastMsg.senderId == authService.userId;
 
-      socketService.sendMessage({
-        'conversationId': _group.id,
-        'senderId': authService.userId!,
-        'type': 'VIDEO',
-        'content': uploaded.fileUrl,
-        'metadata': {
-          'fileName': uploaded.fileName,
-          'fileSize': uploaded.fileSize,
-          if (uploaded.thumbnailUrl != null)
-            'thumbnailUrl': uploaded.thumbnailUrl,
-          if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
-        },
-      });
-
-      if (!mounted) return null;
-      setState(() => _uploadProgress = 1);
-      _scrollToBottomBurst();
-      return null;
-    });
+    return KeyedSubtree(
+      key: ValueKey('mg_${lastMsg.id}'),
+      child: MediaGroupBubble(
+        group: group,
+        isMe: isMe,
+        isGroup: true,
+        senderLabel: isMe ? null : _resolveMemberName(lastMsg.senderId),
+        senderAvatar: isMe ? null : _resolveMemberAvatar(lastMsg.senderId),
+        senderName: isMe ? null : _resolveMemberFullName(lastMsg.senderId),
+        showAvatar: _shouldShowAvatarAtIndex(index),
+        showSeenLabel: false,
+        onImageTap: _openImageViewer,
+        onVideoTap: _openVideoPlayer,
+      ),
+    );
   }
 
   void _openImageViewer(MessageModel msg) {
@@ -1808,7 +1874,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 title: const Text('Chụp ảnh'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _pickAndSendImage();
+                  _pickAndSendMedia();
                 },
               ),
               ListTile(
@@ -1816,10 +1882,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   Icons.image_rounded,
                   color: AppColors.textPrimary,
                 ),
-                title: const Text('Chọn ảnh'),
+                title: const Text('Chọn ảnh/video'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _pickAndSendImage();
+                  _pickAndSendMedia();
                 },
               ),
               ListTile(
@@ -1831,17 +1897,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _pickAndSendFile();
-                },
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.videocam_outlined,
-                  color: AppColors.textPrimary,
-                ),
-                title: const Text('Gửi video'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _pickAndSendVideo();
                 },
               ),
             ],
@@ -2096,6 +2151,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           horizontal: 12,
                           vertical: 12,
                         ),
+                        mediaGroupBuilder: _buildMediaGroupBubble,
                         messageBuilder: (msg, index) {
                           if (_isPinSystemMessage(msg)) {
                             return _buildPinSystemLine(msg);
@@ -2273,7 +2329,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ),
         ConversationComposerAction(
           icon: Icons.image_rounded,
-          onTap: _pickAndSendImage,
+          onTap: _pickAndSendMedia,
           enabled: !_isUploading,
         ),
         ConversationComposerAction(
