@@ -175,6 +175,13 @@ class ApiService {
     try {
       final response = await _dio.get('$baseUrl/users/$userId');
       final data = Map<String, dynamic>.from(response.data as Map);
+      final statusMap = data['status'] is Map ? data['status'] as Map : {};
+      final isOnline = statusMap['isOnline'] == true;
+      final lastSeenRaw = statusMap['lastSeen'] ?? statusMap['lastActiveAt'] ?? statusMap['lastOnlineAt'];
+      final lastSeen = lastSeenRaw != null ? DateTime.tryParse(lastSeenRaw.toString()) : null;
+      
+      final privacyMap = data['privacy'] is Map ? data['privacy'] as Map : {};
+
       return UserModel(
         id: _extractId(data['_id'] ?? data['id']),
         fullName: (data['fullName'] ?? data['name'] ?? '').toString(),
@@ -184,6 +191,12 @@ class ApiService {
         coverImage: data['coverImage']?.toString(),
         bio: data['bio']?.toString(),
         gender: (data['gender'] ?? 'other').toString(),
+        status: UserStatus(isOnline: isOnline, lastSeen: lastSeen),
+        privacy: UserPrivacy(
+          showPhone: (privacyMap['showPhone'] ?? 'FRIEND').toString(),
+          showOnline: privacyMap['showOnline'] != false,
+          allowStrangerMessage: privacyMap['allowStrangerMessage'] == true,
+        ),
         isVerified: data['isVerified'] == true,
       );
     } catch (e) {

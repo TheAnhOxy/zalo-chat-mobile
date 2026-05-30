@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/models/models.dart';
 import '../../services/auth_service.dart';
@@ -28,6 +29,7 @@ import '../../widgets/chat/conversation_header.dart';
 import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
 import '../../widgets/chat/conversation_voice_recording_bar.dart';
+import '../../widgets/chat/media_group_bubble.dart';
 import '../ai/ai_screen.dart';
 import 'pinned_messages_screen.dart';
 import '../group/group_options_screen.dart';
@@ -71,6 +73,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   int _voiceDurationSec = 0;
   double _voiceDragDx = 0;
   Timer? _voiceTimer;
+    Timer? _presenceUpdateTimer;
   StreamSubscription<Amplitude>? _voiceAmplitudeSub;
   List<double> _voiceWave = List.filled(20, 0.2);
   bool _peerOnline = false;
@@ -147,6 +150,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _restoreBackground();
     _loadData();
     _initSocket();
+
+    _presenceUpdateTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _onChatControllerChanged() {
@@ -358,7 +365,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   void _rebuildChatItems() {
-    _chatItems =
+    final sorted =
         [..._messages.map(ChatItem.message), ..._calls.map(ChatItem.call)]
           ..sort((a, b) {
             final cmp = a.createdAt.compareTo(b.createdAt);
@@ -371,6 +378,47 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 : 'c_${b.call?.id ?? ''}';
             return aKey.compareTo(bKey);
           });
+
+    final clustered = <ChatItem>[];
+    for (final item in sorted) {
+      if (item.type == ChatItemType.message) {
+        final msg = item.message!;
+        if (!msg.isRecalled && (msg.type == 'IMAGE' || msg.type == 'VIDEO')) {
+          bool addedToExisting = false;
+          
+          if (msg.metadata?.groupId != null) {
+            for (int i = clustered.length - 1; i >= 0; i--) {
+              if (clustered[i].type == ChatItemType.mediaGroup) {
+                final group = clustered[i].mediaGroup!;
+                if (group.first.metadata?.groupId == msg.metadata!.groupId) {
+                  group.add(msg);
+                  addedToExisting = true;
+                  break;
+                }
+              }
+            }
+          } else {
+            if (clustered.isNotEmpty && clustered.last.type == ChatItemType.mediaGroup) {
+              final group = clustered.last.mediaGroup!;
+              final lastMsg = group.last;
+              if (lastMsg.metadata?.groupId == null && 
+                  lastMsg.senderId == msg.senderId &&
+                  msg.createdAt.difference(lastMsg.createdAt).abs().inMinutes <= 5) {
+                group.add(msg);
+                addedToExisting = true;
+              }
+            }
+          }
+
+          if (!addedToExisting) {
+            clustered.add(ChatItem.mediaGroup([msg]));
+          }
+          continue;
+        }
+      }
+      clustered.add(item);
+    }
+    _chatItems = clustered;
   }
 
   void _initSocket() {
@@ -568,6 +616,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
+    _presenceUpdateTimer?.cancel();
     super.dispose();
   }
 
@@ -1148,30 +1197,56 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
-  Future<void> _pickAndSendImage() async {
+  Future<void> _pickAndSendMedia() async {
     try {
-      await _runMediaUpload(() async {
-        final picked = await _chatMediaService.pickImage();
-        if (picked == null) return null;
-        final uploaded = await _chatMediaService.uploadPickedImage(
-          picked,
-          onProgress: (progress) {
-            if (!mounted) return;
-            setState(() => _uploadProgress = progress);
-          },
-        );
+      final pickedFiles = await _chatMediaService.pickMultipleMedia();
+      if (pickedFiles.isEmpty) return;
 
-        socketService.sendMessage({
-          'conversationId': widget.conversationId,
-          'senderId': authService.userId!,
-          'type': 'IMAGE',
-          'content': uploaded.fileUrl,
-          if (_replyTo != null) 'replyToId': _replyTo!.id,
-          'metadata': {
-            'fileName': uploaded.fileName,
-            'fileSize': uploaded.fileSize,
-          },
-        });
+      await _runMediaUpload(() async {
+        final total = pickedFiles.length;
+        var completed = 0;
+        final groupId = const Uuid().v4();
+        for (final picked in pickedFiles) {
+          final isVideo = _chatMediaService.detectContentType(picked.name).startsWith('video');
+          ChatMediaUploadResult? uploaded;
+          try {
+            if (isVideo) {
+              uploaded = await _chatMediaService.uploadPickedVideo(
+                picked,
+                onProgress: (progress) {
+                  if (!mounted) return;
+                  setState(() => _uploadProgress = (completed + progress) / total);
+                },
+              );
+            } else {
+              uploaded = await _chatMediaService.uploadPickedImage(
+                picked,
+                onProgress: (progress) {
+                  if (!mounted) return;
+                  setState(() => _uploadProgress = (completed + progress) / total);
+                },
+              );
+            }
+
+            socketService.sendMessage({
+              'conversationId': widget.conversationId,
+              'senderId': authService.userId!,
+              'type': isVideo ? 'VIDEO' : 'IMAGE',
+              'content': uploaded.fileUrl,
+              if (_replyTo != null) 'replyToId': _replyTo!.id,
+              'metadata': {
+                'fileName': uploaded.fileName,
+                'fileSize': uploaded.fileSize,
+                'groupId': groupId,
+                if (uploaded.thumbnailUrl != null) 'thumbnailUrl': uploaded.thumbnailUrl,
+                if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
+              },
+            });
+          } catch (e) {
+            log('Upload lỗi: $e');
+          }
+          completed++;
+        }
         if (mounted) {
           setState(() => _replyTo = null);
           _scrollToBottomBurst();
@@ -1179,7 +1254,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         return null;
       });
     } catch (e) {
-      log('❌ Chọn ảnh thất bại: $e');
+      log('❌ Chọn media thất bại: $e');
     }
   }
 
@@ -1216,55 +1291,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       });
     } catch (e) {
       log('❌ Chọn file thất bại: $e');
-    }
-  }
-
-  Future<void> _pickAndSendVideo() async {
-    try {
-      await _runMediaUpload(() async {
-        final picked = await _chatMediaService.pickVideo();
-        if (picked == null) return null;
-        final uploaded = await _chatMediaService.uploadPickedVideo(
-          picked,
-          onProgress: (progress) {
-            if (!mounted) return;
-            setState(() => _uploadProgress = progress);
-          },
-        );
-
-        socketService.sendMessage({
-          'conversationId': widget.conversationId,
-          'senderId': authService.userId!,
-          'type': 'VIDEO',
-          'content': uploaded.fileUrl,
-          if (_replyTo != null) 'replyToId': _replyTo!.id,
-          'metadata': {
-            'fileName': uploaded.fileName,
-            'fileSize': uploaded.fileSize,
-            if (uploaded.thumbnailUrl != null)
-              'thumbnailUrl': uploaded.thumbnailUrl,
-            if (uploaded.thumbnailUrl != null)
-              'thumbnail': uploaded.thumbnailUrl,
-          },
-        });
-
-        if (!mounted) return null;
-        setState(() {
-          _replyTo = null;
-          _uploadProgress = 1;
-        });
-        _scrollToBottomBurst();
-        return null;
-      });
-    } catch (e) {
-      log('❌ Gửi video thất bại: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Gửi video thất bại, vui lòng thử lại.'),
-          ),
-        );
-      }
     }
   }
 
@@ -1449,7 +1475,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 title: const Text('Chụp ảnh'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _pickAndSendImage();
+                  _pickAndSendMedia();
                 },
               ),
               ListTile(
@@ -1457,10 +1483,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   Icons.image_rounded,
                   color: AppColors.textPrimary,
                 ),
-                title: const Text('Chọn ảnh'),
+                title: const Text('Chọn ảnh/video'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _pickAndSendImage();
+                  _pickAndSendMedia();
                 },
               ),
               ListTile(
@@ -1472,17 +1498,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _pickAndSendFile();
-                },
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.videocam_outlined,
-                  color: AppColors.textPrimary,
-                ),
-                title: const Text('Gửi video'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _pickAndSendVideo();
                 },
               ),
             ],
@@ -1808,6 +1823,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           vertical: 8,
                         ),
                         messageBuilder: _buildMessageBubble,
+                        mediaGroupBuilder: _buildMediaGroupBubble,
                         callBuilder: (call, index) {
                           final isMe =
                               call.callerId.toString() ==
@@ -1843,6 +1859,29 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
           if (_showEmoji) _buildEmojiPanel(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMediaGroupBubble(List<MessageModel> group, int i) {
+    if (group.isEmpty) return const SizedBox.shrink();
+    final lastMsg = group.last;
+    final isCurrentUserMessage = lastMsg.senderId.toString() == authService.userId.toString();
+    final showAvatar = _shouldShowAvatarAtIndex(i);
+
+    return KeyedSubtree(
+      key: ValueKey('mg_${lastMsg.id}'),
+      child: MediaGroupBubble(
+        group: group,
+        isMe: isCurrentUserMessage,
+        senderAvatar: widget.otherUser?.avatar,
+        senderName: widget.otherUser?.fullName,
+        showAvatar: showAvatar,
+        showSeenLabel: lastMsg.id == _lastOutgoingMessageId() &&
+            lastMsg.status == 'SEEN' &&
+            isCurrentUserMessage,
+        onImageTap: _openImageViewer,
+        onVideoTap: _openVideoPlayer,
       ),
     );
   }
@@ -2118,7 +2157,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ),
         ConversationComposerAction(
           icon: Icons.image_rounded,
-          onTap: _pickAndSendImage,
+          onTap: _pickAndSendMedia,
           enabled: !_isUploading,
         ),
         ConversationComposerAction(

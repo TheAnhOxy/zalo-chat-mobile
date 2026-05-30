@@ -245,7 +245,7 @@ class _FriendsTabState extends State<_FriendsTab> {
       phone: item.phone,
       avatar: item.avatarUrl ?? '',
       gender: '',
-      status: const UserStatus(isOnline: false),
+      status: UserStatus(isOnline: item.isOnline, lastSeen: item.lastSeen),
       privacy: const UserPrivacy(),
       isVerified: false,
     );
@@ -1495,7 +1495,7 @@ List<_ContactSection> _buildSections(List<ApiUserModel> users) {
   for (final u in users) {
     final letter = _groupLetter(u.fullName);
     (grouped[letter] ??= [])
-        .add(_ContactItem(id: u.id, name: u.fullName, avatarUrl: u.avatar, phone: u.phone));
+        .add(_ContactItem(id: u.id, name: u.fullName, avatarUrl: u.avatar, phone: u.phone, isOnline: u.isOnline, lastSeen: u.lastSeen));
   }
   final letters = grouped.keys.toList()..sort();
   return letters
@@ -1577,11 +1577,15 @@ class _ContactItem {
   final String name;
   final String? avatarUrl;
   final String phone;
+  final bool isOnline;
+  final DateTime? lastSeen;
   const _ContactItem({
     required this.id,
     required this.name,
     required this.avatarUrl,
     required this.phone,
+    this.isOnline = false,
+    this.lastSeen,
   });
 }
 
