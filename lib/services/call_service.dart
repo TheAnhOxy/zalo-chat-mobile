@@ -48,6 +48,7 @@ class CallService {
   ParticipantLeftData? onParticipantLeft;
   CallStartedData? onCallStarted;
   void Function(MediaStream)? onRemoteStream;
+  void Function(MediaStream)? onLocalStream;
   PeerRemoteStreamData? onPeerRemoteStream;
 
   final Map<String, dynamic> _iceConfig = {
@@ -872,11 +873,13 @@ class CallService {
         });
       }
 
-      _peerConnections.values.forEach((pc) {
-        _localStream!.getTracks().forEach(
-          (track) => pc.addTrack(track, _localStream!),
-        );
-      });
+      for (final pc in _peerConnections.values) {
+        for (final track in _localStream!.getTracks()) {
+          pc.addTrack(track, _localStream!);
+        }
+      }
+
+      onLocalStream?.call(_localStream!);
     } catch (e) {
       dev.log('❌ getUserMedia error: $e');
     }

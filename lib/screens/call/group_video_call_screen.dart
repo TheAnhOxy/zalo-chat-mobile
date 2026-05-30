@@ -444,54 +444,298 @@ class _GroupVideoCallScreenState extends State<GroupVideoCallScreen> {
       backgroundColor: Colors.black,
       body: GestureDetector(
         onTap: _toggleControls,
-        child: Stack(
-          fit: StackFit.expand,
+        child: Column(
           children: [
-            // ── Background / remote view ──────────────────────
-            _buildBackground(),
-
-            // ── Gradient overlays ─────────────────────────────
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.black.withOpacity(0.65),
-                      Colors.transparent,
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.75),
-                    ],
-                    stops: const [0, 0.2, 0.7, 1],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
+            // ── Top: Local Video (60% of screen) ──────────────
+            Expanded(
+              flex: 60,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Local video background
+                  _isCamOff || _localRenderer.srcObject == null
+                      ? Container(
+                          color: const Color(0xFF1A3A1A),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.videocam_off_rounded,
+                                  color: Colors.white54,
+                                  size: 56,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Camera của bạn đã tắt',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ClipRRect(
+                          child: RTCVideoView(
+                            _localRenderer,
+                            mirror: true,
+                            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                          ),
+                        ),
+                  
+                  // Name overlay
+                  Positioned(
+                    left: 16,
+                    bottom: 16,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${authService.currentUser?.fullName ?? 'You'}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Đang truyền phát',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+
+                  // Top bar (timer, group name)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _buildTopBar(),
+                  ),
+                ],
               ),
             ),
 
-            // ── Local preview (bottom-right) ──────────────────
-            if (_renderersReady) _buildLocalPreview(),
-
-            // ── Participants strip (bottom of video area) ─────
-            if (_callState == CallState.connected) _buildParticipantsStrip(),
-
-            // ── Top bar ───────────────────────────────────────
-            _buildTopBar(),
-
-            // ── Bottom controls ───────────────────────────────
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: AnimatedSlide(
-                offset: _showControls || _callState != CallState.connected
-                    ? Offset.zero
-                    : const Offset(0, 1),
-                duration: const Duration(milliseconds: 250),
-                child: _buildBottomControls(),
+            // ── Bottom: Participant Cards (40% of screen) ─────
+            Expanded(
+              flex: 40,
+              child: Container(
+                color: Colors.black.withOpacity(0.8),
+                child: _buildParticipantsGridView(),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Grid hiển thị participant cards (avatar + name + status)
+  Widget _buildParticipantsGridView() {
+    final connected = _participants.where((p) => p.isConnected).toList();
+    if (connected.isEmpty) {
+      return Center(
+        child: Text(
+          'Chờ thành viên tham gia...',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.6),
+            fontFamily: 'Inter',
+          ),
+        ),
+      );
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(16),
+      physics: const BouncingScrollPhysics(),
+      itemCount: connected.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.85,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+      ),
+      itemBuilder: (context, index) {
+        return _buildParticipantCard(connected[index]);
+      },
+    );
+  }
+
+  /// Card hiển thị participant (avatar + name + status)
+  Widget _buildParticipantCard(GroupCallParticipant participant) {
+    final renderer = _peerRenderers[participant.userId];
+    final hasVideoTrack = 
+        _peerStreams[participant.userId]?.getVideoTracks().isNotEmpty ??
+        renderer?.srcObject?.getVideoTracks().isNotEmpty ?? false;
+
+    return GestureDetector(
+      onTap: () {
+        // Optional: tap để xem full video của người này
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A3A1A),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: participant.isConnected 
+                ? AppColors.primary.withOpacity(0.3)
+                : Colors.white10,
+            width: 1,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(11),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Video background nếu có
+              if (hasVideoTrack && renderer != null)
+                RTCVideoView(
+                  renderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                )
+              else
+                // Avatar + name nếu không có video
+                Container(
+                  color: const Color(0xFF0D240D),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: participant.isConnected 
+                                  ? AppColors.online
+                                  : Colors.white24,
+                              width: 2,
+                            ),
+                          ),
+                          child: ClipOval(
+                            child: AvatarWidget(
+                              url: participant.avatar,
+                              name: participant.name,
+                              size: 64,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Text(
+                            participant.name,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'Inter',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          participant.isConnected ? 'Đã vào' : 'Chưa tham gia',
+                          style: TextStyle(
+                            color: participant.isConnected
+                                ? AppColors.online
+                                : Colors.white.withOpacity(0.5),
+                            fontSize: 10,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // Name pill ở dưới
+              if (hasVideoTrack && renderer != null)
+                Positioned(
+                  left: 8,
+                  bottom: 8,
+                  right: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      participant.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontFamily: 'Inter',
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Mic indicator
+              if (participant.isMuted)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.black, width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.red.withOpacity(0.4),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.mic_off,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                  ),
+                ),
+
+              // Online indicator
+              Positioned(
+                left: 8,
+                top: 8,
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: participant.isConnected 
+                        ? AppColors.online
+                        : Colors.grey,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.black, width: 2),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
