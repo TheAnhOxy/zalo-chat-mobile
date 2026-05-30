@@ -71,6 +71,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   int _voiceDurationSec = 0;
   double _voiceDragDx = 0;
   Timer? _voiceTimer;
+    Timer? _presenceUpdateTimer;
   StreamSubscription<Amplitude>? _voiceAmplitudeSub;
   List<double> _voiceWave = List.filled(20, 0.2);
   bool _peerOnline = false;
@@ -147,6 +148,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _restoreBackground();
     _loadData();
     _initSocket();
+
+    _presenceUpdateTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _onChatControllerChanged() {
@@ -568,6 +573,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
+    _presenceUpdateTimer?.cancel();
     super.dispose();
   }
 

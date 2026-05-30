@@ -723,7 +723,27 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (c.isGroup) return null;
     final otherId = _getOtherUserId(c);
     final profile = _userProfiles[otherId];
-    if (profile != null) return profile;
+    
+    final isOnlineState = _onlineStates[otherId];
+
+    if (profile != null) {
+      if (isOnlineState != null && profile.status.isOnline != isOnlineState) {
+        return UserModel(
+          id: profile.id,
+          fullName: profile.fullName,
+          phone: profile.phone,
+          email: profile.email,
+          avatar: profile.avatar,
+          coverImage: profile.coverImage,
+          bio: profile.bio,
+          gender: profile.gender,
+          status: UserStatus(isOnline: isOnlineState, lastSeen: profile.status.lastSeen),
+          privacy: profile.privacy,
+          isVerified: profile.isVerified,
+        );
+      }
+      return profile;
+    }
 
     final uid = authService.userId;
     final other = c.members.firstWhere(
@@ -740,6 +760,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       fullName: name,
       avatar: c.avatar?.isNotEmpty == true ? c.avatar! : '',
       phone: '',
+      status: UserStatus(isOnline: isOnlineState ?? false),
     );
   }
 
