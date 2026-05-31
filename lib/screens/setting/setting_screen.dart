@@ -49,7 +49,7 @@ class _SettingScreenState extends State<SettingScreen> {
         backgroundColor: AppColors.bgDark,
         elevation: 0,
         title: const Text(
-          'Cài đặt',
+          'Cá nhân',
           style: TextStyle(
             fontFamily: 'Inter',
             fontWeight: FontWeight.w700,
