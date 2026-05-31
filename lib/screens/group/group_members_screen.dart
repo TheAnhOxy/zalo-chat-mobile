@@ -258,7 +258,6 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
 
   void _showMemberActions(ApiGroupMember member) {
     if (member.userId == _myId) return;
-    if (!_canManage) return;
 
     final user = _userMap[member.userId];
     showModalBottomSheet(
@@ -308,7 +307,26 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
                 ),
                 const Divider(height: 1, color: AppColors.divider),
                 // Actions
-                if (member.role != 'ADMIN')
+                _ActionTile(
+                  icon: Icons.person_outline_rounded,
+                  color: AppColors.textPrimary,
+                  label: 'Xem trang cá nhân',
+                  onTap: () {
+                    Navigator.pop(context);
+                    if (user != null) {
+                      final apiUser = ApiUserModel(
+                        id: user.id,
+                        fullName: user.fullName ?? user.displayName ?? '',
+                        phone: user.phone ?? '',
+                        avatar: user.avatar ?? '',
+                        isOnline: user.status.isOnline,
+                        lastSeen: user.status.lastSeen,
+                      );
+                      Navigator.pushNamed(context, '/contacts/found-user', arguments: apiUser);
+                    }
+                  },
+                ),
+                if (_canManage && member.role != 'ADMIN')
                   _ActionTile(
                     icon: Icons.star_rounded,
                     color: AppColors.primary,
@@ -318,7 +336,7 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
                       _changeRole(member, 'ADMIN');
                     },
                   ),
-                if (member.role == 'ADMIN')
+                if (_canManage && member.role == 'ADMIN')
                   _ActionTile(
                     icon: Icons.person_rounded,
                     color: AppColors.textSecondary,
@@ -328,15 +346,16 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
                       _changeRole(member, 'MEMBER');
                     },
                   ),
-                _ActionTile(
-                  icon: Icons.person_remove_rounded,
-                  color: AppColors.error,
-                  label: 'Xóa khỏi nhóm',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _kickMember(member);
-                  },
-                ),
+                if (_canManage)
+                  _ActionTile(
+                    icon: Icons.person_remove_rounded,
+                    color: AppColors.error,
+                    label: 'Xóa khỏi nhóm',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _kickMember(member);
+                    },
+                  ),
                 _ActionTile(
                   icon: Icons.close_rounded,
                   color: AppColors.textHint,
@@ -602,8 +621,8 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
             isMe: isMe,
             roleLabel: _roleLabel(member.role),
             roleColor: _roleColor(member.role),
-            canManage: canTap,
-            onTap: canTap ? () => _showMemberActions(member) : null,
+            canManage: canTap, // true if amAdmin and not me (used to show 3 dots maybe?)
+            onTap: isMe ? null : () => _showMemberActions(member),
           );
         },
       ),

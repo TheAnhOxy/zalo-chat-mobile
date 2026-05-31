@@ -3,6 +3,8 @@ import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/contacts_api_service.dart';
+import '../../services/api_service.dart';
+import '../../data/models/models.dart';
 
 class FoundUserScreen extends StatefulWidget {
   final ApiUserModel user;
@@ -117,6 +119,56 @@ class _FoundUserScreenState extends State<FoundUserScreen> {
     }
   }
 
+  Future<void> _openChat() async {
+    final currentUserId = authService.userId ?? '';
+    if (currentUserId.isEmpty || widget.user.id.isEmpty) return;
+
+    // Hiển thị loading nhẹ
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+
+    final conv = await ApiService().findOrCreateDirectConversation(
+      currentUserId: currentUserId,
+      targetUserId: widget.user.id,
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context); // đóng loading
+
+    if (conv == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không thể mở cuộc trò chuyện')),
+      );
+      return;
+    }
+
+    final otherUser = UserModel(
+      id: widget.user.id,
+      fullName: widget.user.fullName.isNotEmpty ? widget.user.fullName : 'Người dùng',
+      phone: widget.user.phone,
+      avatar: widget.user.avatar,
+      gender: 'other',
+      status: UserStatus(isOnline: widget.user.isOnline, lastSeen: widget.user.lastSeen),
+      privacy: const UserPrivacy(),
+      isVerified: false,
+    );
+
+    Navigator.pushReplacementNamed(
+      context,
+      AppRouter.chatDetail,
+      arguments: {
+        'conversationId': conv.id,
+        'otherUser': otherUser,
+        'conversation': conv,
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = widget.user;
@@ -228,7 +280,7 @@ class _FoundUserScreenState extends State<FoundUserScreen> {
                                   icon: Icons.chat_bubble_outline_rounded,
                                   label: 'Nhắn tin',
                                   filled: true,
-                                  onTap: () {},
+                                  onTap: _openChat,
                                 ),
                               ),
                               const SizedBox(width: 12),

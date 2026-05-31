@@ -407,8 +407,30 @@ class _ChatOptionsScreenState extends State<ChatOptionsScreen> {
     return name.isEmpty ? 'người này' : name;
   }
 
-  void _openPeerProfile() {
-    _showLeaveSnack('Trang cá nhân sẽ được bổ sung ở bản cập nhật tới');
+  Future<void> _openPeerProfile() async {
+    final peerId = _peerUserId;
+    if (peerId == null || peerId.isEmpty) return;
+
+    // Use loading indicator if needed
+    try {
+      final user = await apiService.getUserById(peerId);
+      if (user == null) {
+        _showLeaveSnack('Không tìm thấy thông tin người dùng', isError: true);
+        return;
+      }
+      final apiUser = ApiUserModel(
+        id: user.id,
+        fullName: user.fullName ?? user.displayName ?? '',
+        phone: user.phone ?? '',
+        avatar: user.avatar ?? '',
+        isOnline: user.status.isOnline,
+        lastSeen: user.status.lastSeen,
+      );
+      if (!mounted) return;
+      Navigator.pushNamed(context, '/contacts/found-user', arguments: apiUser);
+    } catch (_) {
+      _showLeaveSnack('Lỗi tải trang cá nhân', isError: true);
+    }
   }
 
   Future<void> _createGroupWithPeer() async {
@@ -3331,7 +3353,6 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
   }
 
   void _showMemberActions(ApiGroupMember member) {
-    if (!widget.canManage) return;
     if (member.userId == (widget.myUserId ?? '')) return;
 
     final user = _userMap[member.userId];
@@ -3389,7 +3410,26 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                   ),
                 ),
                 const Divider(height: 1, color: AppColors.divider),
-                if (member.role != 'ADMIN')
+                _MembersSheetActionTile(
+                  icon: Icons.person_outline_rounded,
+                  color: AppColors.textPrimary,
+                  label: 'Xem trang cá nhân',
+                  onTap: () {
+                    Navigator.pop(context);
+                    if (user != null) {
+                      final apiUser = ApiUserModel(
+                        id: user.id,
+                        fullName: user.fullName ?? user.displayName ?? '',
+                        phone: user.phone ?? '',
+                        avatar: user.avatar ?? '',
+                        isOnline: user.status.isOnline,
+                        lastSeen: user.status.lastSeen,
+                      );
+                      Navigator.pushNamed(context, '/contacts/found-user', arguments: apiUser);
+                    }
+                  },
+                ),
+                if (widget.canManage && member.role != 'ADMIN')
                   _MembersSheetActionTile(
                     icon: Icons.star_rounded,
                     color: AppColors.primary,
@@ -3399,7 +3439,7 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                       _changeRole(member, 'ADMIN');
                     },
                   ),
-                if (member.role == 'ADMIN')
+                if (widget.canManage && member.role == 'ADMIN')
                   _MembersSheetActionTile(
                     icon: Icons.person_rounded,
                     color: AppColors.textSecondary,
@@ -3409,15 +3449,16 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                       _changeRole(member, 'MEMBER');
                     },
                   ),
-                _MembersSheetActionTile(
-                  icon: Icons.person_remove_rounded,
-                  color: AppColors.error,
-                  label: 'Xóa khỏi nhóm',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _kickMember(member);
-                  },
-                ),
+                if (widget.canManage)
+                  _MembersSheetActionTile(
+                    icon: Icons.person_remove_rounded,
+                    color: AppColors.error,
+                    label: 'Xóa khỏi nhóm',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _kickMember(member);
+                    },
+                  ),
                 _MembersSheetActionTile(
                   icon: Icons.close_rounded,
                   color: AppColors.textHint,
@@ -3495,9 +3536,7 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
                       final isAdmin = m.role == 'ADMIN';
                       final myId = (widget.myUserId ?? '').toString();
                       final isSelf = m.userId == myId;
-                      final canTap =
-                          widget.canManage &&
-                          m.userId != (widget.myUserId ?? '');
+                      final canTap = m.userId != (widget.myUserId ?? '');
                       final canAddFriend =
                           !isSelf && !_friendIds.contains(m.userId);
                       return ListTile(

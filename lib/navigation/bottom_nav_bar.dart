@@ -37,9 +37,9 @@ class BottomNavBar extends StatelessWidget {
       label: 'Thông báo',
     ),
     _NavTab(
-      icon: Icons.settings_outlined,
-      activeIcon: Icons.settings,
-      label: 'Cài đặt',
+      icon: Icons.person_outline_rounded,
+      activeIcon: Icons.person_rounded,
+      label: 'Cá nhân',
     ),
   ];
 
