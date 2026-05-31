@@ -197,8 +197,16 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     final raw = _phoneController.text.trim();
     if (raw.isEmpty) return;
 
-    // Gửi nguyên số nhập vào, backend tự xử lý cả 2 định dạng 0xxx / +84xxx
-    final phone = raw;
+    String phone = raw;
+    if (phone.startsWith('+')) {
+      // Người dùng tự nhập mã quốc gia
+    } else if (phone.startsWith('0')) {
+      // Đổi số 0 ở đầu thành mã quốc gia
+      phone = '$_countryCode${phone.substring(1)}';
+    } else {
+      // Thêm mã quốc gia vào đầu
+      phone = '$_countryCode$phone';
+    }
 
     setState(() => _isSearching = true);
     final result = await ContactsApiService.instance.searchByPhone(phone);
@@ -402,17 +410,6 @@ class _CountryPickerSheet extends StatelessWidget {
 
   static const _countries = [
     ('+84', 'Việt Nam 🇻🇳'),
-    ('+1', 'Hoa Kỳ 🇺🇸'),
-    ('+86', 'Trung Quốc 🇨🇳'),
-    ('+81', 'Nhật Bản 🇯🇵'),
-    ('+82', 'Hàn Quốc 🇰🇷'),
-    ('+65', 'Singapore 🇸🇬'),
-    ('+60', 'Malaysia 🇲🇾'),
-    ('+66', 'Thái Lan 🇹🇭'),
-    ('+62', 'Indonesia 🇮🇩'),
-    ('+44', 'Anh 🇬🇧'),
-    ('+33', 'Pháp 🇫🇷'),
-    ('+49', 'Đức 🇩🇪'),
   ];
 
   @override
