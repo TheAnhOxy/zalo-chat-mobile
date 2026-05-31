@@ -280,9 +280,39 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     try {
       final data = await apiService.getConversations(authService.userId!);
-      await _loadPinnedPrefs(data);
-      final sorted = _sortWithPinned(data);
-      _cacheKnownUsers(data);
+
+      // ✅ Dedup: loại bỏ các cuộc trò chuyện trùng ID
+      final seenIds = <String>{};
+      final deduped = <ConversationModel>[];
+      for (final conv in data) {
+        if (conv.id.isNotEmpty && seenIds.add(conv.id)) {
+          deduped.add(conv);
+        }
+      }
+
+      // ✅ Dedup thêm: với chat 1-1, chỉ giữ 1 conversation cho mỗi cặp user
+      final myId = authService.userId!;
+      final seenPairs = <String>{};
+      final deduped2 = <ConversationModel>[];
+      for (final conv in deduped) {
+        if (conv.type == 'PRIVATE') {
+          final otherMember = conv.members.firstWhere(
+            (m) => m.userId != myId,
+            orElse: () => conv.members.first,
+          );
+          final pairKey = [myId, otherMember.userId]..sort();
+          final key = pairKey.join('_');
+          if (seenPairs.add(key)) {
+            deduped2.add(conv);
+          }
+        } else {
+          deduped2.add(conv);
+        }
+      }
+
+      await _loadPinnedPrefs(deduped2);
+      final sorted = _sortWithPinned(deduped2);
+      _cacheKnownUsers(deduped2);
 
       await _loadFriendPresence(authService.userId!);
 
@@ -291,14 +321,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
         _rebuildActiveUserOrder();
         _isLoading = false;
       });
-      log('✅ Đã load ${_conversations.length} cuộc trò chuyện');
+      log('✅ Đã load ${_conversations.length} cuộc trò chuyện (sau dedup từ ${data.length})');
 
       for (var conv in _conversations) {
         socketService.joinConversation(conv.id);
       }
 
       // Fetch profile của user kia trong mỗi chat 1-1
-      _fetchUserProfiles(data);
+      _fetchUserProfiles(deduped2);
     } catch (e) {
       log('❌ Lỗi load conversations: $e');
       setState(() => _isLoading = false);
