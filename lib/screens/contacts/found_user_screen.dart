@@ -253,19 +253,22 @@ class _FoundUserScreenState extends State<FoundUserScreen> {
                         const SizedBox(height: 12),
 
                         // Privacy note
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 32),
-                          child: Text(
-                            'Bạn chưa thể xem nhật ký của ${user.fullName} khi chưa là bạn bè',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontFamily: 'Inter',
-                              fontSize: 13,
-                              color: AppColors.textSecondary,
-                              height: 1.5,
+                        if (!_loadingRelation)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(
+                              _isFriend
+                                  ? 'Chưa có hoạt động nào gần đây'
+                                  : 'Bạn chưa thể xem nhật ký của ${user.fullName} khi chưa là bạn bè',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontFamily: 'Inter',
+                                fontSize: 13,
+                                color: AppColors.textSecondary,
+                                height: 1.5,
+                              ),
                             ),
                           ),
-                        ),
 
                         const SizedBox(height: 20),
 
