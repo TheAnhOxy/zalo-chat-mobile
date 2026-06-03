@@ -188,6 +188,23 @@ class _GroupMembersScreenState extends State<GroupMembersScreen> {
     if (mounted) Navigator.pop(context); // đóng loading
 
     if (result.isSuccess) {
+      final myId = authService.userId ?? '';
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+      final memberName = name.trim().isEmpty ? 'một thành viên' : name.trim();
+      socketService.sendMessage({
+        'conversationId': _group.id,
+        'senderId': myId,
+        'type': 'SYSTEM',
+        'content': isPromote
+            ? 'MAKE_ADMIN|$memberName|$actorName'
+            : 'REVOKE_ADMIN|$memberName|$actorName',
+      });
+
       setState(() {
         _group = ApiGroupModel(
           id: _group.id,

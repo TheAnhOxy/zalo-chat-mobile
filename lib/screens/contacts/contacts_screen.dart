@@ -1559,6 +1559,22 @@ String _formatLastMessagePreview(String? raw) {
     final a = actor.isEmpty ? 'Ai đó' : actor;
     return '$a đã rời khỏi nhóm';
   }
+  if (s.startsWith('MAKE_ADMIN|')) {
+    final parts = s.split('|');
+    final member = parts.length > 1 ? parts[1].trim() : '';
+    final by = parts.length > 2 ? parts[2].trim() : '';
+    final m = member.isEmpty ? 'một thành viên' : member;
+    final b = by.isEmpty ? 'Ai đó' : by;
+    return '$b đã đặt $m làm quản trị viên';
+  }
+  if (s.startsWith('REVOKE_ADMIN|')) {
+    final parts = s.split('|');
+    final member = parts.length > 1 ? parts[1].trim() : '';
+    final by = parts.length > 2 ? parts[2].trim() : '';
+    final m = member.isEmpty ? 'một thành viên' : member;
+    final b = by.isEmpty ? 'Ai đó' : by;
+    return '$b đã thu hồi quyền quản trị của $m';
+  }
   if (s.startsWith('PIN_MESSAGE|')) return 'Đã ghim một tin nhắn';
   if (s.startsWith('UNPIN_MESSAGE|')) return 'Đã bỏ ghim một tin nhắn';
   return s;
