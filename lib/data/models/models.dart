@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // models.dart — Tất cả models, mapping 1-1 với MongoDB schema (db_mongo_zalo)
 // ─────────────────────────────────────────────────────────────────────────────
+import 'dart:convert';
 
 // ── users collection ─────────────────────────────────────────────────────────
 class UserStatus {
@@ -286,6 +287,34 @@ class SeenBy {
   }
 }
 
+class MediaItem {
+  final String url;
+  final String type; // IMAGE | VIDEO
+  final String? thumbnail;
+
+  const MediaItem({
+    required this.url,
+    required this.type,
+    this.thumbnail,
+  });
+
+  factory MediaItem.fromJson(Map<String, dynamic> json) {
+    return MediaItem(
+      url: json['url']?.toString() ?? '',
+      type: json['type']?.toString() ?? 'IMAGE',
+      thumbnail: json['thumbnail']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'url': url,
+      'type': type,
+      if (thumbnail != null) 'thumbnail': thumbnail,
+    };
+  }
+}
+
 class MessageMetadata {
   final String? fileName;
   final int? fileSize;
@@ -345,7 +374,9 @@ class MessageModel {
       senderId: json['senderId'] ?? '',
       // Map từ messageType (tên thật trong DB) hoặc type (alias)
       type: json['messageType'] ?? json['type'] ?? 'TEXT',
-      content: json['content'] ?? '',
+      content: json['content'] is String
+          ? json['content']
+          : (json['content'] != null ? jsonEncode(json['content']) : ''),
       metadata: json['metadata'] != null
           ? MessageMetadata.fromJson(json['metadata'])
           : null,
@@ -386,6 +417,20 @@ class MessageModel {
   bool get isVoice => type == 'VOICE';
   bool get isFile => type == 'FILE';
   bool get isLocation => type == 'LOCATION';
+
+  List<MediaItem> get clusterItems {
+    if (type == 'MEDIA_CLUSTER' || (type == 'TEXT' && content.trim().startsWith('[{') && content.contains('"url"'))) {
+      try {
+        final decoded = jsonDecode(content);
+        if (decoded is List) {
+          return decoded.map((e) => MediaItem.fromJson(Map<String, dynamic>.from(e))).toList();
+        }
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  bool get isMediaCluster => type == 'MEDIA_CLUSTER' || (type == 'TEXT' && content.trim().startsWith('[{') && content.contains('"url"'));
 }
 
 // ── calls collection ─────────────────────────────────────────────────────────
