@@ -3286,6 +3286,23 @@ class _GroupMembersSheetBodyState extends State<_GroupMembersSheetBody> {
     if (mounted) Navigator.of(context, rootNavigator: true).pop();
 
     if (result.isSuccess) {
+      final myId = authService.userId ?? '';
+      final actorName = (authService.currentUser?.fullName.trim().isNotEmpty ==
+                  true)
+          ? authService.currentUser!.fullName.trim()
+          : (authService.currentUser?.displayName.trim().isNotEmpty == true)
+              ? authService.currentUser!.displayName.trim()
+              : 'Bạn';
+      final memberName = name.trim().isEmpty ? 'một thành viên' : name.trim();
+      socketService.sendMessage({
+        'conversationId': widget.conversationId,
+        'senderId': myId,
+        'type': 'SYSTEM',
+        'content': isPromote
+            ? 'MAKE_ADMIN|$memberName|$actorName'
+            : 'REVOKE_ADMIN|$memberName|$actorName',
+      });
+
       setState(() {
         _members = _members
             .map(
