@@ -4,6 +4,7 @@ import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
 import '../../services/fake_auth_flow_service.dart';
 import '../../services/device_info_service.dart';
+import '../../services/auth_service.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/top_notice.dart';
 import 'login_challenge_waiting_screen.dart';
@@ -76,11 +77,30 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      final login = result.loginResult!;
+      final isTrusted = await authService.isDeviceTrusted();
+      if (!mounted) return;
+
+      if (isTrusted) {
+        authService.setUser(
+          login.user,
+          token: login.tokens.accessToken,
+          refreshToken: login.tokens.refreshToken,
+          accessExpiredAt: login.tokens.accessExpiredAt,
+        );
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          AppRouter.main,
+          (route) => false,
+        );
+        return;
+      }
+
       Navigator.pushNamed(
         context,
         AppRouter.postLoginSecurity,
         arguments: PostLoginSecurityArguments(
-          loginResult: result.loginResult!,
+          loginResult: login,
           identifier: identifier,
         ),
       );
@@ -132,7 +152,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 20),
               const Text(
-                'Chat Connect',
+                'QuickChat',
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w700,
@@ -173,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 8),
                     _buildTextField(
                       controller: _phoneCtrl,
-                      hint: '0901234567 hoặc you@gmail.com',
+                      hint: 'Nhập SĐT hoặc Email',
                       icon: Icons.person_outline,
                       keyboardType: TextInputType.emailAddress,
                     ),
@@ -214,7 +234,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 8),
                     _buildTextField(
                       controller: _passCtrl,
-                      hint: '••••••••',
+                      hint: 'Nhập mật khẩu',
                       icon: Icons.lock_outline,
                       obscure: _obscure,
                       suffix: IconButton(
