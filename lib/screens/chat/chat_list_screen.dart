@@ -676,6 +676,22 @@ class _ChatListScreenState extends State<ChatListScreen> {
       final a = actor.isEmpty ? 'Ai đó' : actor;
       return '$a đã rời khỏi nhóm';
     }
+    if (raw.startsWith('MAKE_ADMIN|')) {
+      final parts = raw.split('|');
+      final member = parts.length > 1 ? parts[1].trim() : '';
+      final by = parts.length > 2 ? parts[2].trim() : '';
+      final m = member.isEmpty ? 'một thành viên' : member;
+      final b = by.isEmpty ? 'Ai đó' : by;
+      return '$b đã đặt $m làm quản trị viên';
+    }
+    if (raw.startsWith('REVOKE_ADMIN|')) {
+      final parts = raw.split('|');
+      final member = parts.length > 1 ? parts[1].trim() : '';
+      final by = parts.length > 2 ? parts[2].trim() : '';
+      final m = member.isEmpty ? 'một thành viên' : member;
+      final b = by.isEmpty ? 'Ai đó' : by;
+      return '$b đã thu hồi quyền quản trị của $m';
+    }
     if (raw.startsWith('PIN_MESSAGE|')) return 'Đã ghim một tin nhắn';
     if (raw.startsWith('UNPIN_MESSAGE|')) return 'Đã bỏ ghim một tin nhắn';
 

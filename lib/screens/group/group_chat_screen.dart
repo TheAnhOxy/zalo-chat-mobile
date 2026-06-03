@@ -1144,6 +1144,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('LEAVE_GROUP|')) {
       return true;
     }
+    if (msg.type.toUpperCase() == 'SYSTEM' &&
+        (content.startsWith('MAKE_ADMIN|') ||
+            content.startsWith('REVOKE_ADMIN|'))) {
+      return true;
+    }
     if (content.contains('Bạn đã ghim một tin nhắn')) return true;
     if (msg.type.toUpperCase() == 'SYSTEM' && content.contains('ghim')) {
       return true;
@@ -1180,6 +1185,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       final actor = parts.length > 1 ? parts[1].trim() : '';
       final a = actor.isEmpty ? 'Ai đó' : actor;
       return '$a đã rời khỏi nhóm';
+    }
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('MAKE_ADMIN|')) {
+      final parts = content.split('|');
+      final member = parts.length > 1 ? parts[1].trim() : '';
+      final by = parts.length > 2 ? parts[2].trim() : '';
+      final m = member.isEmpty ? 'một thành viên' : member;
+      final b = by.isEmpty ? 'Ai đó' : by;
+      return '$b đã đặt $m làm quản trị viên';
+    }
+    if (msg.type.toUpperCase() == 'SYSTEM' && content.startsWith('REVOKE_ADMIN|')) {
+      final parts = content.split('|');
+      final member = parts.length > 1 ? parts[1].trim() : '';
+      final by = parts.length > 2 ? parts[2].trim() : '';
+      final m = member.isEmpty ? 'một thành viên' : member;
+      final b = by.isEmpty ? 'Ai đó' : by;
+      return '$b đã thu hồi quyền quản trị của $m';
     }
     return content;
   }
