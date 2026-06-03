@@ -185,14 +185,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   children: [
                     _buildInput(
                       controller: _fullNameCtrl,
-                      hint: 'Nguyễn Văn A',
+                      hint: 'Nhập họ và tên',
                       label: 'Họ và tên',
                       icon: Icons.badge_outlined,
                     ),
                     const SizedBox(height: 14),
                     _buildInput(
                       controller: _phoneCtrl,
-                      hint: '0000000',
+                      hint: 'Nhập SĐT',
                       label: 'Số điện thoại ',
                       icon: Icons.phone_iphone_outlined,
                       keyboardType: TextInputType.phone,
@@ -200,7 +200,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 14),
                     _buildInput(
                       controller: _emailCtrl,
-                      hint: 'you@gmail.com',
+                      hint: 'Nhập Email',
                       label: 'Email',
                       icon: Icons.alternate_email_rounded,
                       keyboardType: TextInputType.emailAddress,
@@ -208,7 +208,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 14),
                     _buildInput(
                       controller: _passCtrl,
-                      hint: 'password',
+                      hint: 'Nhập mật khẩu',
                       label: 'Mật khẩu',
                       icon: Icons.lock_outline,
                       obscure: _obscurePass,

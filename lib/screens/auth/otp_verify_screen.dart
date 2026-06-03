@@ -103,6 +103,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
           refreshToken: result.tokens.refreshToken,
           accessExpiredAt: result.tokens.accessExpiredAt,
         );
+        await authService.markDeviceTrusted();
         if (!mounted) return;
         Navigator.pushNamedAndRemoveUntil(
           context,

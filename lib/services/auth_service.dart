@@ -77,6 +77,9 @@ class AuthService {
   static const _keyAccessToken  = 'auth_access_token';
   static const _keyRefreshToken = 'auth_refresh_token';
   static const _keyAccessExpiredAt = 'auth_access_expired_at';
+  static const _keyTrustedUntil = 'auth_trusted_until';
+
+  static const Duration _defaultTrustedDuration = Duration(days: 30);
 
   /// Lưu session vào SharedPreferences
   Future<void> _saveSession() async {
@@ -107,6 +110,30 @@ class AuthService {
     await prefs.remove(_keyAccessToken);
     await prefs.remove(_keyRefreshToken);
     await prefs.remove(_keyAccessExpiredAt);
+  }
+
+  Future<void> _clearTrustedDevice() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyTrustedUntil);
+  }
+
+  Future<void> markDeviceTrusted({Duration? ttl}) async {
+    final until = DateTime.now().add(ttl ?? _defaultTrustedDuration);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyTrustedUntil, until.toIso8601String());
+  }
+
+  Future<bool> isDeviceTrusted() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyTrustedUntil);
+    if (raw == null || raw.isEmpty) return false;
+    final until = DateTime.tryParse(raw);
+    if (until == null) return false;
+    if (DateTime.now().isAfter(until)) {
+      await _clearTrustedDevice();
+      return false;
+    }
+    return true;
   }
 
   /// Khôi phục session từ SharedPreferences khi app khởi động.
@@ -175,12 +202,15 @@ class AuthService {
     _notify();
   }
 
-  void logout() {
+  void logout({bool clearTrusted = false}) {
     _currentUser = null;
     _accessToken = null;
     _refreshToken = null;
     _accessExpiredAt = null;
     _clearSession();
+    if (clearTrusted) {
+      _clearTrustedDevice();
+    }
     _notify();
   }
 } 

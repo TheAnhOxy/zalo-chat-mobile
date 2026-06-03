@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
 import '../../navigation/app_router.dart';
-import '../../services/auth_service.dart';
 import '../../services/fake_auth_flow_service.dart';
 import '../../services/device_info_service.dart';
 import '../../widgets/common/common_widgets.dart';
@@ -39,17 +38,6 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
     super.dispose();
   }
 
-  Future<void> _loginDirect() async {
-    authService.setUser(
-      widget.args.loginResult.user,
-      token: widget.args.loginResult.tokens.accessToken,
-      refreshToken: widget.args.loginResult.tokens.refreshToken,
-      accessExpiredAt: widget.args.loginResult.tokens.accessExpiredAt,
-    );
-
-    if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(context, AppRouter.main, (r) => false);
-  }
 
   Future<void> _requestOtpFlow() async {
     String phone = widget.args.identifier.trim();
@@ -145,12 +133,6 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
     );
   }
 
-  void _show2faPlan() {
-    showTopNotice(
-      context,
-          message: '2FA sẽ bắt buộc sau khi hoàn thành project.',
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -162,7 +144,7 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
         backgroundColor: AppColors.bgDark,
         elevation: 0,
         title: const Text(
-            'Chọn cách xác thực',
+          'Xác thực OTP',
           style: TextStyle(
             color: AppColors.textPrimary,
             fontFamily: 'Inter',
@@ -215,24 +197,10 @@ class _PostLoginSecurityScreenState extends State<PostLoginSecurityScreen> {
           const SizedBox(height: 16),
           _MethodCard(
             index: '1',
-              title: 'Đăng nhập thẳng',
-              subtitle: 'Nhanh để test hiện tại',
-            icon: Icons.flash_on_rounded,
-            onTap: _loading ? null : _loginDirect,
-          ),
-          _MethodCard(
-            index: '2',
-              title: 'Nhận mã OTP',
-              subtitle: 'Bắt buộc sau khi hoàn thành project',
+            title: 'Nhận mã OTP',
+            subtitle: 'Xác thực OTP để hoàn tất đăng nhập',
             icon: Icons.sms_outlined,
             onTap: _loading ? null : _requestOtpFlow,
-          ),
-          _MethodCard(
-            index: '3',
-              title: 'Xác thực 2 lớp',
-              subtitle: 'Sẽ triển khai tiếp theo',
-            icon: Icons.admin_panel_settings_outlined,
-            onTap: _loading ? null : _show2faPlan,
           ),
           if (_loading) ...[
             const SizedBox(height: 14),
