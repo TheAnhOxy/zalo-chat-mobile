@@ -38,8 +38,6 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     final picker = ImagePicker();
     final picked = await picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1920,
     );
     if (picked == null) return;
     await _disposeVideo();

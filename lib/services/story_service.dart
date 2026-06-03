@@ -39,6 +39,27 @@ class StoryService {
     }
   }
 
+  /// Lấy danh sách story đang còn hiệu lực của một user cụ thể
+  Future<List<ApiStoryModel>> getStoriesByUserId(String userId) async {
+    try {
+      final res = await _client
+          .get(
+            Uri.parse('$baseUrl/stories/user/$userId?activeOnly=true&limit=50'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+        return data.map((e) => ApiStoryModel.fromJson(e)).toList();
+      }
+      return [];
+    } catch (e) {
+      dev.log('❌ getStoriesByUserId error: $e');
+      return [];
+    }
+  }
+
   Future<List<ApiStoryModel>> getFriendsStories(String userId) async {
     try {
       // In a real scenario, the backend could provide an aggregation.

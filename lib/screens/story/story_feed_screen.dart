@@ -5,8 +5,10 @@ import '../../core/constants/app_colors.dart';
 import '../../core/config/app_config.dart';
 import '../../widgets/story/story_list_widget.dart';
 import '../../widgets/story/video_thumbnail_player.dart';
+import '../../core/utils/image_utils.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:video_player/video_player.dart';
+import 'dart:ui' as ui;
 
 class StoryFeedScreen extends StatefulWidget {
   const StoryFeedScreen({super.key});
@@ -136,8 +138,10 @@ String _timeAgo(DateTime dt) {
 
 String _getAbsolutePath(String url) {
   if (url.isEmpty) return '';
-  if (url.startsWith('http')) return url;
-  return '${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://');
+  if (url.startsWith('http')) {
+    return webSafeImageUrl(url);
+  }
+  return webSafeImageUrl('${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://'));
 }
 
 // VideoThumbnailPlayer moved to its own file lib/widgets/story/video_thumbnail_player.dart
@@ -178,17 +182,34 @@ class _GridStoryCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(15),
                 child: (story.type == 'VIDEO' && (story.thumbnailUrl == null || story.thumbnailUrl!.isEmpty))
                   ? VideoThumbnailPlayer(videoUrl: _getAbsolutePath(story.mediaUrl))
-                  : CachedNetworkImage(
-                      imageUrl: coverUrl,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(
-                        color: Colors.grey[200],
-                        child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                      ),
-                      errorWidget: (_, __, ___) => Container(
-                        color: Colors.grey[300],
-                        child: const Icon(Icons.broken_image, color: Colors.grey),
-                      ),
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Background mờ
+                        ImageFiltered(
+                          imageFilter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                          child: CachedNetworkImage(
+                            imageUrl: coverUrl,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        // Lớp phủ tối nhẹ cho background
+                        Container(color: Colors.black.withOpacity(0.3)),
+                        // Ảnh chính (không bị tràn hay nhòe)
+                        CachedNetworkImage(
+                          imageUrl: coverUrl,
+                          fit: BoxFit.contain,
+                          placeholder: (_, __) => const Center(
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2, 
+                              color: Colors.white54,
+                            ),
+                          ),
+                          errorWidget: (_, __, ___) => const Center(
+                            child: Icon(Icons.broken_image_outlined, color: Colors.white54),
+                          ),
+                        ),
+                      ],
                     ),
               ),
             ),

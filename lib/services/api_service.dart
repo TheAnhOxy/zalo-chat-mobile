@@ -228,6 +228,19 @@ class ApiService {
     }
   }
 
+  /// Lấy thông tin một cuộc hội thoại theo ID
+  Future<ConversationModel?> getConversationById(String conversationId) async {
+    try {
+      final response = await _dio.get('$baseUrl/conversations/$conversationId');
+      return ConversationModel.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+    } catch (e) {
+      log('❌ Lỗi getConversationById: $e');
+      return null;
+    }
+  }
+
   /// Tìm cuộc trò chuyện 1-1 đã tồn tại giữa 2 user, hoặc tạo mới nếu chưa có.
   Future<ConversationModel?> findOrCreateDirectConversation({
     required String currentUserId,
@@ -512,6 +525,56 @@ class ApiService {
     } catch (e) {
       log('❌ Lỗi getCalls: $e');
       return [];
+    }
+  }
+
+  // --- NOTIFICATIONS ---
+
+  /// Lấy danh sách notifications của một user từ database
+  Future<List<Map<String, dynamic>>> getNotifications(String receiverId) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl/notifications/receiver/$receiverId',
+        queryParameters: {'limit': 50},
+      );
+      final List data = response.data;
+      return data.map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) {
+      log('❌ Lỗi getNotifications: $e');
+      return [];
+    }
+  }
+
+  /// Đánh dấu một notification đã đọc
+  Future<bool> markNotificationAsRead(String id) async {
+    try {
+      final response = await _dio.patch('$baseUrl/notifications/$id/read');
+      return response.statusCode == 200;
+    } catch (e) {
+      log('❌ Lỗi markNotificationAsRead: $e');
+      return false;
+    }
+  }
+
+  /// Đánh dấu đã đọc tất cả notifications của receiver
+  Future<bool> markAllNotificationsAsRead(String receiverId) async {
+    try {
+      final response = await _dio.patch('$baseUrl/notifications/receiver/$receiverId/read-all');
+      return response.statusCode == 200;
+    } catch (e) {
+      log('❌ Lỗi markAllNotificationsAsRead: $e');
+      return false;
+    }
+  }
+
+  /// Xóa notification theo ID
+  Future<bool> deleteNotification(String id) async {
+    try {
+      final response = await _dio.delete('$baseUrl/notifications/$id');
+      return response.statusCode == 200;
+    } catch (e) {
+      log('❌ Lỗi deleteNotification: $e');
+      return false;
     }
   }
 }

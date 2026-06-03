@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants/app_colors.dart';
+import '../services/notification_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BottomNavBar — 4 tabs (bỏ tab AI, AI dùng floating button)
@@ -116,11 +117,29 @@ class _NavItemWidget extends StatelessWidget {
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
-              Icon(
-                isActive ? tab.activeIcon : tab.icon,
-                size: 24,
-                color: isActive ? AppColors.primary : AppColors.textSecondary,
-              ),
+              if (index == 3)
+                ListenableBuilder(
+                  listenable: NotificationService(),
+                  builder: (context, _) {
+                    final unreadCount = NotificationService().unreadCount;
+                    return Badge(
+                      isLabelVisible: unreadCount > 0,
+                      label: Text(unreadCount > 99 ? '99+' : unreadCount.toString()),
+                      backgroundColor: Colors.red,
+                      child: Icon(
+                        isActive ? tab.activeIcon : tab.icon,
+                        size: 24,
+                        color: isActive ? AppColors.primary : AppColors.textSecondary,
+                      ),
+                    );
+                  },
+                )
+              else
+                Icon(
+                  isActive ? tab.activeIcon : tab.icon,
+                  size: 24,
+                  color: isActive ? AppColors.primary : AppColors.textSecondary,
+                ),
               const SizedBox(height: 4),
               Text(
                 tab.label,

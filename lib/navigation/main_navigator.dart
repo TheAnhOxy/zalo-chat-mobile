@@ -8,6 +8,7 @@ import '../screens/ai/ai_screen.dart';
 import '../screens/setting/setting_screen.dart';
 import '../screens/notifications/notification_screen.dart';
 import '../screens/story/story_feed_screen.dart';
+import '../services/notification_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MainNavigator — 4 tabs + Floating AI Button ở góc phải dưới
@@ -46,6 +47,10 @@ class _MainNavigatorState extends State<MainNavigator>
     _pulseAnim = Tween<double>(begin: 1.0, end: 1.08).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService().fetchNotifications();
+    });
   }
 
   @override
@@ -90,7 +95,13 @@ class _MainNavigatorState extends State<MainNavigator>
       ),
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: (i) {
+          setState(() => _currentIndex = i);
+          if (i == 3) {
+            // Khi bấm vào tab Thông báo, tự động đánh dấu đã đọc tất cả
+            NotificationService().markAllAsRead();
+          }
+        },
       ),
     );
   }

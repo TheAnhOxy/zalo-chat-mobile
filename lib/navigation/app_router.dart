@@ -70,7 +70,10 @@ class AppRouter {
   static const String storyViewer = '/story-viewer';
 
   // ── Route Generator ─────────────────────────────────────────
-  static Route<dynamic> generateRoute(RouteSettings settings) {
+  static Route<dynamic>? generateRoute(RouteSettings settings) {
+    if (settings.name != null && settings.name!.contains('flushbar')) {
+      return null;
+    }
     switch (settings.name) {
       // ── Auth ──────────────────────────────────────────────────
       case login:
@@ -185,9 +188,8 @@ class AppRouter {
 
       // ── 404 ───────────────────────────────────────────────────
       default:
-        return _fade(
-          const Scaffold(body: Center(child: Text('Route not found'))),
-        );
+        // Thay vì hiển thị route not found, hãy quay lại /main
+        return _fade(IncomingCallListener(child: const MainNavigator()));
     }
   }
 

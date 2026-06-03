@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/story_socket_service.dart';
 import '../../core/config/app_config.dart';
 import '../../widgets/story/video_thumbnail_player.dart';
+import '../../core/utils/image_utils.dart';
 import 'dart:ui' as ui;
 
 class StoryViewerScreen extends StatefulWidget {
@@ -132,7 +133,17 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         curve: Curves.easeIn,
       );
     } else {
-      Navigator.of(context).pop();
+      _safePop();
+    }
+  }
+
+  void _safePop() async {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      await navigator.maybePop();
+    } else {
+      // Nếu không pop được (ví dụ do load thẳng link hoặc lỗi stack), chuyển về /main
+      navigator.pushReplacementNamed('/main');
     }
   }
 
@@ -250,30 +261,47 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // 1. Blurred Background layer
-        _buildBlurredBackground(story, index),
-        
-        // 2. Black semi-transparent overlay to darken background
-        Container(color: Colors.black.withOpacity(0.35)),
+        // ── Layer 1: Blurred Background (same image, blurred + darkened) ──
+        Positioned.fill(
+          child: _buildBlurredBackground(story, index),
+        ),
 
-        // 3. Main Content Card
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 100, horizontal: 8),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.5),
-                    blurRadius: 20,
-                    spreadRadius: 2,
-                  ),
+        // ── Layer 2: Sharp main content fills full screen ──
+        Positioned.fill(
+          child: _buildStoryContent(story, index),
+        ),
+
+        // ── Layer 3: Top gradient — dark overlay for progress bar + user header ──
+        Positioned(
+          top: 0, left: 0, right: 0,
+          height: 160,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.6),
+                  Colors.transparent,
                 ],
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: _buildStoryContent(story, index),
+            ),
+          ),
+        ),
+
+        // ── Layer 4: Bottom gradient — dark overlay for caption + input bar ──
+        Positioned(
+          bottom: 0, left: 0, right: 0,
+          height: 180,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Colors.black.withOpacity(0.7),
+                  Colors.transparent,
+                ],
               ),
             ),
           ),
@@ -283,33 +311,33 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Widget _buildBlurredBackground(ApiStoryModel story, int index) {
-    // For background, we use the same media but with BoxFit.cover and Sigma blur
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      child: ImageFiltered(
-        imageFilter: ColorFilter.mode(Colors.black.withOpacity(0.1), BlendMode.darken), // Subtle darken
-        child: ShaderMask(
-          shaderCallback: (rect) {
-            return LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.black, Colors.black.withOpacity(0.1), Colors.black],
-            ).createShader(rect);
-          },
-          blendMode: BlendMode.dstIn,
-          child: ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-            child: (story.type == 'VIDEO' && index == _currentIndex && _videoReady && _videoController != null)
-                ? VideoPlayer(_videoController!)
-                : (story.type == 'VIDEO' && (story.thumbnailUrl == null || story.thumbnailUrl!.isEmpty))
-                    ? VideoThumbnailPlayer(videoUrl: _getAbsolutePath(story.mediaUrl))
-                    : CachedNetworkImage(
-                        imageUrl: _getAbsolutePath(story.type == 'VIDEO' ? (story.thumbnailUrl ?? story.mediaUrl) : story.mediaUrl),
-                        fit: BoxFit.cover,
-                      ),
-          ),
-        ),
+    final mediaUrl = story.type == 'VIDEO'
+        ? (story.thumbnailUrl?.isNotEmpty == true ? story.thumbnailUrl! : story.mediaUrl)
+        : story.mediaUrl;
+
+    Widget child;
+    if (story.type == 'VIDEO' && index == _currentIndex && _videoReady && _videoController != null) {
+      child = SizedBox.expand(
+        child: FittedBox(fit: BoxFit.cover, child: SizedBox(
+          width: _videoController!.value.size.width,
+          height: _videoController!.value.size.height,
+          child: VideoPlayer(_videoController!),
+        )),
+      );
+    } else {
+      child = CachedNetworkImage(
+        imageUrl: _getAbsolutePath(mediaUrl),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
+    return ImageFiltered(
+      imageFilter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+      child: ColorFiltered(
+        colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.35), BlendMode.darken),
+        child: child,
       ),
     );
   }
@@ -326,9 +354,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   Widget _buildImageContent(String url) {
     return CachedNetworkImage(
       imageUrl: _getAbsolutePath(url),
-      fit: BoxFit.cover, // Fill the card
+      fit: BoxFit.contain, // Contain so full image is visible and sharp
       width: double.infinity,
       height: double.infinity,
+      filterQuality: FilterQuality.high,
       placeholder: (_, __) => const Center(
         child: CircularProgressIndicator(
           color: Colors.white54,
@@ -354,7 +383,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           if (thumb.isNotEmpty)
             CachedNetworkImage(
               imageUrl: _getAbsolutePath(thumb),
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
             )
           else
             VideoThumbnailPlayer(videoUrl: _getAbsolutePath(story.mediaUrl)),
@@ -365,13 +395,24 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       );
     }
 
-    return VideoPlayer(_videoController!);
+    return SizedBox.expand(
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: _videoController!.value.size.width > 0 ? _videoController!.value.size.width : 1080,
+          height: _videoController!.value.size.height > 0 ? _videoController!.value.size.height : 1920,
+          child: VideoPlayer(_videoController!),
+        ),
+      ),
+    );
   }
 
   String _getAbsolutePath(String url) {
     if (url.isEmpty) return '';
-    if (url.startsWith('http')) return url;
-    return '${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://');
+    if (url.startsWith('http')) {
+      return webSafeImageUrl(url);
+    }
+    return webSafeImageUrl('${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://'));
   }
 
   // ─── UI pieces ────────────────────────────────────────────────────────────
@@ -482,7 +523,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           ),
         // Close button
         GestureDetector(
-          onTap: () => Navigator.pop(context),
+          onTap: _safePop,
           child: Container(
             width: 36,
             height: 36,

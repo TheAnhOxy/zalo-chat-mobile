@@ -6,6 +6,7 @@ import '../../services/story_socket_service.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/config/app_config.dart';
 import '../../widgets/story/video_thumbnail_player.dart';
+import '../../core/utils/image_utils.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class StoryListWidget extends StatefulWidget {
@@ -341,6 +342,8 @@ class _StoryListWidgetState extends State<StoryListWidget> {
 
 String _getAbsolutePath(String url) {
   if (url.isEmpty) return '';
-  if (url.startsWith('http')) return url;
-  return '${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://');
+  if (url.startsWith('http')) {
+    return webSafeImageUrl(url);
+  }
+  return webSafeImageUrl('${AppConfig.baseUrl}/$url'.replaceAll('//', '/').replaceFirst(':/', '://'));
 }
