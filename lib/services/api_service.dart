@@ -10,6 +10,13 @@ import 'fake_auth_flow_service.dart';
 import 'socket_service.dart';
 import 'dart:developer';
 
+class MessagePaginationResult {
+  final List<MessageModel> messages;
+  final bool hasMore;
+
+  MessagePaginationResult({required this.messages, required this.hasMore});
+}
+
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
@@ -295,23 +302,76 @@ class ApiService {
     String userId, {
     int limit = 50,
     int skip = 0,
+    String? beforeMessageId,
   }) async {
     try {
       final response = await _dio.get(
         '$baseUrl/messages/conversation/$conversationId',
         queryParameters: {
-          'userId':
-              userId, // Truyền userId lên để Backend thực hiện lọc deletedBy
+          'userId': userId,
           'limit': limit,
-          'skip': skip,
+          if (skip > 0) 'skip': skip,
+          if (beforeMessageId != null) 'beforeMessageId': beforeMessageId,
         },
       );
 
-      final List data = response.data;
-      return data.map((json) => MessageModel.fromJson(json)).toList();
+      final dynamic data = response.data;
+      List rawList = [];
+      if (data is List) {
+        rawList = data;
+      } else if (data is Map) {
+        rawList = data['messages'] ?? data['data'] ?? [];
+      }
+
+      return rawList.map((json) => MessageModel.fromJson(json)).toList();
     } catch (e) {
       log('❌ Lỗi getMessages: $e');
       return [];
+    }
+  }
+
+  /// Lấy lịch sử tin nhắn kèm metadata phân trang
+  Future<MessagePaginationResult> getMessagesPaginated(
+    String conversationId,
+    String userId, {
+    int limit = 50,
+    int skip = 0,
+    String? beforeMessageId,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl/messages/conversation/$conversationId',
+        queryParameters: {
+          'userId': userId,
+          'limit': limit,
+          if (skip > 0) 'skip': skip,
+          if (beforeMessageId != null) 'beforeMessageId': beforeMessageId,
+        },
+      );
+
+      final dynamic data = response.data;
+      List rawList = [];
+      bool hasMore = false;
+
+      if (data is List) {
+        rawList = data;
+        hasMore = rawList.length == limit;
+      } else if (data is Map) {
+        rawList = data['messages'] ?? data['data'] ?? [];
+        if (data.containsKey('hasMore')) {
+          hasMore = data['hasMore'] == true;
+        } else if (data['metadata'] is Map && data['metadata'].containsKey('hasMore')) {
+          hasMore = data['metadata']['hasMore'] == true;
+        } else {
+          hasMore = rawList.length == limit;
+        }
+      }
+
+      final msgs = rawList.map((json) => MessageModel.fromJson(json)).toList();
+      return MessagePaginationResult(messages: msgs, hasMore: hasMore);
+    } catch (e) {
+      log('❌ Lỗi getMessagesPaginated: $e');
+      return MessagePaginationResult(messages: [], hasMore: false);
     }
   }
 

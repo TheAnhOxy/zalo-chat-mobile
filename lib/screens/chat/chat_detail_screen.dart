@@ -64,6 +64,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   late final ChatController _chatController;
 
   bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
   bool _showEmoji = false;
   MessageModel? _replyTo;
   MessageModel? _editingMessage;
@@ -147,6 +149,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
     _chatController.addListener(_onChatControllerChanged);
     _textCtrl.addListener(_onTextInputChanged);
+    _scrollCtrl.addListener(_onScroll);
     _chatController.attach();
     _restoreBackground();
     _loadData();
@@ -155,6 +158,55 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _presenceUpdateTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
+  }
+
+  void _onScroll() {
+    if (!_scrollCtrl.hasClients) return;
+    if (_scrollCtrl.position.maxScrollExtent - _scrollCtrl.position.pixels <= 200 &&
+        _hasMore &&
+        !_isLoadingMore) {
+      _loadMoreMessages();
+    }
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMore) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final uid = authService.userId!;
+      final skip = _messages.length;
+      final beforeMessageId = _messages.isNotEmpty ? _messages.first.id : null;
+
+      final result = await apiService.getMessagesPaginated(
+        widget.conversationId,
+        uid,
+        limit: 50,
+        skip: skip,
+        beforeMessageId: beforeMessageId,
+      );
+
+      if (!mounted) return;
+
+      final newMsgs = result.messages;
+
+      if (newMsgs.isEmpty) {
+        setState(() {
+          _hasMore = false;
+          _isLoadingMore = false;
+        });
+        return;
+      }
+
+      _chatController.setMessages([...newMsgs, ..._messages]);
+
+      setState(() {
+        _hasMore = result.hasMore;
+        _isLoadingMore = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
   }
 
   void _onChatControllerChanged() {
@@ -308,26 +360,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           rawConversation.data ?? const <String, dynamic>{},
         );
       }
-      final items =
-          <ChatItem>[...msgs.map(ChatItem.message), ...calls.map(ChatItem.call)]
-            ..sort((a, b) {
-              final cmp = a.createdAt.compareTo(b.createdAt);
-              if (cmp != 0) return cmp;
-              final aKey = a.type == ChatItemType.message
-                  ? 'm_${a.message?.id ?? ''}'
-                  : 'c_${a.call?.id ?? ''}';
-              final bKey = b.type == ChatItemType.message
-                  ? 'm_${b.message?.id ?? ''}'
-                  : 'c_${b.call?.id ?? ''}';
-              return aKey.compareTo(bKey);
-            });
-
       _chatController.setMessages(msgs);
       _lastKnownMessageCount = msgs.length;
       _lastKnownTyping = _isTyping;
+      
+      _calls = calls;
+      _rebuildChatItems();
+
       setState(() {
-        _calls = calls;
-        _chatItems = items;
         _isLoading = false;
       });
       _emitSeenForLatest();
@@ -419,7 +459,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       }
       clustered.add(item);
     }
-    _chatItems = clustered;
+    _chatItems = clustered.reversed.toList();
   }
 
   void _initSocket() {
@@ -615,6 +655,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _voiceRecorder.dispose();
     _textCtrl.removeListener(_onTextInputChanged);
     _textCtrl.dispose();
+    _scrollCtrl.removeListener(_onScroll);
     _scrollCtrl.dispose();
     _focusNode.dispose();
     _presenceUpdateTimer?.cancel();
@@ -915,8 +956,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         return;
       }
 
-      final target = _scrollCtrl.position.maxScrollExtent;
-      if (!target.isFinite) return;
+      final target = 0.0;
 
       if (animated) {
         _scrollCtrl.animateTo(
@@ -1838,6 +1878,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       child: ConversationTimeline(
                         controller: _scrollCtrl,
                         items: _chatItems,
+                        reverse: true,
                         showTypingIndicator: _isTyping,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -1917,7 +1958,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         msg.senderId.toString() == authService.userId.toString();
     final showAvatar = _shouldShowAvatarAtIndex(i);
 
-    if (msg.isMediaCluster) {
+    if (msg.isMediaCluster && !msg.isRecalled) {
       return KeyedSubtree(
         key: _keyForMessage(msg.id),
         child: MediaClusterBubble(
@@ -2046,13 +2087,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       return false;
     }
 
-    if (index == _chatItems.length - 1) return true;
+    if (index == 0) return true;
 
-    final next = _chatItems[index + 1];
-    final nextSender = _senderIdForChatItem(next);
-    if (nextSender != currentSender) return true;
+    final newer = _chatItems[index - 1];
+    final newerSender = _senderIdForChatItem(newer);
+    if (newerSender != currentSender) return true;
 
-    final gap = next.createdAt.difference(current.createdAt).abs();
+    final gap = current.createdAt.difference(newer.createdAt).abs();
     return gap > _avatarClusterWindow;
   }
 
