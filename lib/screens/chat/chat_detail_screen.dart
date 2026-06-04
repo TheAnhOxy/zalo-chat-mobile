@@ -30,6 +30,7 @@ import '../../widgets/chat/conversation_shared_bubbles.dart';
 import '../../widgets/chat/conversation_timeline.dart';
 import '../../widgets/chat/conversation_voice_recording_bar.dart';
 import '../../widgets/chat/media_group_bubble.dart';
+import '../../widgets/chat/media_cluster_bubble.dart';
 import '../ai/ai_screen.dart';
 import 'pinned_messages_screen.dart';
 import '../group/group_options_screen.dart';
@@ -1205,7 +1206,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       await _runMediaUpload(() async {
         final total = pickedFiles.length;
         var completed = 0;
-        final groupId = const Uuid().v4();
+        final uploadedItems = <MediaItem>[];
+
         for (final picked in pickedFiles) {
           final isVideo = _chatMediaService.detectContentType(picked.name).startsWith('video');
           ChatMediaUploadResult? uploaded;
@@ -1228,25 +1230,44 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               );
             }
 
-            socketService.sendMessage({
-              'conversationId': widget.conversationId,
-              'senderId': authService.userId!,
-              'type': isVideo ? 'VIDEO' : 'IMAGE',
-              'content': uploaded.fileUrl,
-              if (_replyTo != null) 'replyToId': _replyTo!.id,
-              'metadata': {
-                'fileName': uploaded.fileName,
-                'fileSize': uploaded.fileSize,
-                'groupId': groupId,
-                if (uploaded.thumbnailUrl != null) 'thumbnailUrl': uploaded.thumbnailUrl,
-                if (uploaded.thumbnailUrl != null) 'thumbnail': uploaded.thumbnailUrl,
-              },
-            });
+            if (uploaded != null) {
+              uploadedItems.add(MediaItem(
+                url: uploaded.fileUrl,
+                type: isVideo ? 'VIDEO' : 'IMAGE',
+                thumbnail: uploaded.thumbnailUrl,
+              ));
+            }
           } catch (e) {
             log('Upload lỗi: $e');
           }
           completed++;
         }
+
+        if (uploadedItems.isNotEmpty) {
+          if (uploadedItems.length == 1) {
+            final item = uploadedItems.first;
+            socketService.sendMessage({
+              'conversationId': widget.conversationId,
+              'senderId': authService.userId!,
+              'type': item.type,
+              'content': item.url,
+              if (_replyTo != null) 'replyToId': _replyTo!.id,
+              'metadata': {
+                if (item.thumbnail != null) 'thumbnailUrl': item.thumbnail,
+                if (item.thumbnail != null) 'thumbnail': item.thumbnail,
+              },
+            });
+          } else {
+            socketService.sendMessage({
+              'conversationId': widget.conversationId,
+              'senderId': authService.userId!,
+              'type': 'MEDIA_CLUSTER',
+              'content': jsonEncode(uploadedItems.map((e) => e.toJson()).toList()),
+              if (_replyTo != null) 'replyToId': _replyTo!.id,
+            });
+          }
+        }
+
         if (mounted) {
           setState(() => _replyTo = null);
           _scrollToBottomBurst();
@@ -1895,6 +1916,52 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final isCurrentUserMessage =
         msg.senderId.toString() == authService.userId.toString();
     final showAvatar = _shouldShowAvatarAtIndex(i);
+
+    if (msg.isMediaCluster) {
+      return KeyedSubtree(
+        key: _keyForMessage(msg.id),
+        child: MediaClusterBubble(
+          msg: msg,
+          isMe: isCurrentUserMessage,
+          isGroup: false,
+          senderAvatar: !isCurrentUserMessage ? widget.otherUser?.avatar : null,
+          senderName: !isCurrentUserMessage ? widget.otherUser?.fullName : null,
+          showAvatar: showAvatar,
+          showSeenLabel: msg.id == lastOutgoingMessageId && _isSeenByPeer(msg),
+          replyToMsg: msg.replyToId != null
+              ? _messages.firstWhere(
+                  (m) => m.id == msg.replyToId,
+                  orElse: () => msg,
+                )
+              : null,
+          onLongPress: (m) => _showMessageActions(m),
+          onReactionTap: (m, r) => _addReaction(m, r),
+          onMediaTap: (item) {
+            if (item.type == 'VIDEO') {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => VideoPlayerScreen(
+                    videoUrl: item.url,
+                    title: 'Video',
+                  ),
+                ),
+              );
+            } else {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ImageViewerScreen(
+                    imageUrl: item.url,
+                    heroTag: 'image_${msg.id}_${item.url.hashCode}',
+                  ),
+                ),
+              );
+            }
+          },
+        ),
+      );
+    }
 
     return KeyedSubtree(
       key: _keyForMessage(msg.id),
