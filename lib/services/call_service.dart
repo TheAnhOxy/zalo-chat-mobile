@@ -67,6 +67,7 @@ class CallService {
   // trả về credential TTL-based thực sự (TURN_SECRET trong .env backend).
   static const Map<String, dynamic> _fallbackIceConfig = {
     'iceServers': [
+      // STUN servers (giúp biết public IP)
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
       {'urls': 'stun:stun2.l.google.com:19302'},
