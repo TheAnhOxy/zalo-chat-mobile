@@ -54,12 +54,35 @@ class CallService {
   void Function(MediaStream)? onLocalStream;
   PeerRemoteStreamData? onPeerRemoteStream;
 
+  // ICE config: STUN để discover public IP, TURN để relay khi P2P thất bại qua NAT
+  // Bắt buộc có TURN để call hoạt động giữa 2 mạng khác nhau (internet)
   final Map<String, dynamic> _iceConfig = {
     'iceServers': [
+      // STUN servers (giúp biết public IP)
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
+      {'urls': 'stun:stun2.l.google.com:19302'},
+      {'urls': 'stun:stun3.l.google.com:19302'},
+      // TURN servers (relay khi P2P không xuyên qua được NAT)
+      // Dùng OpenRelay free — thay bằng TURN server riêng cho production
+      {
+        'urls': 'turn:openrelay.metered.ca:80',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
+      {
+        'urls': 'turn:openrelay.metered.ca:443',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
+      {
+        'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
     ],
     'sdpSemantics': 'unified-plan',
+    'iceCandidatePoolSize': 10,
   };
 
   String _peerKey(String? id) => (id ?? '').trim();
