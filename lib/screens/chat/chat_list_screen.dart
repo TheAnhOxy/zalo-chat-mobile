@@ -696,20 +696,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (raw.startsWith('UNPIN_MESSAGE|')) return 'Đã bỏ ghim một tin nhắn';
 
     final normalizedType = (type ?? '').toUpperCase();
-    if (normalizedType == 'IMAGE' || _isImageUrl(content)) {
-      return 'Đã gửi 1 ảnh';
+    
+    if (normalizedType == 'MEDIA_CLUSTER' || 
+        (content.trim().startsWith('[{') && content.contains('"url"')) ||
+        normalizedType == 'IMAGE' || _isImageUrl(content) ||
+        normalizedType == 'VIDEO' || _isVideoUrl(content) ||
+        normalizedType == 'FILE') {
+      return 'Đã gửi 1 tệp đính kèm';
     }
-    if (normalizedType == 'VIDEO' || _isVideoUrl(content)) {
-      return 'Đã gửi 1 video';
-    }
+
     if (normalizedType == 'VOICE') {
       return 'Đã gửi 1 tin nhắn thoại';
-    }
-    if (normalizedType == 'FILE') {
-      final fileName = metadata?.fileName;
-      return (fileName != null && fileName.trim().isNotEmpty)
-          ? 'Đã gửi 1 file: $fileName'
-          : 'Đã gửi 1 file';
     }
     return content;
   }
