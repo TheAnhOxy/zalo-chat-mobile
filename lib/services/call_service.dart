@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:http/http.dart' as http;
 import 'socket_service.dart';
 import 'auth_service.dart';
+import '../core/config/app_config.dart';
 
 enum CallState { idle, calling, incoming, connected, ended }
 
@@ -54,17 +57,23 @@ class CallService {
   void Function(MediaStream)? onLocalStream;
   PeerRemoteStreamData? onPeerRemoteStream;
 
-  // ICE config: STUN để discover public IP, TURN để relay khi P2P thất bại qua NAT
-  // Bắt buộc có TURN để call hoạt động giữa 2 mạng khác nhau (internet)
-  final Map<String, dynamic> _iceConfig = {
+  // ICE config được fetch động từ backend (TTL-based TURN credentials).
+  // Cache trong suốt 1 cuộc gọi, reset khi _cleanUp().
+  Map<String, dynamic>? _cachedIceConfig;
+
+  // Fallback ICE config (chỉ STUN + OpenRelay) — dùng khi backend không
+  // cấu hình TURN riêng hoặc khi fetch thất bại.
+  // QUAN TRỌNG: Đây là fallback dev/demo. Trong production, backend sẽ
+  // trả về credential TTL-based thực sự (TURN_SECRET trong .env backend).
+  static const Map<String, dynamic> _fallbackIceConfig = {
     'iceServers': [
       // STUN servers (giúp biết public IP)
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
       {'urls': 'stun:stun2.l.google.com:19302'},
       {'urls': 'stun:stun3.l.google.com:19302'},
-      // TURN servers (relay khi P2P không xuyên qua được NAT)
-      // Dùng OpenRelay free — thay bằng TURN server riêng cho production
+      // OpenRelay fallback — chỉ duyên cho dev/demo,
+      // sẽ bị thay bằng credential thật từ backend khi có TURN server riêng.
       {
         'urls': 'turn:openrelay.metered.ca:80',
         'username': 'openrelayproject',
@@ -84,6 +93,54 @@ class CallService {
     'sdpSemantics': 'unified-plan',
     'iceCandidatePoolSize': 10,
   };
+
+  /// Lấy ICE config với TURN credentials TTL-based từ backend.
+  ///
+  /// Backend sinh credential theo chuẩn TURN REST API (RFC 8489 §9.2):
+  ///   username  = "<unix_expiry>:<userId>"
+  ///   credential = base64(HMAC-SHA1(TURN_SECRET, username))
+  ///
+  /// TURN secret thật không bao giờ gửi xuống client.
+  /// Nếu fetch thất bại → fallback về _fallbackIceConfig (STUN + OpenRelay).
+  Future<Map<String, dynamic>> _fetchIceConfig() async {
+    if (_cachedIceConfig != null) return _cachedIceConfig!;
+
+    try {
+      final userId = authService.userId ?? 'anonymous';
+      final token = authService.accessToken;
+      final baseUrl = AppConfig.baseUrl;
+
+      final uri = Uri.parse('$baseUrl/calls/ice-config?userId=${Uri.encodeComponent(userId)}');
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+
+      final response = await http.get(uri, headers: headers)
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception('ice-config HTTP ${response.statusCode}');
+      }
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final iceServers = body['iceServers'];
+      if (iceServers == null || (iceServers as List).isEmpty) {
+        throw Exception('ice-config response invalid');
+      }
+
+      _cachedIceConfig = {
+        'iceServers': iceServers,
+        'sdpSemantics': 'unified-plan',
+        'iceCandidatePoolSize': 10,
+      };
+      dev.log('✅ ICE config fetched from backend (TTL-based TURN credentials)');
+      return _cachedIceConfig!;
+    } catch (e) {
+      dev.log('⚠️ _fetchIceConfig failed, fallback to static config: $e');
+      return _fallbackIceConfig;
+    }
+  }
 
   String _peerKey(String? id) => (id ?? '').trim();
 
@@ -693,7 +750,9 @@ class CallService {
     bool isVideo = false,
   }) async {
     final key = _peerKey(peerId);
-    final pc = await createPeerConnection(_iceConfig);
+    // Lấy ICE config với TURN credentials TTL-based từ backend
+    final iceConfig = await _fetchIceConfig();
+    final pc = await createPeerConnection(iceConfig);
     _peerConnections[key] = pc;
     _pc = pc;
     _peerHasRemoteDescription[key] = false;
@@ -1117,6 +1176,8 @@ class CallService {
 
     _pc?.close();
     _pc = null;
+
+    _cachedIceConfig = null; // Reset để lần gọi sau lấy credential mới (tránh dùng credential hết hạn)
 
     _currentCallId = null;
     _currentConversationId = null;
